@@ -22,6 +22,13 @@ const schema = z.object({
   LLM_VISION_MODEL: z.string().default('claude-sonnet-5-5'),
   /** Public website URL, used for links in emails. */
   APP_URL: z.url().default('http://localhost:3100'),
+
+  // Admin console (apps/admin). /admin/* is disabled until all three are set.
+  ADMIN_EMAIL: z.string().optional(),
+  ADMIN_PASSWORD: z.string().optional(),
+  /** Signs admin session tokens. Changing it signs every admin out. */
+  ADMIN_JWT_SECRET: z.string().optional(),
+  ADMIN_SESSION_HOURS: z.coerce.number().default(12),
 });
 
 export const env = schema.parse(process.env);

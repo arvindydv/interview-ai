@@ -5,6 +5,7 @@ const files = [
   ['apps/api/.env.example', 'apps/api/.env'],
   ['apps/worker/.env.example', 'apps/worker/.env'],
   ['apps/web/.env.example', 'apps/web/.env.local'],
+  ['apps/admin/.env.example', 'apps/admin/.env.local'],
   ['apps/desktop/.env.example', 'apps/desktop/.env'],
 ];
 for (const [from, to] of files) {

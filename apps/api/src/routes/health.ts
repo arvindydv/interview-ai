@@ -14,21 +14,26 @@ async function timed(fn: () => Promise<unknown>) {
   }
 }
 
+export async function healthReport(): Promise<HealthReport> {
+  const [postgres, redisCheck, auth] = await Promise.all([
+    timed(() => sql`select 1`),
+    timed(() => redis.ping()),
+    timed(async () => {
+      const res = await fetch(`${env.SUPABASE_URL}/auth/v1/health`, {
+        signal: AbortSignal.timeout(2000),
+      });
+      if (!res.ok && res.status !== 401) throw new Error(`HTTP ${res.status}`);
+    }),
+  ]);
+  const checks = { postgres, redis: redisCheck, auth };
+  const ok = Object.values(checks).every((c) => c.ok);
+  return { ok, version: process.env.npm_package_version ?? '0.0.0', checks };
+}
+
 export default async function healthRoutes(app: FastifyInstance) {
   app.get('/health', async (_req, reply): Promise<HealthReport> => {
-    const [postgres, redisCheck, auth] = await Promise.all([
-      timed(() => sql`select 1`),
-      timed(() => redis.ping()),
-      timed(async () => {
-        const res = await fetch(`${env.SUPABASE_URL}/auth/v1/health`, {
-          signal: AbortSignal.timeout(2000),
-        });
-        if (!res.ok && res.status !== 401) throw new Error(`HTTP ${res.status}`);
-      }),
-    ]);
-    const checks = { postgres, redis: redisCheck, auth };
-    const ok = Object.values(checks).every((c) => c.ok);
-    reply.code(ok ? 200 : 503);
-    return { ok, version: process.env.npm_package_version ?? '0.0.0', checks };
+    const report = await healthReport();
+    reply.code(report.ok ? 200 : 503);
+    return report;
   });
 }

@@ -1,8 +1,13 @@
 import type { FastifyInstance } from 'fastify';
-import { IMAGE_LIMITS, parseMessage, type ClientMessage, type ImageAttachment, type ServerMessage } from '@parakeet/shared';
+import {
+  DEFAULT_SETTINGS, IMAGE_LIMITS, parseMessage, type ClientMessage, type ImageAttachment, type ServerMessage,
+} from '@parakeet/shared';
+import { closeLiveSession, openLiveSession, questionsToday, recordTurn, type TurnRecord } from '../lib/activity.js';
 import { requireAuth } from '../lib/auth.js';
 import { loadInterviewContext, type InterviewContext } from '../lib/context.js';
+import { trackConnection } from '../lib/liveRegistry.js';
 import { LlmError, llmConfigured, streamAnswer } from '../lib/llm.js';
+import { getSettings } from '../lib/settings.js';
 
 // Placeholder until the LLM proxy (spec C4/C5) is wired in: streams a canned, answer-first Markdown
 // reply in small chunks so the overlay's rendering, cancellation and usage plumbing can be built
@@ -86,23 +91,62 @@ async function answerTurn(
   send: (m: ServerMessage) => void,
   signal: AbortSignal,
   log: FastifyInstance['log'],
+  turn: TurnRecord,
 ) {
   const images = msg.images ?? [];
+  const settings = await getSettings().catch((err) => {
+    log.warn({ err }, 'could not load settings');
+    return DEFAULT_SETTINGS;
+  });
+  if (settings.maintenanceMode) {
+    turn.status = 'blocked';
+    turn.errorCode = 'maintenance';
+    return send({ type: 'error', turnId: msg.turnId, code: 'maintenance', message: settings.maintenanceMessage });
+  }
+  if (Object.values(settings.dailyQuestionLimits).some((n) => n > 0)) {
+    // If the count can't be read, answer rather than lock the user out.
+    const usage = await questionsToday(userId).catch((err) => {
+      log.warn({ err }, 'could not count questions for the daily limit');
+      return null;
+    });
+    const plan = usage?.plan ?? 'free';
+    const limit = settings.dailyQuestionLimits[plan] ?? 0;
+    if (usage && limit > 0 && usage.n >= limit) {
+      turn.status = 'blocked';
+      turn.errorCode = 'daily_limit';
+      return send({
+        type: 'error', turnId: msg.turnId, code: 'daily_limit',
+        message: `You've used today's ${limit} questions on the ${plan} plan. The limit resets at 00:00 UTC.`,
+      });
+    }
+  }
+
   // Loaded per question so edits in the main window apply to the very next answer. A failure here
   // must never block an answer: fall back to answering without the candidate's context.
   const context = await loadInterviewContext(userId).catch((err) => {
     log.warn({ err, turnId: msg.turnId }, 'could not load interview context');
     return null;
   });
-  if (!llmConfigured()) return streamStubAnswer(msg.text, images.length, context, msg.turnId, send, signal);
+  Object.assign(turn, {
+    field: context?.field ?? '',
+    company: context?.company ?? '',
+    role: context?.role ?? '',
+    hasResume: context?.hasResume ?? false,
+  });
+  if (!llmConfigured()) {
+    turn.model = 'sample';
+    return streamStubAnswer(msg.text, images.length, context, msg.turnId, send, signal);
+  }
   try {
     const usage = await streamAnswer({
       text: msg.text,
       images,
       context: context?.text,
       signal,
+      models: { fast: settings.fastModel, vision: settings.visionModel },
       onDelta: (delta, tier) => send({ type: 'token', turnId: msg.turnId, tier, delta }),
     });
+    turn.model = usage.model;
     log.info({ turnId: msg.turnId, model: usage.model, images: images.length, context: Boolean(context), usage }, 'answer complete');
     send({ type: 'done', turnId: msg.turnId, usage: { tokensIn: usage.tokensIn, tokensOut: usage.tokensOut } });
   } catch (err) {
@@ -113,6 +157,45 @@ async function answerTurn(
     }
     log.error({ err, turnId: msg.turnId }, 'answer failed');
     send({ type: 'error', turnId: msg.turnId, code: 'internal', message: 'Something went wrong generating this answer.' });
+  }
+}
+
+/** Answers a turn and records it (question, answer, usage, latency) for the admin console. */
+async function answerAndRecord(
+  userId: string,
+  liveSessionId: Promise<string | null>,
+  msg: Extract<ClientMessage, { type: 'ask' }>,
+  send: (m: ServerMessage) => void,
+  signal: AbortSignal,
+  log: FastifyInstance['log'],
+) {
+  const started = performance.now();
+  const turn: TurnRecord = {
+    userId, liveSessionId: null, turnId: msg.turnId, question: msg.text ?? '', answer: '',
+    imageCount: msg.images?.length ?? 0, field: '', company: '', role: '', hasResume: false,
+    model: null, tier: null, status: 'cancelled', errorCode: null, tokensIn: 0, tokensOut: 0, ttftMs: null, durationMs: null,
+  };
+  const tracked = (m: ServerMessage) => {
+    if (m.type === 'token') {
+      if (turn.ttftMs === null) turn.ttftMs = Math.round(performance.now() - started);
+      turn.tier = m.tier;
+      turn.answer += m.delta;
+    } else if (m.type === 'done') {
+      turn.status = 'done';
+      turn.tokensIn = m.usage.tokensIn;
+      turn.tokensOut = m.usage.tokensOut;
+    } else if (m.type === 'error') {
+      if (turn.status !== 'blocked') turn.status = 'error';
+      turn.errorCode = m.code;
+    }
+    send(m);
+  };
+  try {
+    await answerTurn(userId, msg, tracked, signal, log, turn);
+  } finally {
+    turn.durationMs = Math.round(performance.now() - started);
+    turn.liveSessionId = await liveSessionId;
+    recordTurn(turn).catch((err) => log.error({ err, turnId: msg.turnId }, 'failed to record turn'));
   }
 }
 
@@ -128,6 +211,12 @@ export default async function liveRoutes(app: FastifyInstance) {
       };
 
       req.log.info({ userId: req.user.id, sessionId }, 'live session connected');
+      const untrack = trackConnection(req.user.id, { close: (code, reason) => socket.close(code, reason) });
+      // Activity tracking is best-effort: answers still work if Postgres is unhappy.
+      const liveSessionId = openLiveSession(req.user, sessionId).catch((err) => {
+        req.log.error({ err }, 'failed to record live session');
+        return null;
+      });
       send({ type: 'status', userId: req.user.id, sessionId, providers: { stt: 'up', llm: 'up' } });
 
       socket.on('message', (raw) => {
@@ -143,7 +232,7 @@ export default async function liveRoutes(app: FastifyInstance) {
             turns.get(msg.turnId)?.abort();
             const ctrl = new AbortController();
             turns.set(msg.turnId, ctrl);
-            answerTurn(req.user.id, msg, send, ctrl.signal, req.log).finally(() => {
+            answerAndRecord(req.user.id, liveSessionId, msg, send, ctrl.signal, req.log).finally(() => {
               if (turns.get(msg.turnId) === ctrl) turns.delete(msg.turnId);
             });
             return;
@@ -159,6 +248,8 @@ export default async function liveRoutes(app: FastifyInstance) {
 
       socket.on('close', () => {
         for (const ctrl of turns.values()) ctrl.abort();
+        untrack();
+        void liveSessionId.then((id) => (id ? closeLiveSession(id) : undefined)).catch(() => {});
         req.log.info({ sessionId }, 'live session closed');
       });
     },

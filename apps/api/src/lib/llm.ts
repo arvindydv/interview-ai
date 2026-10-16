@@ -64,15 +64,17 @@ export interface AnswerRequest {
   context?: string;
   signal: AbortSignal;
   onDelta: (text: string, tier: 'fast' | 'deep') => void;
+  /** Admin-console overrides for LLM_FAST_MODEL / LLM_VISION_MODEL. */
+  models?: { fast?: string; vision?: string };
 }
 
 /**
  * Streams an answer. Text-only questions go to the fast tier; questions with screenshots go to the
  * vision tier (spec C3 routing). Resolves with token usage; throws LlmError on failure.
  */
-export async function streamAnswer({ text, images = [], context, signal, onDelta }: AnswerRequest): Promise<Usage & { model: string }> {
+export async function streamAnswer({ text, images = [], context, signal, onDelta, models }: AnswerRequest): Promise<Usage & { model: string }> {
   const vision = images.length > 0;
-  const model = vision ? env.LLM_VISION_MODEL : env.LLM_FAST_MODEL;
+  const model = vision ? models?.vision || env.LLM_VISION_MODEL : models?.fast || env.LLM_FAST_MODEL;
   const tier = vision ? 'deep' : 'fast';
 
   const content: Anthropic.Beta.BetaContentBlockParam[] = [

@@ -1,6 +1,7 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { createRemoteJWKSet, decodeProtectedHeader, jwtVerify, type JWTPayload } from 'jose';
 import { env } from '../env.js';
+import { sql } from './db.js';
 
 export interface AuthUser {
   id: string;
@@ -49,4 +50,26 @@ export async function requireAuth(req: FastifyRequest, reply: FastifyReply) {
     req.log.debug({ err }, 'token verification failed');
     return reply.code(401).send({ error: 'unauthorized', message: 'Invalid or expired token' });
   }
+  if (await isSuspended(req.user.id)) {
+    return reply.code(403).send({ error: 'suspended', message: 'This account has been suspended. Contact support.' });
+  }
+}
+
+// Account status set from the admin console. Cached briefly so authenticated requests don't each
+// hit Postgres; suspending a user also clears their entry (see forgetUserStatus).
+const STATUS_CACHE_MS = 15_000;
+const statusCache = new Map<string, { suspended: boolean; at: number }>();
+
+export async function isSuspended(userId: string) {
+  const hit = statusCache.get(userId);
+  if (hit && Date.now() - hit.at < STATUS_CACHE_MS) return hit.suspended;
+  const [row] = await sql<{ status: string }[]>`select status from public.users where id = ${userId}`;
+  const suspended = row?.status === 'suspended';
+  if (statusCache.size > 10_000) statusCache.clear();
+  statusCache.set(userId, { suspended, at: Date.now() });
+  return suspended;
+}
+
+export function forgetUserStatus(userId: string) {
+  statusCache.delete(userId);
 }

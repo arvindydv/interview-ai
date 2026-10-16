@@ -9,6 +9,7 @@ apps/
   api/        Edge API: Fastify, Supabase JWT verification, REST + WS /v1/live/:sessionId   :4000
   worker/     BullMQ background worker (resume parsing, pack builds, summaries… go here)
   web/        Next.js website: email-OTP + Google sign-in, dashboard, desktop sign-in handoff :3100
+  admin/      Next.js admin console: analytics, users, live activity, settings, audit log      :3200
   desktop/    Tauri 2 desktop app: React UI (src/) + Rust backend (src-tauri/), main window + overlay
 packages/
   shared/     Types shared by every app (live WS protocol, REST shapes)
@@ -149,6 +150,33 @@ Code signing (Apple notarisation, Windows certificate) still needs certificates.
   authenticate the domain (Senders, Domains & Dedicated IPs → add the DKIM and Brevo code DNS records), publish SPF
   (`include:spf.brevo.com`) and a DMARC record. Set the same SMTP values in the hosted Supabase project
   (Authentication → Emails → SMTP Settings) and raise its email rate limit.
+
+## Admin console
+
+`apps/admin` (http://localhost:3200, also started by `pnpm dev`) is the operator console. It talks to `/admin/*`
+on the Edge API, which is disabled until these are set in `apps/api/.env`:
+
+| Variable | |
+|---|---|
+| `ADMIN_EMAIL`, `ADMIN_PASSWORD` | The admin sign-in. Use a long random password. |
+| `ADMIN_JWT_SECRET` | Signs admin sessions (≥ 32 chars, `openssl rand -hex 32`). Changing it signs the admin out. |
+| `ADMIN_SESSION_HOURS` | Session length, default 12. |
+
+Add the console's origin to `CORS_ORIGINS`. Sign-in is rate-limited (10 attempts per IP per 15 min) and is
+completely separate from Supabase Auth, so a user token can never reach `/admin`.
+
+| Page | What you can do |
+|---|---|
+| Overview | KPIs, questions / active users / sign-ups per day, activation funnel, fields, rounds, plans, OS, models, token usage, latency and error rate |
+| Users | Search and filter; per user: stats, devices, resume, interview setups, live sessions and every question asked. Change plan, suspend (bans in Supabase, revokes sessions, closes live connections), sign out everywhere, remove devices / resume / interviews, re-run resume analysis, internal notes, delete the account and all data |
+| Live activity | Every question asked in a live interview with its full answer, model, latency and tokens; auto-refreshes |
+| Interviews | All interview setups, including job descriptions |
+| System | Postgres / Redis / Auth health, live connections, BullMQ queue counts, failed jobs (retry or clear) |
+| Settings | Maintenance mode, daily question limits per plan, model overrides: applied within seconds, no redeploy |
+| Audit log | Every change made from the console |
+
+Activity is recorded by the live route (`live_sessions`, `live_turns`; migration `20261018000000_admin.sql`).
+Question and answer text is stored (screenshots are not), so mention this in your privacy policy.
 
 ## Useful commands
 

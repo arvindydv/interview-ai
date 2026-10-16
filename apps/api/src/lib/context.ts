@@ -9,6 +9,7 @@ export interface InterviewContext {
   text: string;
   hasResume: boolean;
   hasJobDescription: boolean;
+  field: string;
   company: string;
   role: string;
 }
@@ -107,6 +108,7 @@ export async function loadInterviewContext(userId: string): Promise<InterviewCon
     text: `<candidate_context>\n${parts.filter(Boolean).join('\n')}\n</candidate_context>`,
     hasResume: Boolean(resumeText),
     hasJobDescription: Boolean(jd),
+    field,
     company,
     role,
   };
