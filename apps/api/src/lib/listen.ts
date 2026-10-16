@@ -182,6 +182,13 @@ export class Listener {
     this.deps.send({ type: 'listening', sources: { ...this.states }, ...(this.error ? { error: this.error } : {}) });
   }
 
+  /** Stops transcribing for good (e.g. the free trial ran out), telling the client why. */
+  stop(error: string) {
+    this.close();
+    this.states = { interviewer: 'off', you: 'off' };
+    this.deps.send({ type: 'listening', sources: { ...this.states }, error });
+  }
+
   close() {
     this.closed = true;
     this.dropSpeculative();

@@ -7,6 +7,8 @@ export interface LiveStatus {
   sessionId: string | null;
   rttMs: number | null;
   error?: string;
+  /** When the session was started (Unix ms); null when not in one. Survives reconnects. */
+  startedAt?: number | null;
 }
 /** A server message as forwarded by main; the first token of each turn carries main-measured TTFT. */
 export type LiveEvent = ServerMessage & { ttftMs?: number };

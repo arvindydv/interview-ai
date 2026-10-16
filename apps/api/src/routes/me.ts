@@ -4,6 +4,7 @@ import type { Me } from '@parakeet/shared';
 import { requireAuth } from '../lib/auth.js';
 import { sql } from '../lib/db.js';
 import { sendEmail } from '../lib/queues.js';
+import { TRIAL_PLAN } from '../lib/trial.js';
 import { env } from '../env.js';
 
 /** "sourabh.k@x.com" → "Sourabh" */
@@ -26,12 +27,15 @@ export default async function meRoutes(app: FastifyInstance) {
   app.get('/v1/me', async (req): Promise<Me> => {
     const { id, email, provider } = req.user;
     const [row] = await sql<
-      { id: string; email: string; auth_provider: string; plan: string; created_at: Date; inserted: boolean }[]
+      {
+        id: string; email: string; auth_provider: string; plan: string; created_at: Date;
+        trial_seconds: number; trial_used_seconds: number; inserted: boolean;
+      }[]
     >`
       insert into public.users (id, email, auth_provider)
       values (${id}, ${email}, ${provider})
       on conflict (id) do update set email = excluded.email
-      returning id, email, auth_provider, plan, created_at, (xmax = 0) as inserted`;
+      returning id, email, auth_provider, plan, created_at, trial_seconds, trial_used_seconds, (xmax = 0) as inserted`;
     if (row.inserted && row.email) {
       await sendEmail(
         { template: 'welcome', to: row.email, props: { name: firstName(row.email), email: row.email, appUrl: env.APP_URL } },
@@ -45,6 +49,7 @@ export default async function meRoutes(app: FastifyInstance) {
       authProvider: row.auth_provider,
       plan: row.plan,
       createdAt: row.created_at.toISOString(),
+      trial: row.plan === TRIAL_PLAN ? { totalSeconds: row.trial_seconds, usedSeconds: row.trial_used_seconds } : null,
     };
   });
 

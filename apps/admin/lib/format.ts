@@ -44,3 +44,12 @@ export function dayLabel(day: string) {
 export function change(now: number, prev: number) {
   return prev === 0 ? null : (now - prev) / prev;
 }
+
+/** Seconds as "45s", "12m 05s", "2h 03m". */
+export function duration(seconds: number) {
+  const s = Math.max(0, Math.round(seconds));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${String(s % 60).padStart(2, '0')}s`;
+  return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`;
+}

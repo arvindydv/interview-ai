@@ -3,15 +3,16 @@ import { createRoot } from 'react-dom/client';
 import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
 import {
   AudioLines, Blend, Camera, ChevronDown, ImagePlus, Loader2, ShieldAlert, ShieldCheck, ChevronLeft, ChevronRight, Copy, Check, EyeOff, LayoutDashboard, Maximize2,
-  MessageSquare, Mic, MicOff, Minimize2, Move, MoreVertical, PanelBottomOpen, Power, SendHorizontal, Sparkles, Volume2, VolumeX, X, Zap,
+  MessageSquare, Mic, MicOff, Minimize2, Move, MoreVertical, PanelBottomOpen, Play, Power, SendHorizontal, Sparkles, Square, Volume2, VolumeX, X, Zap,
 } from 'lucide-react';
 import type { ListenState } from '@parakeet/shared';
 import '@fontsource-variable/inter';
 import { parakeet } from './bridge';
-import type { AudioSettings, Protection, Screenshot, SourceStatus } from './types';
+import type { AudioSettings, LiveStatus, Protection, Screenshot, SourceStatus } from './types';
 import { LogoMark } from './ui';
 import { renderMarkdown } from './overlay/markdown';
 import { useOverlayState, type OverlayAnswer } from './overlay/useOverlayState';
+import { clock, useElapsed, useMe, useTrial, type TrialState } from './useSession';
 import './styles.css';
 import './overlay/overlay.css';
 
@@ -96,13 +97,14 @@ function ToolButton({
     <button
       onClick={onClick}
       title={`${label} (${keys.join(' ')})`}
-      className={`flex h-9 shrink-0 items-center rounded-xl px-3 text-[13px] font-medium transition ${
+      aria-label={label}
+      className={`flex h-9 shrink-0 items-center justify-center rounded-xl px-2.5 text-[13px] font-medium transition @[760px]:px-3 ${
         active ? 'bg-brand/15 text-brand ring-1 ring-brand/30' : 'bg-white/[0.05] text-fg hover:bg-white/[0.1]'
       }`}
     >
-      <Icon size={15} className={`mr-1.5 shrink-0 opacity-80 ${spin ? 'animate-spin' : ''}`} />
-      {label}
-      <span className="hidden @[880px]:flex">
+      <Icon size={15} className={`shrink-0 opacity-80 @[760px]:mr-1.5 ${spin ? 'animate-spin' : ''}`} />
+      <span className="hidden whitespace-nowrap @[760px]:inline">{label}</span>
+      <span className="hidden @[1080px]:flex">
         <Keys keys={keys} />
       </span>
     </button>
@@ -132,6 +134,87 @@ function IconButton({
     >
       {children}
     </button>
+  );
+}
+
+/**
+ * Start / stop the interview. Minutes are only counted while it runs; while it does, shows the
+ * session timer and the free-trial minutes left.
+ */
+function SessionControl({
+  status,
+  elapsed,
+  trial,
+  signedIn,
+  onStart,
+  onStop,
+}: {
+  status: LiveStatus;
+  elapsed: string | null;
+  trial: TrialState | null;
+  signedIn: boolean;
+  onStart: () => void;
+  onStop: () => void;
+}) {
+  if (status.state === 'disconnected') {
+    const usedUp = trial?.leftSeconds === 0;
+    return (
+      <button
+        onClick={onStart}
+        disabled={!signedIn}
+        title={
+          !signedIn
+            ? 'Sign in from the Parakeet window first'
+            : usedUp
+              ? 'Your free trial minutes are used up'
+              : trial
+                ? `Start the interview · ${Math.ceil(trial.leftSeconds / 60)} free min left`
+                : 'Start the interview'
+        }
+        className={`flex h-9 shrink-0 items-center gap-1.5 rounded-xl px-3 text-[13px] font-semibold transition disabled:opacity-40 ${
+          usedUp ? 'bg-white/[0.05] text-muted' : 'bg-brand text-bg hover:brightness-110'
+        }`}
+      >
+        <Play size={13} fill="currentColor" className="shrink-0" />
+        <span className="whitespace-nowrap">
+          Start<span className="hidden @[680px]:inline"> interview</span>
+        </span>
+        {trial && !usedUp && (
+          <span className="hidden font-mono text-[11.5px] font-medium opacity-75 @[900px]:inline">{clock(trial.leftSeconds)}</span>
+        )}
+      </button>
+    );
+  }
+  const live = status.state === 'connected';
+  const low = trial !== null && trial.leftSeconds <= 120;
+  return (
+    <div className="flex h-9 shrink-0 items-center gap-1 rounded-xl bg-white/[0.05] pr-1 pl-2.5 ring-1 ring-white/10">
+      {live ? (
+        <span className="size-2 shrink-0 animate-pulse rounded-full bg-danger" aria-hidden />
+      ) : (
+        <Loader2 size={13} className="shrink-0 animate-spin text-warn" aria-hidden />
+      )}
+      <span className="ml-1 font-mono text-[13px] font-semibold tabular-nums" title="Session time">
+        {elapsed ?? '00:00'}
+      </span>
+      {trial && (
+        <span
+          title="Free trial minutes left"
+          className={`ml-1.5 hidden font-mono text-[12px] tabular-nums @[700px]:inline ${low ? 'text-warn' : 'text-muted'}`}
+        >
+          {clock(trial.leftSeconds)} left
+        </span>
+      )}
+      <button
+        onClick={onStop}
+        title="Stop the interview (minutes stop counting)"
+        aria-label="Stop"
+        className="ml-1.5 flex h-7 items-center gap-1 rounded-lg bg-danger/15 px-2 text-[12.5px] font-semibold text-danger hover:bg-danger/25"
+      >
+        <Square size={11} fill="currentColor" />
+        <span className="hidden @[620px]:inline">Stop</span>
+      </button>
+    </div>
   );
 }
 
@@ -263,6 +346,10 @@ function Overlay() {
   const [transcriptOverflows, setTranscriptOverflows] = useState(false);
   const connected = status.state === 'connected';
   const signedIn = Boolean(auth?.user);
+  const elapsed = useElapsed(status);
+  // Re-fetched after sign-in and after each session, for the free minutes shown on Start interview.
+  const me = useMe(status.state !== 'disconnected' || !signedIn);
+  const trial = useTrial(signedIn ? me : null, connected);
   const hearing = connected && audio?.interviewer.state === 'on' && listening?.sources.interviewer === 'up';
   const autoAnswer = audio?.autoAnswer ?? true;
   const setAudio = useCallback(
@@ -278,10 +365,31 @@ function Overlay() {
     setTimeout(() => setNotice((n) => (n === msg ? null : n)), 4000);
   }, []);
 
-  /** Starts the live session if needed and waits until it's connected. */
+  // Running out of free minutes ends the session (main does that); say why.
+  useEffect(
+    () =>
+      parakeet.live.onMessage((m) => {
+        if (m.type === 'error' && !m.turnId && m.code === 'trial_ended') flash(m.message);
+      }),
+    [flash],
+  );
+
+  const startInterview = useCallback(() => {
+    if (trial?.leftSeconds === 0) {
+      flash('Your free trial minutes are used up. Upgrade your plan to keep using live sessions.');
+      return;
+    }
+    void parakeet.live.connect();
+  }, [trial, flash]);
+
+  /**
+   * Waits for the interview's live connection. Never starts one on its own: minutes only count
+   * after the user presses Start interview.
+   */
   const ensureConnected = useCallback(async () => {
-    if ((await parakeet.live.status()).state === 'connected') return true;
-    await parakeet.live.connect();
+    const state = (await parakeet.live.status()).state;
+    if (state === 'connected') return true;
+    if (state === 'disconnected') return null;
     return new Promise<boolean>((resolve) => {
       const off = parakeet.live.onStatus((s) => {
         if (s.state === 'connected') {
@@ -299,8 +407,9 @@ function Overlay() {
   const ask = useCallback(
     async (text: string, imageIds: string[] = []) => {
       if (!text.trim() && !imageIds.length) return false;
-      if (!(await ensureConnected())) {
-        flash('Can’t reach Parakeet. Check your connection.');
+      const ready = await ensureConnected();
+      if (!ready) {
+        flash(ready === null ? 'Press Start interview first.' : 'Can’t reach Parakeet. Check your connection.');
         return false;
       }
       try {
@@ -370,14 +479,16 @@ function Overlay() {
     if (!heard.length) {
       openChat();
       flash(
-        hearing
-          ? 'Nothing heard from the interviewer yet. Type the question to get an answer.'
-          : 'Not listening to the interviewer right now. Type the question to get an answer.',
+        status.state === 'disconnected'
+          ? 'Press Start interview first.'
+          : hearing
+            ? 'Nothing heard from the interviewer yet. Type the question to get an answer.'
+            : 'Not listening to the interviewer right now. Type the question to get an answer.',
       );
       return;
     }
     void ask(heard[heard.length - 1].text);
-  }, [transcript, hearing, openChat, flash, ask]);
+  }, [transcript, hearing, status.state, openChat, flash, ask]);
 
   // Surface capture and speech-to-text problems once each (the toggles keep showing them on hover).
   const problem =
@@ -502,10 +613,18 @@ function Overlay() {
         <Bar className="@container relative z-20 flex h-[52px] shrink-0 items-center gap-1.5 px-2">
           <div data-tauri-drag-region className="flex h-full shrink-0 items-center gap-2 pr-1 pl-1.5">
             <LogoMark size={24} />
-            <span data-tauri-drag-region className="hidden text-[15px] font-semibold tracking-tight @[700px]:inline">
+            <span data-tauri-drag-region className="hidden text-[15px] font-semibold tracking-tight @[1000px]:inline">
               Parakeet
             </span>
           </div>
+          <SessionControl
+            status={status}
+            elapsed={elapsed}
+            trial={trial}
+            signedIn={signedIn}
+            onStart={startInterview}
+            onStop={() => void parakeet.live.disconnect()}
+          />
           <SourceToggle
             icon={Volume2}
             offIcon={VolumeX}
@@ -534,7 +653,7 @@ function Overlay() {
             {protection.level === 'hidden' ? <ShieldCheck size={16} /> : <ShieldAlert size={16} />}
           </button>
         )}
-          <span className="mx-1 h-6 w-px bg-white/10" />
+          <span className="mx-1 hidden h-6 w-px bg-white/10 @[620px]:block" />
           <ToolButton label="Answer" icon={Sparkles} keys={[MOD, '↵']} onClick={answerNow} />
           <ToolButton
           label={shots.length ? `Screenshot · ${shots.length}` : 'Screenshot'}
@@ -546,9 +665,12 @@ function Overlay() {
         />
           <ToolButton label="Chat" icon={MessageSquare} keys={[MOD, '⇧', '␣']} onClick={openChat} active={chatOpen} />
           <div data-tauri-drag-region className="h-full min-w-2 flex-1" />
-          <IconButton title="Drag to move" dragRegion>
-            <Move size={16} className="pointer-events-none" />
-          </IconButton>
+          {/* Narrow: the logo and the empty space still drag the window. */}
+          <div className="hidden @[620px]:block">
+            <IconButton title="Drag to move" dragRegion>
+              <Move size={16} className="pointer-events-none" />
+            </IconButton>
+          </div>
           {!collapsed && !panelVisible && (
             <IconButton title="Show answers" onClick={() => setPanelVisible(true)}>
               <PanelBottomOpen size={16} />
@@ -688,7 +810,9 @@ function Overlay() {
                           ? 'Listening… each question is answered as soon as the interviewer finishes it.'
                           : 'Listening… press Answer when the interviewer finishes a question.'
                         : 'Connected. Type a question with Chat, or turn on interviewer audio to answer what they ask.'
-                      : `Press Answer (${MOD} ↵) or Chat to start. Parakeet answers using your resume.`
+                      : status.state === 'disconnected'
+                        ? 'Press Start interview when your call begins. Minutes only count while it’s running.'
+                        : 'Connecting…'
                     : 'Sign in from the Parakeet window to start.'}
                 </span>
               )}

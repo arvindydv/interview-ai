@@ -28,6 +28,9 @@ pub struct LiveStatus {
     pub session_id: Option<String>,
     pub rtt_ms: Option<u64>,
     pub error: Option<String>,
+    /// When the user started this session (Unix ms), kept through reconnects so every window shows the
+    /// same session timer.
+    pub started_at: Option<u64>,
 }
 
 /// Capture state of one audio source, as shown on the overlay.
@@ -93,6 +96,7 @@ struct Inner {
     captures: HashMap<Source, Capture>,
     /// Bumped on every connect/disconnect, so a capture that finishes opening late can tell it is stale.
     generation: u64,
+    started_at: Option<u64>,
 }
 
 #[derive(Clone, Default)]
@@ -104,8 +108,12 @@ impl Live {
         if s.state.is_empty() { LiveStatus { state: "disconnected", ..s } } else { s }
     }
 
-    fn set_status(&self, app: &AppHandle, status: LiveStatus) {
-        self.0.lock().unwrap().status = status.clone();
+    fn set_status(&self, app: &AppHandle, mut status: LiveStatus) {
+        {
+            let mut inner = self.0.lock().unwrap();
+            status.started_at = inner.started_at;
+            inner.status = status.clone();
+        }
         let _ = app.emit("live:status", status);
     }
 
@@ -117,6 +125,9 @@ impl Live {
 
     pub fn connect(&self, app: AppHandle) {
         self.disconnect(&app);
+        // Set before the task starts, so its first status update already carries it.
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+        self.0.lock().unwrap().started_at = Some(now.as_millis() as u64);
         let session_id = format!("dev-{}", &uuid::Uuid::new_v4().simple().to_string()[..8]);
         let (tx, rx) = mpsc::unbounded_channel();
         let this = self.clone();
@@ -140,6 +151,7 @@ impl Live {
             inner.tx = None;
             inner.asked_at.clear();
             inner.generation += 1;
+            inner.started_at = None;
             for s in Source::ALL {
                 let status = inner.audio.source(s);
                 status.state = "off";
@@ -424,10 +436,49 @@ impl Live {
             Some("done") | Some("error") => {
                 if let Some(turn) = msg["turnId"].as_str() {
                     self.0.lock().unwrap().asked_at.remove(turn);
+                } else if let Some(message) = trial_ended(&msg) {
+                    // Out of free minutes: end the session so nothing keeps running (or counting) and
+                    // the windows go back to "Start interview".
+                    let (this, app) = (self.clone(), app.clone());
+                    tauri::async_runtime::spawn(async move {
+                        this.disconnect(&app);
+                        this.patch_status(&app, |s| s.error = Some(message));
+                    });
                 }
             }
             _ => {}
         }
         let _ = app.emit("live:message", msg);
+    }
+}
+
+/// The reason to show when a server message says the free trial ran out (which ends the session).
+fn trial_ended(msg: &Value) -> Option<String> {
+    let session_wide = msg["type"] == "error" && msg["turnId"].is_null();
+    (session_wide && msg["code"] == "trial_ended").then(|| {
+        msg["message"].as_str().unwrap_or("Your free trial minutes are used up.").to_owned()
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn trial_ended_ends_the_session() {
+        let msg = json!({ "type": "error", "code": "trial_ended", "message": "Used up." });
+        assert_eq!(trial_ended(&msg).as_deref(), Some("Used up."));
+        let no_message = json!({ "type": "error", "code": "trial_ended" });
+        assert_eq!(trial_ended(&no_message).as_deref(), Some("Your free trial minutes are used up."));
+    }
+
+    #[test]
+    fn other_messages_do_not_end_the_session() {
+        // A refused question carries a turnId: the answer shows the error, the session is ended by the
+        // session-wide message instead.
+        assert!(trial_ended(&json!({ "type": "error", "turnId": "t1", "code": "trial_ended", "message": "x" })).is_none());
+        assert!(trial_ended(&json!({ "type": "error", "code": "daily_limit", "message": "x" })).is_none());
+        assert!(trial_ended(&json!({ "type": "trial", "trial": { "totalSeconds": 600, "usedSeconds": 600 } })).is_none());
+        assert!(trial_ended(&json!({ "type": "done", "turnId": "t1" })).is_none());
     }
 }

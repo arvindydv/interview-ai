@@ -11,6 +11,7 @@ import { trackConnection } from '../lib/liveRegistry.js';
 import { LlmError, llmConfigured, streamAnswer } from '../lib/llm.js';
 import { getSettings } from '../lib/settings.js';
 import { sttConfigured } from '../lib/stt.js';
+import { SessionMeter, TRIAL_ENDED_MESSAGE } from '../lib/trial.js';
 
 // Placeholder until the LLM proxy (spec C4/C5) is wired in: streams a canned, answer-first Markdown
 // reply in small chunks so the overlay's rendering, cancellation and usage plumbing can be built
@@ -98,6 +99,7 @@ async function answerTurn(
   signal: AbortSignal,
   log: FastifyInstance['log'],
   turn: TurnRecord,
+  trialEnded: () => boolean,
 ) {
   const images = msg.images ?? [];
   const settings = await getSettings().catch((err) => {
@@ -108,6 +110,11 @@ async function answerTurn(
     turn.status = 'blocked';
     turn.errorCode = 'maintenance';
     return send({ type: 'error', turnId: msg.turnId, code: 'maintenance', message: settings.maintenanceMessage });
+  }
+  if (trialEnded()) {
+    turn.status = 'blocked';
+    turn.errorCode = 'trial_ended';
+    return send({ type: 'error', turnId: msg.turnId, code: 'trial_ended', message: TRIAL_ENDED_MESSAGE });
   }
   if (Object.values(settings.dailyQuestionLimits).some((n) => n > 0)) {
     // If the count can't be read, answer rather than lock the user out.
@@ -175,6 +182,7 @@ async function answerTracked(
   send: (m: ServerMessage) => void,
   signal: AbortSignal,
   log: FastifyInstance['log'],
+  trialEnded: () => boolean,
 ): Promise<TurnRecord> {
   const started = performance.now();
   const turn: TurnRecord = {
@@ -198,7 +206,7 @@ async function answerTracked(
     send(m);
   };
   try {
-    await answerTurn(userId, msg, history, tracked, signal, log, turn);
+    await answerTurn(userId, msg, history, tracked, signal, log, turn, trialEnded);
   } catch (err) {
     log.error({ err, turnId: msg.turnId }, 'answer failed');
   }
@@ -237,7 +245,7 @@ export default async function liveRoutes(app: FastifyInstance) {
         turns.set(msg.turnId, ctrl);
         let held: ServerMessage[] | null = opts.hold ? [] : null;
         const out = (m: ServerMessage) => (held ? held.push(m) : send(m));
-        const finished = answerTracked(req.user.id, msg, conversation.render(msg.text), out, ctrl.signal, req.log).finally(() => {
+        const finished = answerTracked(req.user.id, msg, conversation.render(msg.text), out, ctrl.signal, req.log, () => meter.hasEnded).finally(() => {
           if (turns.get(msg.turnId) === ctrl) turns.delete(msg.turnId);
         });
         const record = () =>
@@ -279,6 +287,20 @@ export default async function liveRoutes(app: FastifyInstance) {
         },
       });
 
+      // Session time is metered while the connection is open (and charged to the free trial on the
+      // free plan). When the trial runs out, stop listening and answering; the socket stays open so
+      // the client doesn't reconnect in a loop.
+      const meter = new SessionMeter(req.user.id, liveSessionId, req.log, {
+        onBalance: (trial) => send({ type: 'trial', trial }),
+        onEnded: () => {
+          req.log.info({ userId: req.user.id }, 'free trial used up');
+          for (const ctrl of turns.values()) ctrl.abort();
+          listener.stop(TRIAL_ENDED_MESSAGE);
+          send({ type: 'error', code: 'trial_ended', message: TRIAL_ENDED_MESSAGE });
+        },
+      });
+      void meter.start();
+
       send({
         type: 'status', userId: req.user.id, sessionId,
         providers: { stt: sttConfigured() ? 'up' : 'down', llm: llmConfigured() ? 'up' : 'down' },
@@ -299,6 +321,7 @@ export default async function liveRoutes(app: FastifyInstance) {
             return;
           }
           case 'listen':
+            if (meter.hasEnded) return;
             if (!Array.isArray(msg.sources)) return send({ type: 'error', code: 'bad_message', message: 'sources must be an array' });
             listener.configure(msg.sources, msg.autoAnswer !== false);
             return;
@@ -313,6 +336,7 @@ export default async function liveRoutes(app: FastifyInstance) {
 
       socket.on('close', () => {
         listener.close();
+        void meter.stop();
         for (const ctrl of turns.values()) ctrl.abort();
         untrack();
         void liveSessionId.then((id) => (id ? closeLiveSession(id) : undefined)).catch(() => {});

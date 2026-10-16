@@ -170,16 +170,20 @@ export default async function adminUserRoutes(app: FastifyInstance) {
     const id = req.params.id;
     if (!uuid.safeParse(id).success) return reply.code(404).send({ error: 'not_found', message: 'No such user' });
 
-    const [[user], [stats], devices, [resume], interviews, sessions, turns, activity] = await Promise.all([
-      sql<(UserRow & { admin_note: string; email_confirmed_at: Date | null })[]>`
+    const [[user], [stats], devices, [resume], interviews, sessions, turns, activity, minutes] = await Promise.all([
+      sql<(UserRow & { admin_note: string; email_confirmed_at: Date | null; trial_seconds: number; trial_used_seconds: number })[]>`
         select u.id, u.email, u.auth_provider, u.plan, u.status, u.created_at, u.last_active_at, u.admin_note,
+          u.trial_seconds, u.trial_used_seconds,
           a.last_sign_in_at, a.email_confirmed_at,
           (select count(*)::int from public.devices d where d.user_id = u.id) as devices,
           (select count(*)::int from public.live_turns t where t.user_id = u.id and t.status <> 'blocked') as questions,
           exists (select 1 from public.resumes r where r.user_id = u.id) as has_resume
         from public.users u left join auth.users a on a.id = u.id
         where u.id = ${id}`,
-      sql<{ questions: number; questions_7d: number; questions_today: number; tokens_in: string; tokens_out: string; sessions: number; avg_ttft: number | null }[]>`
+      sql<{
+        questions: number; questions_7d: number; questions_today: number; tokens_in: string; tokens_out: string;
+        sessions: number; session_seconds: number; session_seconds_7d: number; avg_ttft: number | null;
+      }[]>`
         select
           count(*) filter (where status <> 'blocked')::int as questions,
           count(*) filter (where status <> 'blocked' and created_at >= now() - interval '7 days')::int as questions_7d,
@@ -187,6 +191,9 @@ export default async function adminUserRoutes(app: FastifyInstance) {
           coalesce(sum(tokens_in), 0) as tokens_in,
           coalesce(sum(tokens_out), 0) as tokens_out,
           (select count(*)::int from public.live_sessions s where s.user_id = ${id}) as sessions,
+          (select coalesce(sum(seconds), 0)::int from public.live_sessions s where s.user_id = ${id}) as session_seconds,
+          (select coalesce(sum(seconds), 0)::int from public.live_sessions s
+            where s.user_id = ${id} and s.connected_at >= now() - interval '7 days') as session_seconds_7d,
           round(avg(ttft_ms) filter (where status = 'done'))::int as avg_ttft
         from public.live_turns where user_id = ${id}`,
       sql<{ id: string; os: string; os_version: string | null; app_version: string | null; last_seen: Date }[]>`
@@ -198,10 +205,13 @@ export default async function adminUserRoutes(app: FastifyInstance) {
         select i.id, i.user_id, u.email, i.field, i.company, i.role, i.round_type, length(i.jd_text) as jd_chars, i.created_at, i.updated_at
         from public.interview_sessions i join public.users u on u.id = i.user_id
         where i.user_id = ${id} order by i.updated_at desc limit 20`,
-      sql<{ id: string; client_session_id: string; connected_at: Date; disconnected_at: Date | null; turns: number }[]>`
-        select s.id, s.client_session_id, s.connected_at, s.disconnected_at,
+      sql<{
+        id: string; client_session_id: string; connected_at: Date; disconnected_at: Date | null; turns: number;
+        seconds: number; trial_seconds: number;
+      }[]>`
+        select s.id, s.client_session_id, s.connected_at, s.disconnected_at, s.seconds, s.trial_seconds,
           (select count(*)::int from public.live_turns t where t.live_session_id = s.id) as turns
-        from public.live_sessions s where s.user_id = ${id} order by s.connected_at desc limit 20`,
+        from public.live_sessions s where s.user_id = ${id} order by s.connected_at desc limit 50`,
       sql<TurnRow[]>`
         select ${TURN_LIST_COLUMNS}
         from public.live_turns t join public.users u on u.id = t.user_id
@@ -211,6 +221,12 @@ export default async function adminUserRoutes(app: FastifyInstance) {
         from public.live_turns
         where user_id = ${id} and status <> 'blocked'
           and created_at >= (date_trunc('day', now() at time zone 'utc') - interval '29 days') at time zone 'utc'
+        group by 1`,
+      sql<{ day: string; n: number }[]>`
+        select to_char((connected_at at time zone 'utc')::date, 'YYYY-MM-DD') as day, round(sum(seconds) / 60.0, 1)::float8 as n
+        from public.live_sessions
+        where user_id = ${id}
+          and connected_at >= (date_trunc('day', now() at time zone 'utc') - interval '29 days') at time zone 'utc'
         group by 1`,
     ]);
     if (!user) return reply.code(404).send({ error: 'not_found', message: 'No such user' });
@@ -228,8 +244,12 @@ export default async function adminUserRoutes(app: FastifyInstance) {
         tokensIn: Number(stats.tokens_in),
         tokensOut: Number(stats.tokens_out),
         sessions: stats.sessions,
+        sessionSeconds: stats.session_seconds,
+        sessionSeconds7d: stats.session_seconds_7d,
         avgTtftMs: stats.avg_ttft,
       },
+      trial: { totalSeconds: user.trial_seconds, usedSeconds: user.trial_used_seconds },
+      minutes: fillDays(minutes),
       devices: devices.map((d) => ({
         id: d.id, os: d.os, osVersion: d.os_version, appVersion: d.app_version, lastSeen: d.last_seen.toISOString(),
       })),
@@ -246,6 +266,8 @@ export default async function adminUserRoutes(app: FastifyInstance) {
         connectedAt: s.connected_at.toISOString(),
         disconnectedAt: s.disconnected_at?.toISOString() ?? null,
         turns: s.turns,
+        seconds: s.seconds,
+        trialSeconds: s.trial_seconds,
       })),
       turns: turns.map(toTurn),
       activity: fillDays(activity),

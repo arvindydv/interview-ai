@@ -1,3 +1,5 @@
+import type { TrialBalance } from './api.js';
+
 // Realtime channel between the desktop client and the Edge API: WS /v1/live/:sessionId (spec §3.5).
 
 export type AnswerTier = 'fast' | 'deep';
@@ -63,6 +65,8 @@ export type ServerMessage =
   | { type: 'transcript'; id: string; source: AudioSource; text: string; final: boolean }
   /** The server heard a question and is answering it as `turnId` (auto-answer). */
   | { type: 'question'; turnId: string; text: string }
+  /** Free-trial balance: sent on connect and every few seconds while metered. Null = plan isn't metered. */
+  | { type: 'trial'; trial: TrialBalance | null }
   /** Speech-to-text state per source. */
   | { type: 'listening'; sources: Record<AudioSource, ListenState>; error?: string };
 

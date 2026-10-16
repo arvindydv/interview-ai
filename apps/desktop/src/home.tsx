@@ -2,9 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle, Briefcase, Camera, Check, ChevronDown, ClipboardList, Copy, EyeOff, Home as HomeIcon, Keyboard, LogOut,
   MessageSquare, PanelTopOpen, Pencil, Play, Power, RefreshCw, SendHorizontal, ShieldAlert, ShieldCheck, Sparkles, Square,
-  Zap,
+  Timer, Zap,
 } from 'lucide-react';
-import { ROUND_TYPES, type HealthReport, type Interview, type Me } from '@parakeet/shared';
+import { ROUND_TYPES, trialLeft, type HealthReport, type Interview, type Me } from '@parakeet/shared';
 import type { LiveStatus, Protection } from './types';
 import { parakeet as p } from './bridge';
 import { useLiveAnswer } from './useLiveAnswer';
@@ -12,6 +12,7 @@ import { renderMarkdown } from './overlay/markdown';
 import { Kbd, LogoMark, Panel, Spinner, StatusDot } from './ui';
 import { Prepare } from './prepare';
 import { useInterviewContext, type InterviewContextState } from './useInterviewContext';
+import { clock, useElapsed, useMe, useTrial, type TrialState } from './useSession';
 import './overlay/overlay.css';
 
 const isMac = p.platform === 'darwin';
@@ -61,23 +62,6 @@ const HOTKEYS = [
 function greeting() {
   const h = new Date().getHours();
   return h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
-}
-
-function useElapsed(running: boolean) {
-  const [start, setStart] = useState<number | null>(null);
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => {
-    if (!running) {
-      setStart(null);
-      return;
-    }
-    setStart((s) => s ?? Date.now());
-    const id = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, [running]);
-  if (start === null) return null;
-  const s = Math.max(0, Math.floor((now - start) / 1000));
-  return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
 }
 
 /** Closes when clicking outside or pressing Escape. */
@@ -158,6 +142,7 @@ function ProfileMenu({ email, me }: { email: string; me: Me | null }) {
                   <span className="rounded-full bg-brand/10 px-2 py-0.5 font-medium text-brand capitalize ring-1 ring-brand/25">
                     {me.plan} plan
                   </span>
+                  {me.trial && <span>{trialLeft(me.trial)}</span>}
                   <span className="capitalize">via {me.authProvider}</span>
                 </>
               ) : (
@@ -273,16 +258,71 @@ function InterviewSummary({ ctx, onPrepare }: { ctx: InterviewContextState; onPr
   );
 }
 
+/** Big session timer, with the free-trial countdown beside it while it's metered. */
+function SessionClock({ elapsed, trial }: { elapsed: string; trial: TrialState | null }) {
+  const low = trial !== null && trial.leftSeconds <= 120;
+  return (
+    <div className="rise-in mt-5 flex flex-wrap items-stretch gap-3">
+      <div className="rounded-xl bg-white/[0.04] px-4 py-2.5 ring-1 ring-line">
+        <p className="text-[11px] tracking-wide text-muted uppercase">Session time</p>
+        <p className="font-mono text-2xl font-semibold tabular-nums">{elapsed}</p>
+      </div>
+      {trial && (
+        <div
+          className={`rounded-xl px-4 py-2.5 ring-1 ${
+            trial.leftSeconds === 0 ? 'bg-danger/10 ring-danger/25' : low ? 'bg-warn/10 ring-warn/25' : 'bg-white/[0.04] ring-line'
+          }`}
+        >
+          <p className="text-[11px] tracking-wide text-muted uppercase">Free minutes left</p>
+          <p
+            className={`font-mono text-2xl font-semibold tabular-nums ${
+              trial.leftSeconds === 0 ? 'text-danger' : low ? 'text-warn' : ''
+            }`}
+          >
+            {clock(trial.leftSeconds)}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FreeTrial({ trial, style }: { trial: TrialState; style?: React.CSSProperties }) {
+  const { totalSeconds, leftSeconds } = trial;
+  const pct = totalSeconds ? (leftSeconds / totalSeconds) * 100 : 0;
+  return (
+    <Panel title="Free trial" icon={Timer} className="rise-in" style={style}>
+      <p className="flex items-baseline gap-2">
+        <span className="text-3xl font-semibold tracking-tight tabular-nums">{Math.ceil(leftSeconds / 60)}</span>
+        <span className="text-sm text-muted">of {Math.round(totalSeconds / 60)} minutes left</span>
+      </p>
+      <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/[0.06]">
+        <div
+          className={`h-full rounded-full transition-[width] duration-1000 ${leftSeconds === 0 ? '' : pct <= 20 ? 'bg-warn' : 'bg-brand-gradient'}`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <p className="mt-3 text-xs leading-relaxed text-faint">
+        {leftSeconds === 0
+          ? 'Your free minutes are used up. Upgrade your plan to keep using live sessions.'
+          : 'Minutes count only while a session is running, including warm-up questions. Preparing your interview is always free.'}
+      </p>
+    </Panel>
+  );
+}
+
 function SessionHero({
   name,
   status,
   elapsed,
+  trial,
   ctx,
   onPrepare,
 }: {
   name: string;
   status: LiveStatus;
   elapsed: string | null;
+  trial: TrialState | null;
   ctx: InterviewContextState;
   onPrepare: () => void;
 }) {
@@ -362,17 +402,18 @@ function SessionHero({
                 </button>
               </>
             )}
-            {live && (
-              <span className="ml-1 flex items-center gap-3 font-mono text-xs text-muted">
-                {elapsed && <span>{elapsed}</span>}
-                {status.rttMs !== null && (
-                  <span className="flex items-center gap-1">
-                    <Zap size={11} className="text-brand" /> {status.rttMs} ms
-                  </span>
-                )}
+            {live && status.rttMs !== null && (
+              <span className="ml-1 flex items-center gap-1 font-mono text-xs text-muted">
+                <Zap size={11} className="text-brand" /> {status.rttMs} ms
               </span>
             )}
           </div>
+          {elapsed && <SessionClock elapsed={elapsed} trial={trial} />}
+          {!elapsed && trial?.leftSeconds === 0 && (
+            <p className="mt-3 text-sm text-warn">
+              Your free trial minutes are used up. Upgrade your plan to keep using live sessions.
+            </p>
+          )}
 
           <ol className="mt-7 flex flex-wrap gap-x-6 gap-y-3 border-t border-line pt-5">
             <Step n={1} title="Signed in" state="done" />
@@ -628,10 +669,11 @@ function SystemStatus() {
 // ---- page -----------------------------------------------------------------------------------------
 
 export function Home({ email }: { email: string }) {
-  const [me, setMe] = useState<Me | null>(null);
   const [status, setStatus] = useState<LiveStatus>({ state: 'disconnected', sessionId: null, rttMs: null });
   const live = status.state === 'connected';
-  const elapsed = useElapsed(live);
+  const me = useMe(status.state !== 'disconnected');
+  const elapsed = useElapsed(status);
+  const trial = useTrial(me, live);
   const ctx = useInterviewContext();
   const [view, setView] = useState<'home' | 'prepare'>('home');
   const mainRef = useRef<HTMLElement>(null);
@@ -649,7 +691,6 @@ export function Home({ email }: { email: string }) {
   const name = email.split('@')[0].split(/[._+-]/)[0];
 
   useEffect(() => {
-    p.api.me().then(setMe, () => {});
     p.live.status().then(setStatus);
     return p.live.onStatus(setStatus);
   }, []);
@@ -701,10 +742,11 @@ export function Home({ email }: { email: string }) {
           </div>
         ) : (
           <div key="home" className="mx-auto max-w-5xl space-y-5 p-6">
-            <SessionHero name={name} status={status} elapsed={elapsed} ctx={ctx} onPrepare={() => setView('prepare')} />
+            <SessionHero name={name} status={status} elapsed={elapsed} trial={trial} ctx={ctx} onPrepare={() => setView('prepare')} />
             <div className="grid gap-5 lg:grid-cols-[1.45fr_1fr]">
               <WarmUp live={live} ctx={ctx} style={rise(2)} />
               <div className="space-y-5">
+                {trial && <FreeTrial trial={trial} style={rise(3)} />}
                 <Hotkeys style={rise(3)} />
                 <Privacy style={rise(4)} />
               </div>
@@ -715,7 +757,10 @@ export function Home({ email }: { email: string }) {
 
       <footer className="flex h-10 shrink-0 items-center gap-3 border-t border-line px-4 text-xs text-faint">
         <SystemStatus />
-        <span className="ml-auto">{me && <span className="capitalize">{me.plan} plan</span>}</span>
+        <span className="ml-auto">
+          {me && <span className="capitalize">{me.plan} plan</span>}
+          {trial && <span> · {Math.ceil(trial.leftSeconds / 60)} of {Math.round(trial.totalSeconds / 60)} free min left</span>}
+        </span>
       </footer>
     </div>
   );

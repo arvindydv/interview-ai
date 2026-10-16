@@ -4,11 +4,11 @@ import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import {
   ArrowLeft, Ban, BriefcaseBusiness, CircleCheck, FileText, History, Laptop, LogOut, MessageSquareText, NotebookPen,
-  RefreshCw, Trash2, UserCog,
+  RefreshCw, Timer, Trash2, UserCog,
 } from 'lucide-react';
-import { ROUND_TYPES, type AdminUserDetail, type ResumeProfile } from '@parakeet/shared';
+import { ROUND_TYPES, trialLeft, type AdminUserDetail, type ResumeProfile } from '@parakeet/shared';
 import { adminApi } from '@/lib/api';
-import { ago, date, dateTime, int, ms } from '@/lib/format';
+import { ago, date, dateTime, duration, int, ms } from '@/lib/format';
 import { useAction, useAsync } from '@/lib/useAsync';
 import { DailyColumns } from '@/components/charts';
 import { TurnDrawer, TurnRow, turnHead } from '@/components/turns';
@@ -89,9 +89,15 @@ export default function UserDetailPage() {
 
       {act.error && <ErrorNote>{act.error}</ErrorNote>}
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Stat label="Questions" value={d.stats.questions} hint={`${d.stats.questionsToday} today · ${d.stats.questions7d} in 7d`} />
         <Stat label="Live sessions" value={d.stats.sessions} />
+        <Stat label="Session time" value={duration(d.stats.sessionSeconds)} hint={`${duration(d.stats.sessionSeconds7d)} in 7d`} />
+        <Stat
+          label="Free trial"
+          value={<span className="text-lg">{trialLeft(d.trial)}</span>}
+          hint={`${duration(d.trial.usedSeconds)} used of ${duration(d.trial.totalSeconds)}${u.plan === 'free' ? '' : ` · not metered on ${u.plan}`}`}
+        />
         <Stat label="Avg. first token" value={ms(d.stats.avgTtftMs)} />
         <Stat label="Input tokens" value={d.stats.tokensIn} />
         <Stat label="Output tokens" value={d.stats.tokensOut} />
@@ -306,33 +312,33 @@ export default function UserDetailPage() {
         )}
       </Card>
 
-      <Card title="Live sessions" icon={History} pad={false}>
+      <Card title="Minutes history" icon={History} pad={false}>
+        <div className="border-b border-line p-5">
+          <p className="mb-3 text-xs text-muted">Live session minutes per day (30d)</p>
+          <DailyColumns data={d.minutes} unit="minutes" height={140} />
+        </div>
         {d.sessions.length === 0 ? (
           <Empty>No live sessions yet.</Empty>
         ) : (
-          <Table head={['Connected', 'Duration', 'Questions', 'Session ID']}>
-            {d.sessions.map((s) => {
-              const end = s.disconnectedAt ? new Date(s.disconnectedAt).getTime() : null;
-              const dur = end ? Math.round((end - new Date(s.connectedAt).getTime()) / 1000) : null;
-              return (
-                <tr key={s.id}>
-                  <td className="whitespace-nowrap px-5 py-3">{dateTime(s.connectedAt)}</td>
-                  <td className="px-5 py-3 text-muted">
-                    {dur === null ? (
-                      <span className="inline-flex items-center gap-2">
-                        <Dot tone="ok" pulse /> open
-                      </span>
-                    ) : dur < 60 ? (
-                      `${dur}s`
-                    ) : (
-                      `${Math.round(dur / 60)} min`
-                    )}
-                  </td>
-                  <td className="px-5 py-3 tabular-nums">{s.turns}</td>
-                  <td className="px-5 py-3 font-mono text-xs text-faint">{s.clientSessionId}</td>
-                </tr>
-              );
-            })}
+          <Table head={['Started', 'Ended', 'Minutes', 'From free trial', 'Questions', 'Session ID']}>
+            {d.sessions.map((s) => (
+              <tr key={s.id}>
+                <td className="whitespace-nowrap px-5 py-3">{dateTime(s.connectedAt)}</td>
+                <td className="whitespace-nowrap px-5 py-3 text-muted">
+                  {s.disconnectedAt ? (
+                    dateTime(s.disconnectedAt)
+                  ) : (
+                    <span className="inline-flex items-center gap-2">
+                      <Dot tone="ok" pulse /> open
+                    </span>
+                  )}
+                </td>
+                <td className="px-5 py-3 tabular-nums">{duration(s.seconds)}</td>
+                <td className="px-5 py-3 tabular-nums text-muted">{s.trialSeconds ? duration(s.trialSeconds) : '–'}</td>
+                <td className="px-5 py-3 tabular-nums">{s.turns}</td>
+                <td className="px-5 py-3 font-mono text-xs text-faint">{s.clientSessionId}</td>
+              </tr>
+            ))}
           </Table>
         )}
       </Card>

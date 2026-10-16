@@ -1,5 +1,7 @@
 // Admin console API (/admin/*), used by apps/admin. Authenticated with an admin token from POST /admin/login.
 
+import type { TrialBalance } from './api.js';
+
 export type UserStatus = 'active' | 'suspended';
 export type TurnStatus = 'done' | 'error' | 'cancelled' | 'blocked';
 
@@ -110,6 +112,9 @@ export interface AdminLiveSession {
   connectedAt: string;
   disconnectedAt: string | null;
   turns: number;
+  /** Metered session time, and how much of it came out of the free trial. */
+  seconds: number;
+  trialSeconds: number;
 }
 
 export interface AdminTurn {
@@ -162,7 +167,14 @@ export interface AdminUserDetail {
     sessions: number;
     avgTtftMs: number | null;
     questionsToday: number;
+    /** Metered live session time, all time / last 7 days. */
+    sessionSeconds: number;
+    sessionSeconds7d: number;
   };
+  /** Free-trial balance; shown whatever the plan, so admins can see what a paid user had used. */
+  trial: TrialBalance;
+  /** Live session minutes per day (30d), to one decimal. */
+  minutes: DayPoint[];
   devices: AdminDevice[];
   resume: {
     id: string;

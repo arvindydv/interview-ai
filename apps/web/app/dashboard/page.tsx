@@ -5,7 +5,7 @@ import {
   Activity, Check, Cpu, FileText, GraduationCap, History, LayoutDashboard, LogOut, Mic, Plus,
   RefreshCw, Settings, User,
 } from 'lucide-react';
-import type { HealthReport, Me, PingJobResult } from '@parakeet/shared';
+import { trialLeft, type HealthReport, type Me, type PingJobResult } from '@parakeet/shared';
 import { api, API_URL } from '@/lib/api';
 import { supabase } from '@/lib/supabase';
 import { Logo, LogoMark } from '@/components/Logo';
@@ -180,6 +180,12 @@ export default function Dashboard() {
               {me.state === 'ok' && (
                 <dl className="space-y-3 text-sm">
                   <div className="flex justify-between gap-4"><dt className="text-muted">Plan</dt><dd><Pill tone="ok">{me.data.plan}</Pill></dd></div>
+                  {me.data.trial && (
+                    <div className="flex justify-between gap-4">
+                      <dt className="text-muted">Free trial</dt>
+                      <dd>{trialLeft(me.data.trial)}</dd>
+                    </div>
+                  )}
                   <div className="flex justify-between gap-4"><dt className="text-muted">Sign-in</dt><dd className="capitalize">{me.data.authProvider}</dd></div>
                   <div className="flex justify-between gap-4"><dt className="text-muted">Member since</dt><dd>{new Date(me.data.createdAt).toLocaleDateString()}</dd></div>
                   <div className="flex justify-between gap-4"><dt className="text-muted">User ID</dt><dd className="truncate font-mono text-xs text-muted">{me.data.id.slice(0, 18)}…</dd></div>
