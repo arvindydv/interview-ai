@@ -1,0 +1,59 @@
+/* Answer typography + syntax colours for the overlay (markdown-it output). */
+
+.pk-md { font-size: 14.5px; line-height: 1.65; color: rgb(238 241 247 / 0.92); }
+.pk-md > :first-child { margin-top: 0; }
+.pk-md p { margin: 0.45em 0; }
+.pk-md strong { color: #fff; font-weight: 650; }
+.pk-md h1, .pk-md h2, .pk-md h3, .pk-md h4 {
+  margin: 1.1em 0 0.35em; font-size: 15px; font-weight: 700; color: #fff; letter-spacing: -0.01em;
+}
+.pk-md ul, .pk-md ol { margin: 0.35em 0; padding-left: 1.3em; }
+.pk-md ul { list-style: disc; }
+.pk-md ol { list-style: decimal; }
+.pk-md li { margin: 0.25em 0; padding-left: 0.15em; }
+.pk-md li::marker { color: var(--color-faint); }
+.pk-md a { color: var(--color-brand-2); text-decoration: underline; text-underline-offset: 2px; }
+.pk-md blockquote { margin: 0.6em 0; padding-left: 0.9em; border-left: 2px solid var(--color-brand); color: var(--color-muted); }
+
+/* inline code: tinted, like the reference */
+.pk-md :not(pre) > code {
+  padding: 0.12em 0.4em; border-radius: 6px; font-family: var(--font-mono); font-size: 0.88em;
+  color: #c4b5fd; background: rgb(167 139 250 / 0.12);
+}
+
+/* code blocks */
+.pk-code { margin: 0.8em 0; border-radius: 12px; background: rgb(10 13 20 / var(--pk-bar-alpha, 0.97)); border: 1px solid var(--color-line); overflow: hidden; }
+.pk-code-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 8px 6px 14px; font-family: var(--font-mono); font-size: 11.5px; color: var(--color-faint);
+}
+.pk-code-head button {
+  display: grid; place-items: center; width: 26px; height: 26px; border-radius: 7px; color: var(--color-muted);
+}
+.pk-code-head button:hover { background: rgb(255 255 255 / 0.07); color: #fff; }
+.pk-code-head button[data-copied] { color: var(--color-brand); }
+.pk-code pre { margin: 0; padding: 4px 14px 14px; overflow-x: auto; }
+.pk-code code { font-family: var(--font-mono); font-size: 13px; line-height: 1.6; white-space: pre; }
+
+.hljs { color: #e6e9f0; }
+.hljs-keyword, .hljs-selector-tag, .hljs-built_in, .hljs-meta .hljs-keyword { color: #f472b6; }
+.hljs-type, .hljs-title.class_, .hljs-class .hljs-title { color: #67e8f9; }
+.hljs-title.function_, .hljs-title, .hljs-section { color: #a78bfa; }
+.hljs-string, .hljs-regexp, .hljs-addition { color: #86efac; }
+.hljs-number, .hljs-literal, .hljs-symbol { color: #fbbf24; }
+.hljs-comment, .hljs-quote { color: #6b7385; font-style: italic; }
+.hljs-attr, .hljs-variable, .hljs-template-variable, .hljs-params { color: #e6e9f0; }
+.hljs-meta, .hljs-doctag { color: #94a3b8; }
+.hljs-deletion { color: #f87171; }
+
+/* Opacity slider in the ⋮ menu */
+.pk-range { -webkit-appearance: none; appearance: none; height: 4px; border-radius: 999px; outline: none;
+  background: linear-gradient(90deg, var(--color-brand), var(--color-brand-2)); cursor: pointer; }
+.pk-range::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 16px; height: 16px; border-radius: 50%;
+  background: #fff; border: 3px solid var(--color-brand); box-shadow: 0 1px 4px rgb(0 0 0 / 0.5); }
+.pk-range::-moz-range-thumb { width: 12px; height: 12px; border-radius: 50%; background: #fff; border: 3px solid var(--color-brand); }
+
+/* Low opacity: keep text legible over whatever is behind the overlay */
+.pk-see-through .pk-md, .pk-see-through button, .pk-see-through span, .pk-see-through p, .pk-see-through input {
+  text-shadow: 0 1px 2px rgb(0 0 0 / 0.85), 0 0 8px rgb(0 0 0 / 0.6);
+}

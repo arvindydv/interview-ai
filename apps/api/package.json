@@ -1,0 +1,34 @@
+{
+  "name": "@parakeet/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "@types/ws": "^8.18.2",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.134.0",
+    "@fastify/cors": "^11.3.1",
+    "@fastify/sensible": "^6.0.7",
+    "@fastify/websocket": "^11.3.4",
+    "@parakeet/emails": "workspace:*",
+    "@parakeet/shared": "workspace:*",
+    "bullmq": "^6.3.15",
+    "fastify": "^5.12.7",
+    "ioredis": "^6.0.0",
+    "jose": "^6.2.12",
+    "mammoth": "^1.13.0",
+    "postgres": "^3.4.9",
+    "unpdf": "^1.9.0",
+    "zod": "^4.6.7"
+  }
+}

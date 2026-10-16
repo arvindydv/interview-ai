@@ -1,0 +1,10 @@
+# Redis for hot session state, rate limits and BullMQ (spec §3.6).
+# Postgres + Auth come from the Supabase CLI (`supabase start`), not from here.
+services:
+  redis:
+    image: redis:7-alpine
+    ports: ["6380:6379"]
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: [redis-data:/data]
+volumes:
+  redis-data:

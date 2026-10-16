@@ -1,0 +1,60 @@
+[package]
+name = "parakeet"
+version = "0.1.0"
+description = "Parakeet: Real-Time AI Interview Assistant"
+authors = ["BidYourStay"]
+license = ""
+repository = ""
+edition = "2024"
+rust-version = "1.90"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "parakeet_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7.3", features = [] }
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+tauri = { version = "2.12.4", features = ["macos-private-api"] }
+tauri-plugin-log = "2"
+tauri-plugin-single-instance = "2.5.4"
+tauri-plugin-opener = "2.7.2"
+tokio = { version = "1.53.3", features = ["sync", "time", "net", "macros", "io-util"] }
+tokio-tungstenite = { version = "0.30.0", features = ["connect", "native-tls", "rustls-tls-webpki-roots"], default-features = false }
+futures-util = "0.3.34"
+uuid = { version = "1.28.0", features = ["v4"] }
+os_info = "3.15.0"
+url = "2.5.8"
+anyhow = "1.0.104"
+keyring = "4.2.0"
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "native-tls"] }
+tauri-plugin-clipboard-manager = "2.5.0"
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
+base64 = "0.23.1"
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-global-shortcut = "2.4.1"
+
+# Smaller, faster release binaries.
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true
+
+# Screen capture: native APIs on Windows/macOS; the desktop screenshot portal on Linux (pure Rust,
+# no PipeWire/clang build dependency).
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
+xcap = "0.9.8"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# async-io (not tokio): enabling zbus's tokio mode breaks the keyring's blocking D-Bus calls inside
+# Tauri's async runtime.
+ashpd = { version = "0.13.13", default-features = false, features = ["async-io", "screenshot"] }

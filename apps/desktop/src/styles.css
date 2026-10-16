@@ -1,0 +1,28 @@
+@import "tailwindcss";
+@import "@parakeet/shared/theme.css";
+@import "@parakeet/shared/motion.css";
+
+html, body, #root { height: 100%; }
+body { margin: 0; }
+
+/* Main window: standby orb ripples and popover entrance */
+@keyframes ripple {
+  from { transform: scale(0.7); opacity: 0.6; }
+  to { transform: scale(1.8); opacity: 0; }
+}
+@keyframes pop-in {
+  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes shimmer { to { background-position: -200% 0; } }
+.shimmer {
+  background: linear-gradient(90deg, rgb(255 255 255 / 0.04) 25%, rgb(255 255 255 / 0.1) 50%, rgb(255 255 255 / 0.04) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.6s linear infinite;
+}
+.ripple { animation: ripple 3.6s cubic-bezier(0.2, 0.7, 0.2, 1) infinite; animation-delay: var(--d, 0s); }
+.pop-in { animation: pop-in 160ms cubic-bezier(0.2, 0.7, 0.2, 1) both; transform-origin: top right; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ripple, .pop-in, .shimmer { animation: none !important; }
+}

@@ -1,0 +1,171 @@
+@import "tailwindcss";
+@import "@parakeet/shared/theme.css";
+@import "@parakeet/shared/motion.css";
+
+/* ============================================================
+   Landing page motion system (apps/web only)
+   ============================================================ */
+
+@property --score {
+  syntax: "<integer>";
+  initial-value: 0;
+  inherits: false;
+}
+
+@keyframes word-in {
+  from { opacity: 0; transform: translateY(70%); filter: blur(10px); }
+  to { opacity: 1; transform: none; filter: none; }
+}
+@keyframes marquee { to { transform: translateX(-50%); } }
+@keyframes scan {
+  0% { top: 0%; opacity: 0; }
+  10%, 90% { opacity: 1; }
+  100% { top: 100%; opacity: 0; }
+}
+@keyframes type-line {
+  0%, 10% { width: 0; }
+  60%, 100% { width: var(--w, 100%); }
+}
+@keyframes score-fill {
+  0%, 15% { --score: 0; }
+  70%, 100% { --score: 92; }
+}
+@keyframes ripple {
+  from { transform: scale(0.6); opacity: 0.7; }
+  to { transform: scale(1.9); opacity: 0; }
+}
+@keyframes orbit { to { transform: rotate(360deg); } }
+@keyframes orbit-rev { to { transform: rotate(-360deg); } }
+@keyframes float-slow {
+  0%, 100% { transform: translateY(0) rotate(var(--r, 0deg)); }
+  50% { transform: translateY(-10px) rotate(var(--r, 0deg)); }
+}
+@keyframes cloak {
+  0%, 35% { opacity: 1; filter: none; }
+  50%, 85% { opacity: 0; filter: blur(6px); }
+  100% { opacity: 1; filter: none; }
+}
+@keyframes cloak-badge {
+  0%, 35% { opacity: 0; transform: translateY(6px); }
+  50%, 85% { opacity: 1; transform: none; }
+  100% { opacity: 0; transform: translateY(6px); }
+}
+@keyframes grow-x {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+
+/* --- Rotating headline word --- */
+.word-swap { display: inline-block; animation: word-in 0.6s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+
+/* --- Scroll reveal (driven by <Reveal>) --- */
+.reveal {
+  opacity: 0;
+  transform: translateY(28px);
+  filter: blur(6px);
+  transition:
+    opacity 0.9s cubic-bezier(0.2, 0.7, 0.2, 1),
+    transform 0.9s cubic-bezier(0.2, 0.7, 0.2, 1),
+    filter 0.9s ease;
+  transition-delay: var(--d, 0ms);
+}
+.reveal[data-in] { opacity: 1; transform: none; filter: none; }
+@media (scripting: none) {
+  .reveal { opacity: 1; transform: none; filter: none; }
+}
+
+/* --- Cursor spotlight cards (driven by <SpotlightGroup>) --- */
+.spot { position: relative; isolation: isolate; }
+.spot::before,
+.spot::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+}
+/* glowing border that follows the cursor */
+.spot::before {
+  padding: 1px;
+  background: radial-gradient(380px circle at var(--mx, 50%) var(--my, 50%), rgb(52 211 153 / 0.7), rgb(167 139 250 / 0.35) 35%, transparent 60%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  z-index: 2;
+}
+/* soft fill under the cursor */
+.spot::after {
+  background: radial-gradient(500px circle at var(--mx, 50%) var(--my, 50%), rgb(52 211 153 / 0.07), transparent 45%);
+  z-index: -1;
+}
+.spot-group:hover .spot::before,
+.spot-group:hover .spot::after { opacity: 1; }
+
+/* --- Marquee --- */
+.marquee {
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+}
+.marquee-track {
+  display: flex;
+  width: max-content;
+  gap: 0.75rem;
+  animation: marquee var(--dur, 40s) linear infinite;
+}
+.marquee-track[data-reverse] { animation-direction: reverse; }
+.marquee:hover .marquee-track { animation-play-state: paused; }
+
+/* --- Feature visuals --- */
+.scan-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--color-brand-2), transparent);
+  box-shadow: 0 0 16px 2px rgb(34 211 238 / 0.6);
+  animation: scan 2.8s ease-in-out infinite;
+}
+.type-line {
+  height: 0.5rem;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgb(52 211 153 / 0.5), rgb(34 211 238 / 0.25));
+  animation: type-line 4s ease-out infinite;
+  animation-delay: var(--d, 0s);
+}
+.score-ring {
+  background: conic-gradient(var(--color-brand) calc(var(--score) * 1%), rgb(255 255 255 / 0.06) 0);
+  animation: score-fill 5s cubic-bezier(0.2, 0.7, 0.2, 1) infinite;
+  counter-reset: score var(--score);
+}
+.score-ring .score-num::after { content: counter(score); }
+.ripple { animation: ripple 3.6s cubic-bezier(0.2, 0.7, 0.2, 1) infinite; animation-delay: var(--d, 0s); }
+.orbit { animation: orbit var(--dur, 24s) linear infinite; }
+.orbit-rev { animation: orbit-rev var(--dur, 24s) linear infinite; }
+.float-slow { animation: float-slow 6s ease-in-out infinite; animation-delay: var(--d, 0s); }
+.cloak { animation: cloak 6s ease-in-out infinite; }
+.cloak-badge { animation: cloak-badge 6s ease-in-out infinite; }
+
+/* --- Scroll-linked timeline line in "How it works" (progressive enhancement) --- */
+.timeline-fill { transform-origin: left; transform: scaleX(1); }
+@supports (animation-timeline: view()) {
+  .timeline-fill {
+    animation: grow-x linear both;
+    animation-timeline: view();
+    animation-range: entry 20% cover 55%;
+  }
+}
+
+/* --- Accessibility: honour reduced motion everywhere on the landing page --- */
+@media (prefers-reduced-motion: reduce) {
+  .landing *,
+  .landing *::before,
+  .landing *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .reveal { opacity: 1; transform: none; filter: none; }
+}

@@ -1,0 +1,24 @@
+{
+  "name": "parakeet",
+  "private": true,
+  "packageManager": "pnpm@10.28.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "infra:up": "docker compose up -d && npx supabase start -x studio,imgproxy,vector,logflare,edge-runtime,realtime",
+    "infra:down": "npx supabase stop && docker compose down",
+    "db:reset": "npx supabase db reset",
+    "dev": "pnpm --filter @parakeet/shared --filter @parakeet/emails build && pnpm --parallel --filter @parakeet/api --filter @parakeet/worker --filter @parakeet/web --filter @parakeet/shared --filter @parakeet/emails dev",
+    "dev:desktop": "pnpm --filter @parakeet/desktop dev",
+    "build": "pnpm --filter '!@parakeet/desktop' -r build && pnpm --filter @parakeet/desktop build:ui",
+    "typecheck": "pnpm -r typecheck",
+    "setup": "node scripts/setup-env.mjs",
+    "build:desktop": "pnpm --filter @parakeet/shared build && pnpm --filter @parakeet/desktop build",
+    "emails:preview": "pnpm --filter @parakeet/emails preview",
+    "emails:build": "pnpm --filter @parakeet/emails build"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2"
+  }
+}
