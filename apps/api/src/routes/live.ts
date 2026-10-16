@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import {
   DEFAULT_SETTINGS, IMAGE_LIMITS, parseMessage, type ClientMessage, type ImageAttachment, type ServerMessage,
@@ -5,9 +6,11 @@ import {
 import { closeLiveSession, openLiveSession, questionsToday, recordTurn, type TurnRecord } from '../lib/activity.js';
 import { requireAuth } from '../lib/auth.js';
 import { loadInterviewContext, type InterviewContext } from '../lib/context.js';
+import { Conversation, Listener, type AnswerHandle } from '../lib/listen.js';
 import { trackConnection } from '../lib/liveRegistry.js';
 import { LlmError, llmConfigured, streamAnswer } from '../lib/llm.js';
 import { getSettings } from '../lib/settings.js';
+import { sttConfigured } from '../lib/stt.js';
 
 // Placeholder until the LLM proxy (spec C4/C5) is wired in: streams a canned, answer-first Markdown
 // reply in small chunks so the overlay's rendering, cancellation and usage plumbing can be built
@@ -21,7 +24,7 @@ function stubAnswer(question: string, imageCount: number, context: InterviewCont
         .join(', ')
     : '';
   return [
-    `**Sample answer** (the AI model isn't connected yet: set \`ANTHROPIC_API_KEY\` on the API) for: _${q}_` +
+    `**Sample answer** (the AI model isn't connected yet: set \`OPENROUTER_API_KEY\` or \`ANTHROPIC_API_KEY\` on the API) for: _${q}_` +
       (imageCount ? ` with ${imageCount} screenshot${imageCount > 1 ? 's' : ''} received` : ''),
     '',
     using ? `_Context loaded: ${using}. The real model will use it to answer._` : '_No interview context yet: add your resume in Prepare._',
@@ -84,10 +87,13 @@ function validateImages(images: unknown): string | null {
   return null;
 }
 
-/** Answers one turn with Claude, or with the labelled sample when no credentials are configured. */
+type AskMessage = Extract<ClientMessage, { type: 'ask' }>;
+
+/** Answers one turn with the LLM, or with the labelled sample when no credentials are configured. */
 async function answerTurn(
   userId: string,
-  msg: Extract<ClientMessage, { type: 'ask' }>,
+  msg: AskMessage,
+  history: string,
   send: (m: ServerMessage) => void,
   signal: AbortSignal,
   log: FastifyInstance['log'],
@@ -142,12 +148,13 @@ async function answerTurn(
       text: msg.text,
       images,
       context: context?.text,
+      history,
       signal,
       models: { fast: settings.fastModel, vision: settings.visionModel },
       onDelta: (delta, tier) => send({ type: 'token', turnId: msg.turnId, tier, delta }),
     });
     turn.model = usage.model;
-    log.info({ turnId: msg.turnId, model: usage.model, images: images.length, context: Boolean(context), usage }, 'answer complete');
+    log.info({ turnId: msg.turnId, model: usage.model, images: images.length, context: Boolean(context), history: Boolean(history), usage }, 'answer complete');
     send({ type: 'done', turnId: msg.turnId, usage: { tokensIn: usage.tokensIn, tokensOut: usage.tokensOut } });
   } catch (err) {
     if (signal.aborted) return; // cancelled by the client: nothing to report
@@ -160,15 +167,15 @@ async function answerTurn(
   }
 }
 
-/** Answers a turn and records it (question, answer, usage, latency) for the admin console. */
-async function answerAndRecord(
+/** Answers a turn, tracking what it needs for the admin console (question, answer, usage, latency). */
+async function answerTracked(
   userId: string,
-  liveSessionId: Promise<string | null>,
-  msg: Extract<ClientMessage, { type: 'ask' }>,
+  msg: AskMessage,
+  history: string,
   send: (m: ServerMessage) => void,
   signal: AbortSignal,
   log: FastifyInstance['log'],
-) {
+): Promise<TurnRecord> {
   const started = performance.now();
   const turn: TurnRecord = {
     userId, liveSessionId: null, turnId: msg.turnId, question: msg.text ?? '', answer: '',
@@ -191,12 +198,12 @@ async function answerAndRecord(
     send(m);
   };
   try {
-    await answerTurn(userId, msg, tracked, signal, log, turn);
-  } finally {
-    turn.durationMs = Math.round(performance.now() - started);
-    turn.liveSessionId = await liveSessionId;
-    recordTurn(turn).catch((err) => log.error({ err, turnId: msg.turnId }, 'failed to record turn'));
+    await answerTurn(userId, msg, history, tracked, signal, log, turn);
+  } catch (err) {
+    log.error({ err, turnId: msg.turnId }, 'answer failed');
   }
+  turn.durationMs = Math.round(performance.now() - started);
+  return turn;
 }
 
 export default async function liveRoutes(app: FastifyInstance) {
@@ -217,9 +224,68 @@ export default async function liveRoutes(app: FastifyInstance) {
         req.log.error({ err }, 'failed to record live session');
         return null;
       });
-      send({ type: 'status', userId: req.user.id, sessionId, providers: { stt: 'up', llm: 'up' } });
+      const conversation = new Conversation();
 
-      socket.on('message', (raw) => {
+      /**
+       * Starts answering a question. Heard questions are `announce`d to the client (it didn't ask
+       * them); a `hold` answer streams into a buffer until release(), and is dropped (never shown or
+       * recorded) if cancelled first.
+       */
+      const startAnswer = (msg: AskMessage, opts: { announce?: boolean; hold?: boolean } = {}): AnswerHandle => {
+        turns.get(msg.turnId)?.abort();
+        const ctrl = new AbortController();
+        turns.set(msg.turnId, ctrl);
+        let held: ServerMessage[] | null = opts.hold ? [] : null;
+        const out = (m: ServerMessage) => (held ? held.push(m) : send(m));
+        const finished = answerTracked(req.user.id, msg, conversation.render(msg.text), out, ctrl.signal, req.log).finally(() => {
+          if (turns.get(msg.turnId) === ctrl) turns.delete(msg.turnId);
+        });
+        const record = () =>
+          finished
+            .then(async (turn) => {
+              turn.liveSessionId = await liveSessionId;
+              await recordTurn(turn);
+            })
+            .catch((err) => req.log.error({ err, turnId: msg.turnId }, 'failed to record turn'));
+        const announce = () => opts.announce && send({ type: 'question', turnId: msg.turnId, text: msg.text });
+        if (!held) {
+          announce();
+          void record();
+        }
+        return {
+          release() {
+            if (!held || ctrl.signal.aborted) return;
+            announce();
+            const buffered = held;
+            held = null;
+            buffered.forEach(send);
+            void record();
+          },
+          cancel() {
+            ctrl.abort();
+            if (turns.get(msg.turnId) === ctrl) turns.delete(msg.turnId);
+          },
+        };
+      };
+
+      const listener = new Listener({
+        send,
+        conversation,
+        log: req.log,
+        answer: (text, hold) => startAnswer({ type: 'ask', turnId: randomUUID(), text }, { announce: true, hold }),
+        keyterms: async () => {
+          const ctx = await loadInterviewContext(req.user.id);
+          return [ctx?.company, ctx?.role].filter((t): t is string => Boolean(t && t.length <= 60));
+        },
+      });
+
+      send({
+        type: 'status', userId: req.user.id, sessionId,
+        providers: { stt: sttConfigured() ? 'up' : 'down', llm: llmConfigured() ? 'up' : 'down' },
+      });
+
+      socket.on('message', (raw, isBinary) => {
+        if (isBinary) return listener.audio(Buffer.isBuffer(raw) ? raw : Buffer.concat(raw as Buffer[]));
         const msg = parseMessage<ClientMessage>(raw.toString());
         if (!msg) return send({ type: 'error', code: 'bad_message', message: 'Expected JSON with a type' });
 
@@ -229,14 +295,13 @@ export default async function liveRoutes(app: FastifyInstance) {
           case 'ask': {
             const invalid = validateImages(msg.images);
             if (invalid) return send({ type: 'error', turnId: msg.turnId, code: 'bad_images', message: invalid });
-            turns.get(msg.turnId)?.abort();
-            const ctrl = new AbortController();
-            turns.set(msg.turnId, ctrl);
-            answerAndRecord(req.user.id, liveSessionId, msg, send, ctrl.signal, req.log).finally(() => {
-              if (turns.get(msg.turnId) === ctrl) turns.delete(msg.turnId);
-            });
+            startAnswer(msg);
             return;
           }
+          case 'listen':
+            if (!Array.isArray(msg.sources)) return send({ type: 'error', code: 'bad_message', message: 'sources must be an array' });
+            listener.configure(msg.sources, msg.autoAnswer !== false);
+            return;
           case 'cancel':
             turns.get(msg.turnId)?.abort();
             turns.delete(msg.turnId);
@@ -247,6 +312,7 @@ export default async function liveRoutes(app: FastifyInstance) {
       });
 
       socket.on('close', () => {
+        listener.close();
         for (const ctrl of turns.values()) ctrl.abort();
         untrack();
         void liveSessionId.then((id) => (id ? closeLiveSession(id) : undefined)).catch(() => {});

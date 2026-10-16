@@ -3,11 +3,12 @@ import { createRoot } from 'react-dom/client';
 import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
 import {
   AudioLines, Blend, Camera, ChevronDown, ImagePlus, Loader2, ShieldAlert, ShieldCheck, ChevronLeft, ChevronRight, Copy, Check, EyeOff, LayoutDashboard, Maximize2,
-  MessageSquare, Mic, Minimize2, Move, MoreVertical, PanelBottomOpen, Power, SendHorizontal, Sparkles, Volume2, X, Zap,
+  MessageSquare, Mic, MicOff, Minimize2, Move, MoreVertical, PanelBottomOpen, Power, SendHorizontal, Sparkles, Volume2, VolumeX, X, Zap,
 } from 'lucide-react';
+import type { ListenState } from '@parakeet/shared';
 import '@fontsource-variable/inter';
 import { parakeet } from './bridge';
-import type { Protection, Screenshot } from './types';
+import type { AudioSettings, Protection, Screenshot, SourceStatus } from './types';
 import { LogoMark } from './ui';
 import { renderMarkdown } from './overlay/markdown';
 import { useOverlayState, type OverlayAnswer } from './overlay/useOverlayState';
@@ -134,13 +135,48 @@ function IconButton({
   );
 }
 
-/** Audio source indicator. Red dot = being captured (live session running). */
-function SourceIndicator({ icon: Icon, title, live }: { icon: typeof Mic; title: string; live: boolean }) {
+/**
+ * Audio source toggle. Red dot = being captured and transcribed; amber = a problem (hover for why).
+ * Click to mute or unmute the source.
+ */
+function SourceToggle({
+  icon: Icon, offIcon: OffIcon, label, source, stt, onToggle,
+}: {
+  icon: typeof Mic;
+  offIcon: typeof Mic;
+  label: string;
+  source?: SourceStatus;
+  stt?: ListenState;
+  onToggle: () => void;
+}) {
+  const enabled = source?.enabled ?? true;
+  const on = source?.state === 'on';
+  const live = on && stt === 'up';
+  const problem = source?.state === 'error' || (on && stt === 'down');
+  const title = !enabled
+    ? `${label}: muted (click to turn on)`
+    : source?.state === 'error'
+      ? `${label}: ${source.error}`
+      : live
+        ? `${label}: listening (click to mute)`
+        : on || source?.state === 'starting'
+          ? `${label}: connecting…`
+          : `${label}: starts with the interview`;
   return (
-    <span title={title} className="relative grid size-8 place-items-center text-muted">
-      <Icon size={16} />
-      <span className={`absolute top-1 right-1 size-2 rounded-full ring-2 ring-[#0b0f17] ${live ? 'bg-danger' : 'bg-faint'}`} />
-    </span>
+    <button
+      onClick={onToggle}
+      title={title}
+      aria-label={title}
+      aria-pressed={enabled}
+      className={`relative grid size-8 place-items-center rounded-lg hover:bg-white/[0.08] ${enabled ? 'text-muted' : 'text-faint'}`}
+    >
+      {enabled ? <Icon size={16} /> : <OffIcon size={16} />}
+      <span
+        className={`absolute top-1 right-1 size-2 rounded-full ring-2 ring-[#0b0f17] ${
+          live ? 'bg-danger' : problem ? 'bg-warn' : 'bg-faint'
+        }`}
+      />
+    </button>
   );
 }
 
@@ -191,7 +227,7 @@ function AnswerBody({ answer }: { answer: OverlayAnswer }) {
 // ---- overlay -------------------------------------------------------------------------------------------
 
 function Overlay() {
-  const { auth, status, answers, index, current, transcript, go, clearAnswers, clearTranscript } = useOverlayState();
+  const { auth, status, audio, listening, answers, index, current, transcript, go, clearAnswers, clearTranscript } = useOverlayState();
   const [collapsed, setCollapsed] = useState(false);
   // The answer block can be closed; the window then shrinks to the bars above it.
   const [panelVisible, setPanelVisible] = useState(true);
@@ -227,6 +263,15 @@ function Overlay() {
   const [transcriptOverflows, setTranscriptOverflows] = useState(false);
   const connected = status.state === 'connected';
   const signedIn = Boolean(auth?.user);
+  const hearing = connected && audio?.interviewer.state === 'on' && listening?.sources.interviewer === 'up';
+  const autoAnswer = audio?.autoAnswer ?? true;
+  const setAudio = useCallback(
+    (patch: Partial<AudioSettings>) => {
+      if (!audio) return;
+      void parakeet.audio.set({ interviewer: audio.interviewer.enabled, you: audio.you.enabled, autoAnswer: audio.autoAnswer, ...patch });
+    },
+    [audio],
+  );
 
   const flash = useCallback((msg: string) => {
     setNotice(msg);
@@ -318,17 +363,31 @@ function Overlay() {
     seenAnswers.current = answerCount;
   }, [answerCount]);
 
-  // "Answer" answers what the interviewer just said. Until live transcription (spec B4) is wired in,
-  // there is no heard speech to answer, so it falls back to typing the question.
+  // "Answer" answers what the interviewer just said (even mid-sentence). With nothing heard, it
+  // falls back to typing the question.
   const answerNow = useCallback(() => {
     const heard = transcript.filter((l) => l.speaker === 'interviewer');
     if (!heard.length) {
       openChat();
-      flash('Live transcription isn’t connected yet. Type the question to get an answer.');
+      flash(
+        hearing
+          ? 'Nothing heard from the interviewer yet. Type the question to get an answer.'
+          : 'Not listening to the interviewer right now. Type the question to get an answer.',
+      );
       return;
     }
     void ask(heard[heard.length - 1].text);
-  }, [transcript, openChat, flash, ask]);
+  }, [transcript, hearing, openChat, flash, ask]);
+
+  // Surface capture and speech-to-text problems once each (the toggles keep showing them on hover).
+  const problem =
+    (audio?.interviewer.state === 'error' && audio.interviewer.error) ||
+    (audio?.you.state === 'error' && audio.you.error) ||
+    (connected && listening?.error) ||
+    null;
+  useEffect(() => {
+    if (problem) flash(problem);
+  }, [problem, flash]);
 
   // Each press captures the screen and appends it to the chat bar; Enter sends them all (spec D1/D4).
   const screenshot = useCallback(async () => {
@@ -447,8 +506,22 @@ function Overlay() {
               Parakeet
             </span>
           </div>
-          <SourceIndicator icon={Volume2} title={connected ? 'Interviewer audio: live' : 'Interviewer audio: off'} live={connected} />
-          <SourceIndicator icon={Mic} title={connected ? 'Microphone: live' : 'Microphone: off'} live={connected} />
+          <SourceToggle
+            icon={Volume2}
+            offIcon={VolumeX}
+            label="Interviewer audio"
+            source={audio?.interviewer}
+            stt={connected ? listening?.sources.interviewer : undefined}
+            onToggle={() => setAudio({ interviewer: !(audio?.interviewer.enabled ?? true) })}
+          />
+          <SourceToggle
+            icon={Mic}
+            offIcon={MicOff}
+            label="Your microphone"
+            source={audio?.you}
+            stt={connected ? listening?.sources.you : undefined}
+            onToggle={() => setAudio({ you: !(audio?.you.enabled ?? true) })}
+          />
         {protection && (
           <button
             onClick={() => flash(protection.detail)}
@@ -519,6 +592,19 @@ function Overlay() {
                   </div>
                 </div>
                 <div className="mx-1 mb-1 h-px bg-white/[0.07]" />
+                <button
+                  onClick={() => setAudio({ autoAnswer: !autoAnswer })}
+                  role="switch"
+                  aria-checked={autoAnswer}
+                  title="Answer each question as soon as the interviewer finishes asking it"
+                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] hover:bg-white/[0.07]"
+                >
+                  <Sparkles size={15} className="text-muted" />
+                  <span className="flex-1">Auto-answer questions</span>
+                  <span className={`relative h-4 w-7 rounded-full transition-colors ${autoAnswer ? 'bg-brand' : 'bg-white/15'}`}>
+                    <span className={`absolute top-0.5 size-3 rounded-full bg-white transition-all ${autoAnswer ? 'left-3.5' : 'left-0.5'}`} />
+                  </span>
+                </button>
                 {[
                   { icon: LayoutDashboard, label: 'Open Parakeet', run: () => parakeet.app.showMain() },
                   { icon: EyeOff, label: 'Hide overlay', keys: [MOD, '\\'], run: () => parakeet.overlay.toggle() },
@@ -585,7 +671,11 @@ function Overlay() {
             >
               {transcript.length ? (
                 transcript.map((l, i) => (
-                  <span key={l.id} className={i === transcript.length - 1 ? 'text-fg' : 'text-muted'}>
+                  <span
+                    key={l.id}
+                    className={`${i === transcript.length - 1 ? 'text-fg' : 'text-muted'} ${l.speaker === 'you' ? 'opacity-70' : ''}`}
+                  >
+                    {l.speaker === 'you' && <span className="mr-1.5 text-faint">You:</span>}
                     {l.text}
                   </span>
                 ))
@@ -593,7 +683,11 @@ function Overlay() {
                 <span className="text-muted">
                   {signedIn
                     ? connected
-                      ? 'Listening… questions appear here. Press Answer and Parakeet replies using your resume.'
+                      ? hearing
+                        ? autoAnswer
+                          ? 'Listening… each question is answered as soon as the interviewer finishes it.'
+                          : 'Listening… press Answer when the interviewer finishes a question.'
+                        : 'Connected. Type a question with Chat, or turn on interviewer audio to answer what they ask.'
                       : `Press Answer (${MOD} ↵) or Chat to start. Parakeet answers using your resume.`
                     : 'Sign in from the Parakeet window to start.'}
                 </span>

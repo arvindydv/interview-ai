@@ -13,6 +13,25 @@ export type LiveEvent = ServerMessage & { ttftMs?: number };
 
 export type OverlayCommand = 'answer' | 'screenshot' | 'chat';
 
+/** Capture state of one audio source (interviewer = system audio, you = microphone). */
+export interface SourceStatus {
+  /** The user wants it on. */
+  enabled: boolean;
+  state: 'off' | 'starting' | 'on' | 'error';
+  error: string | null;
+}
+export interface AudioStatus {
+  interviewer: SourceStatus;
+  you: SourceStatus;
+  /** Answer finished interviewer questions without pressing Answer. */
+  autoAnswer: boolean;
+}
+export interface AudioSettings {
+  interviewer: boolean;
+  you: boolean;
+  autoAnswer: boolean;
+}
+
 export interface Protection {
   level: 'hidden' | 'not_guaranteed' | 'visible';
   detail: string;
@@ -58,8 +77,14 @@ export interface ParakeetApi {
     status(): Promise<LiveStatus>;
     onStatus(cb: (s: LiveStatus) => void): () => void;
     onMessage(cb: (m: LiveEvent) => void): () => void;
-    /** A question was sent (from any window); carries its text. */
-    onAsked(cb: (q: { turnId: string; text: string; imageCount: number }) => void): () => void;
+    /** A question was sent (from any window), or heard and auto-answered (`auto`); carries its text. */
+    onAsked(cb: (q: { turnId: string; text: string; imageCount: number; auto?: boolean }) => void): () => void;
+  };
+  /** Live audio capture, running while the live session is. */
+  audio: {
+    status(): Promise<AudioStatus>;
+    set(settings: AudioSettings): Promise<void>;
+    onStatus(cb: (s: AudioStatus) => void): () => void;
   };
   overlay: {
     toggle(): Promise<void>;

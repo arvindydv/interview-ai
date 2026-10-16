@@ -15,7 +15,11 @@ use tauri::async_runtime::JoinHandle;
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::{client::IntoClientRequest, http::header, Message};
 
-use crate::{auth::Auth, config};
+use crate::{
+    audio::{self, Capture, Source},
+    auth::Auth,
+    config,
+};
 
 #[derive(Clone, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -26,12 +30,69 @@ pub struct LiveStatus {
     pub error: Option<String>,
 }
 
+/// Capture state of one audio source, as shown on the overlay.
+#[derive(Clone, Serialize)]
+pub struct SourceStatus {
+    /// The user wants this source (toggled on the overlay).
+    pub enabled: bool,
+    /// "off", "starting", "on" (capturing) or "error".
+    pub state: &'static str,
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioStatus {
+    pub interviewer: SourceStatus,
+    pub you: SourceStatus,
+    /// Answer finished interviewer questions without a key press.
+    pub auto_answer: bool,
+}
+
+impl Default for AudioStatus {
+    fn default() -> Self {
+        let on = || SourceStatus { enabled: true, state: "off", error: None };
+        Self { interviewer: on(), you: on(), auto_answer: true }
+    }
+}
+
+impl AudioStatus {
+    fn source(&mut self, source: Source) -> &mut SourceStatus {
+        match source {
+            Source::Interviewer => &mut self.interviewer,
+            Source::You => &mut self.you,
+        }
+    }
+
+    /// The `listen` message: transcribe the sources that are actually capturing.
+    fn listen_message(&self) -> String {
+        let sources: Vec<&str> = Source::ALL
+            .into_iter()
+            .filter(|s| match s {
+                Source::Interviewer => self.interviewer.state == "on",
+                Source::You => self.you.state == "on",
+            })
+            .map(Source::name)
+            .collect();
+        json!({ "type": "listen", "sources": sources, "autoAnswer": self.auto_answer }).to_string()
+    }
+}
+
+enum Outgoing {
+    Text(String),
+    Audio(Vec<u8>),
+}
+
 #[derive(Default)]
 struct Inner {
     status: LiveStatus,
-    tx: Option<mpsc::UnboundedSender<String>>,
+    tx: Option<mpsc::UnboundedSender<Outgoing>>,
     task: Option<JoinHandle<()>>,
     asked_at: HashMap<String, Instant>,
+    audio: AudioStatus,
+    captures: HashMap<Source, Capture>,
+    /// Bumped on every connect/disconnect, so a capture that finishes opening late can tell it is stale.
+    generation: u64,
 }
 
 #[derive(Clone, Default)]
@@ -59,23 +120,165 @@ impl Live {
         let session_id = format!("dev-{}", &uuid::Uuid::new_v4().simple().to_string()[..8]);
         let (tx, rx) = mpsc::unbounded_channel();
         let this = self.clone();
-        let task = tauri::async_runtime::spawn(async move { this.run(app, session_id, rx).await });
-        let mut inner = self.0.lock().unwrap();
-        inner.tx = Some(tx);
-        inner.task = Some(task);
+        let task = tauri::async_runtime::spawn({
+            let app = app.clone();
+            async move { this.run(app, session_id, rx).await }
+        });
+        {
+            let mut inner = self.0.lock().unwrap();
+            inner.tx = Some(tx);
+            inner.task = Some(task);
+            inner.generation += 1;
+        }
+        // The interview is live: start listening.
+        self.sync_audio(&app);
     }
 
     pub fn disconnect(&self, app: &AppHandle) {
-        let task = {
+        let (task, captures) = {
             let mut inner = self.0.lock().unwrap();
             inner.tx = None;
             inner.asked_at.clear();
-            inner.task.take()
+            inner.generation += 1;
+            for s in Source::ALL {
+                let status = inner.audio.source(s);
+                status.state = "off";
+                status.error = None;
+            }
+            (inner.task.take(), std::mem::take(&mut inner.captures))
         };
         if let Some(t) = task {
             t.abort();
         }
+        drop(captures);
+        self.emit_audio(app);
         self.set_status(app, LiveStatus { state: "disconnected", ..Default::default() });
+    }
+
+    // ---- audio ----------------------------------------------------------------------------------
+
+    pub fn audio_status(&self) -> AudioStatus {
+        self.0.lock().unwrap().audio.clone()
+    }
+
+    fn emit_audio(&self, app: &AppHandle) {
+        let _ = app.emit("audio:status", self.audio_status());
+    }
+
+    /// Turns sources on or off and sets auto-answer (overlay toggles).
+    pub fn set_audio(&self, app: &AppHandle, interviewer: bool, you: bool, auto_answer: bool) {
+        {
+            let mut inner = self.0.lock().unwrap();
+            inner.audio.interviewer.enabled = interviewer;
+            inner.audio.you.enabled = you;
+            inner.audio.auto_answer = auto_answer;
+        }
+        self.sync_audio(app);
+    }
+
+    /// Starts or stops captures to match what's enabled, while a session is running. Device opening
+    /// can block, so it happens on a blocking thread.
+    fn sync_audio(&self, app: &AppHandle) {
+        let (start, stop, generation) = {
+            let mut inner = self.0.lock().unwrap();
+            let in_session = inner.tx.is_some();
+            let mut start = Vec::new();
+            let mut stop = Vec::new();
+            for s in Source::ALL {
+                let wanted = in_session && inner.audio.source(s).enabled;
+                let running = inner.captures.contains_key(&s);
+                if wanted && !running && inner.audio.source(s).state != "starting" {
+                    inner.audio.source(s).state = "starting";
+                    inner.audio.source(s).error = None;
+                    start.push(s);
+                } else if !wanted && running {
+                    stop.extend(inner.captures.remove(&s));
+                    inner.audio.source(s).state = "off";
+                } else if !wanted {
+                    inner.audio.source(s).state = "off";
+                    inner.audio.source(s).error = None;
+                }
+            }
+            (start, stop, inner.generation)
+        };
+        drop(stop);
+        self.emit_audio(app);
+        self.send_listen();
+        for source in start {
+            let (this, app) = (self.clone(), app.clone());
+            tauri::async_runtime::spawn_blocking(move || this.start_capture(&app, source, generation));
+        }
+    }
+
+    fn start_capture(&self, app: &AppHandle, source: Source, generation: u64) {
+        let sink: audio::Sink = {
+            let this = self.clone();
+            std::sync::Arc::new(move |frame| this.send_audio(frame))
+        };
+        let on_fail: audio::OnFail = {
+            let (this, app) = (self.clone(), app.clone());
+            Box::new(move |error| this.capture_failed(&app, source, generation, error))
+        };
+        let result = audio::start(source, sink, on_fail);
+        {
+            let mut inner = self.0.lock().unwrap();
+            if inner.generation != generation || !inner.audio.source(source).enabled {
+                return; // the session ended (or the source was turned off) meanwhile; drops the capture
+            }
+            match result {
+                Ok(capture) => {
+                    inner.captures.insert(source, capture);
+                    inner.audio.source(source).state = "on";
+                }
+                Err(error) => {
+                    log::warn!("audio {}: {error}", source.name());
+                    let status = inner.audio.source(source);
+                    status.state = "error";
+                    status.error = Some(error);
+                }
+            }
+        }
+        self.emit_audio(app);
+        self.send_listen();
+    }
+
+    fn capture_failed(&self, app: &AppHandle, source: Source, generation: u64, error: String) {
+        log::warn!("audio {}: {error}", source.name());
+        let capture = {
+            let mut inner = self.0.lock().unwrap();
+            if inner.generation != generation {
+                return;
+            }
+            let status = inner.audio.source(source);
+            status.state = "error";
+            status.error = Some(error);
+            inner.captures.remove(&source)
+        };
+        // Dropped from another thread: a capture can't join its own thread.
+        if let Some(capture) = capture {
+            std::thread::spawn(move || drop(capture));
+        }
+        self.emit_audio(app);
+        self.send_listen();
+    }
+
+    fn send_audio(&self, frame: Vec<u8>) {
+        let inner = self.0.lock().unwrap();
+        if inner.status.state == "connected" {
+            if let Some(tx) = &inner.tx {
+                let _ = tx.send(Outgoing::Audio(frame));
+            }
+        }
+    }
+
+    /// Tells the server which sources to transcribe (also re-sent on every reconnect).
+    fn send_listen(&self) {
+        let inner = self.0.lock().unwrap();
+        if inner.status.state == "connected" {
+            if let Some(tx) = &inner.tx {
+                let _ = tx.send(Outgoing::Text(inner.audio.listen_message()));
+            }
+        }
     }
 
     fn send(&self, msg: Value) -> Result<(), String> {
@@ -83,7 +286,12 @@ impl Live {
         if inner.status.state != "connected" {
             return Err("Live channel is not connected".into());
         }
-        inner.tx.as_ref().ok_or("Live channel is not connected")?.send(msg.to_string()).map_err(|e| e.to_string())
+        inner
+            .tx
+            .as_ref()
+            .ok_or("Live channel is not connected")?
+            .send(Outgoing::Text(msg.to_string()))
+            .map_err(|e| e.to_string())
     }
 
     /// Sends a question, optionally with screenshots (base64 JPEGs, spec D3/D4).
@@ -111,7 +319,7 @@ impl Live {
         self.send(json!({ "type": "cancel", "turnId": turn_id }))
     }
 
-    async fn run(self, app: AppHandle, session_id: String, mut rx: mpsc::UnboundedReceiver<String>) {
+    async fn run(self, app: AppHandle, session_id: String, mut rx: mpsc::UnboundedReceiver<Outgoing>) {
         let mut attempts: u32 = 0;
         loop {
             let state = if attempts == 0 { "connecting" } else { "reconnecting" };
@@ -137,7 +345,7 @@ impl Live {
         &self,
         app: &AppHandle,
         session_id: &str,
-        rx: &mut mpsc::UnboundedReceiver<String>,
+        rx: &mut mpsc::UnboundedReceiver<Outgoing>,
         attempts: &mut u32,
     ) -> Result<(), String> {
         let token = app.state::<Auth>().access_token().await.map_err(|e| e.to_string())?;
@@ -150,6 +358,17 @@ impl Live {
         let (ws, _) = tokio_tungstenite::connect_async(req).await.map_err(|e| e.to_string())?;
         let (mut write, mut read) = ws.split();
         *attempts = 0;
+        // Audio queued before the connection dropped is stale by now; keep anything else.
+        let mut pending = Vec::new();
+        while let Ok(out) = rx.try_recv() {
+            if let Outgoing::Text(text) = out {
+                pending.push(text);
+            }
+        }
+        let listen = self.0.lock().unwrap().audio.listen_message();
+        for text in std::iter::once(listen).chain(pending) {
+            write.send(Message::text(text)).await.map_err(|e| e.to_string())?;
+        }
         self.set_status(app, LiveStatus { state: "connected", session_id: Some(session_id.into()), ..Default::default() });
 
         let started = Instant::now();
@@ -163,7 +382,11 @@ impl Live {
                     Some(Ok(_)) => {}
                 },
                 Some(out) = rx.recv() => {
-                    write.send(Message::text(out)).await.map_err(|e| e.to_string())?;
+                    let msg = match out {
+                        Outgoing::Text(text) => Message::text(text),
+                        Outgoing::Audio(frame) => Message::binary(frame),
+                    };
+                    write.send(msg).await.map_err(|e| e.to_string())?;
                 }
                 _ = heartbeat.tick() => {
                     let t = started.elapsed().as_millis() as u64;
@@ -189,6 +412,14 @@ impl Live {
                 if let Some(at) = self.0.lock().unwrap().asked_at.remove(&turn) {
                     msg["ttftMs"] = json!(at.elapsed().as_millis() as u64);
                 }
+            }
+            // A question the server heard and is answering on its own (auto-answer): label it like
+            // a question asked from this app.
+            Some("question") => {
+                let _ = app.emit(
+                    "live:asked",
+                    json!({ "turnId": msg["turnId"], "text": msg["text"], "imageCount": 0, "auto": true }),
+                );
             }
             Some("done") | Some("error") => {
                 if let Some(turn) = msg["turnId"].as_str() {

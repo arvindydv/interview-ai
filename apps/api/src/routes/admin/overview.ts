@@ -1,11 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import type { Queue } from 'bullmq';
 import { ROUND_TYPES, type AdminOverview, type AdminSystem, type Breakdown, type DayPoint, type QueueStats } from '@parakeet/shared';
-import { env } from '../../env.js';
 import { audit, requireAdmin } from '../../lib/adminAuth.js';
 import { sql } from '../../lib/db.js';
 import { connectionCount, onlineUserIds } from '../../lib/liveRegistry.js';
-import { llmConfigured } from '../../lib/llm.js';
+import { llmConfigured, resolveModels } from '../../lib/llm.js';
 import { emailQueue, profileQueue, systemQueue } from '../../lib/queues.js';
 import { getSettings } from '../../lib/settings.js';
 import { healthReport } from '../health.js';
@@ -170,7 +169,7 @@ export default async function adminOverviewRoutes(app: FastifyInstance) {
       queues: queueStats,
       liveConnections: connectionCount(),
       llmConfigured: llmConfigured(),
-      models: { fast: settings.fastModel || env.LLM_FAST_MODEL, vision: settings.visionModel || env.LLM_VISION_MODEL },
+      models: resolveModels({ fast: settings.fastModel, vision: settings.visionModel }),
     };
   });
 

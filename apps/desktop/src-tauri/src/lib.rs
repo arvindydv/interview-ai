@@ -1,4 +1,5 @@
 mod api;
+mod audio;
 mod auth;
 mod config;
 mod live;
@@ -15,7 +16,7 @@ use tauri_plugin_opener::OpenerExt;
 
 use api::Api;
 use auth::{Auth, User};
-use live::{Live, LiveStatus};
+use live::{AudioStatus, Live, LiveStatus};
 use screenshot::{Screenshots, Shot};
 
 #[derive(Clone, Serialize)]
@@ -181,6 +182,17 @@ fn live_cancel(live: State<'_, Live>, turn_id: String) -> CmdResult<()> {
 #[tauri::command]
 fn live_status(live: State<'_, Live>) -> LiveStatus {
     live.status()
+}
+
+#[tauri::command]
+fn audio_status(live: State<'_, Live>) -> AudioStatus {
+    live.audio_status()
+}
+
+/// Overlay toggles: which audio sources to capture, and whether to answer heard questions automatically.
+#[tauri::command]
+fn audio_set(app: AppHandle, live: State<'_, Live>, interviewer: bool, you: bool, auto_answer: bool) {
+    live.set_audio(&app, interviewer, you, auto_answer);
 }
 
 #[tauri::command]
@@ -444,6 +456,8 @@ pub fn run() {
             live_ask,
             live_cancel,
             live_status,
+            audio_status,
+            audio_set,
             screenshot_capture,
             screen_share_protection,
             screenshot_discard,

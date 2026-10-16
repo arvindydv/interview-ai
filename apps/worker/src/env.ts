@@ -8,11 +8,16 @@ const schema = z.object({
   REDIS_URL: z.url().default('redis://127.0.0.1:6380'),
   DATABASE_URL: z.url().default('postgresql://postgres:postgres@127.0.0.1:54322/postgres'),
 
-  // Claude, for resume analysis. Credentials come from ANTHROPIC_API_KEY (or any source the SDK
-  // resolves); without them resumes are still used for answers as full text, just not analysed.
+  // Resume analysis: Claude (ANTHROPIC_API_KEY, or any source the SDK resolves) or OpenRouter. Without
+  // either, resumes are still used for answers as full text, just not analysed.
   ANTHROPIC_API_KEY: z.string().optional(),
-  /** Resume analysis runs before the interview, so quality matters more than speed (spec A4). */
-  LLM_PROFILE_MODEL: z.string().default('claude-sonnet-5-5'),
+  OPENROUTER_API_KEY: z.string().optional(),
+  /**
+   * Resume analysis runs before the interview, so quality matters more than speed (spec A4). Ids with
+   * a "/" go through OpenRouter. Default: claude-sonnet-5-5, or anthropic/claude-sonnet-5.5 when only
+   * OPENROUTER_API_KEY is set.
+   */
+  LLM_PROFILE_MODEL: z.string().optional(),
 
   // Brevo transactional SMTP. Without credentials (dev only) mail goes to the local Mailpit inbox.
   SMTP_HOST: z.string().default('smtp-relay.brevo.com'),
@@ -23,7 +28,8 @@ const schema = z.object({
   EMAIL_REPLY_TO: z.string().optional(),
 });
 
-export const env = schema.parse(process.env);
+// Empty values in .env mean "not set".
+export const env = schema.parse(Object.fromEntries(Object.entries(process.env).filter(([, v]) => v !== '')));
 
 if (env.NODE_ENV === 'production' && !(env.BREVO_SMTP_LOGIN && env.BREVO_SMTP_KEY)) {
   throw new Error('BREVO_SMTP_LOGIN and BREVO_SMTP_KEY are required in production');

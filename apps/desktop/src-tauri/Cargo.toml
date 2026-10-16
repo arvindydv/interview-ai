@@ -53,6 +53,8 @@ strip = true
 # no PipeWire/clang build dependency).
 [target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
 xcap = "0.9.8"
+# Live audio: WASAPI loopback on Windows, Core Audio taps on macOS 14.6+ (Linux records with parec).
+cpal = "0.18.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # async-io (not tokio): enabling zbus's tokio mode breaks the keyring's blocking D-Bus calls inside

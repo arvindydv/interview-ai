@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import type { Interview, Resume } from '@parakeet/shared';
-import type { AuthState, LiveEvent, LiveStatus, OverlayCommand, ParakeetApi, Protection, Screenshot } from './types';
+import type { AudioStatus, AuthState, LiveEvent, LiveStatus, OverlayCommand, ParakeetApi, Protection, Screenshot } from './types';
 
 /** Adapts Tauri's async `listen` to a synchronous unsubscribe function. */
 function subscribe<T>(event: string, cb: (payload: T) => void) {
@@ -50,7 +50,12 @@ export const parakeet: ParakeetApi = {
     status: () => call<LiveStatus>('live_status'),
     onStatus: (cb) => subscribe<LiveStatus>('live:status', cb),
     onMessage: (cb) => subscribe<LiveEvent>('live:message', cb),
-    onAsked: (cb) => subscribe<{ turnId: string; text: string; imageCount: number }>('live:asked', cb),
+    onAsked: (cb) => subscribe<{ turnId: string; text: string; imageCount: number; auto?: boolean }>('live:asked', cb),
+  },
+  audio: {
+    status: () => call<AudioStatus>('audio_status'),
+    set: (settings) => call('audio_set', { ...settings }),
+    onStatus: (cb) => subscribe<AudioStatus>('audio:status', cb),
   },
   overlay: {
     toggle: () => call('overlay_toggle'),

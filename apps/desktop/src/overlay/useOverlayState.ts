@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { parakeet } from '../bridge';
-import type { AuthState, LiveStatus } from '../types';
+import type { ListenState } from '@parakeet/shared';
+import type { AudioStatus, AuthState, LiveStatus } from '../types';
 
 export interface OverlayAnswer {
   turnId: string;
@@ -17,7 +18,17 @@ export interface TranscriptLine {
   id: string;
   speaker: 'interviewer' | 'you';
   text: string;
+  /** False while the speaker is still talking (the text is replaced as they go). */
+  final: boolean;
 }
+
+/** Server-side speech-to-text per source. */
+export interface Listening {
+  sources: Record<'interviewer' | 'you', ListenState>;
+  error?: string;
+}
+
+const MAX_LINES = 30;
 
 const MAX_ANSWERS = 50;
 
@@ -31,6 +42,8 @@ export function useOverlayState() {
   const [answers, setAnswers] = useState<OverlayAnswer[]>([]);
   const [index, setIndex] = useState(-1);
   const [transcript, setTranscript] = useState<TranscriptLine[]>([]);
+  const [audio, setAudio] = useState<AudioStatus | null>(null);
+  const [listening, setListening] = useState<Listening | null>(null);
   const pending = useRef(new Map<string, { text: string; ttftMs?: number }>());
   const frame = useRef<number | null>(null);
   const questions = useRef(new Map<string, string>());
@@ -49,8 +62,13 @@ export function useOverlayState() {
   useEffect(() => {
     parakeet.auth.get().then(setAuth);
     parakeet.live.status().then(setStatus);
+    parakeet.audio.status().then(setAudio, () => {});
     const offAuth = parakeet.auth.onChange(setAuth);
-    const offStatus = parakeet.live.onStatus(setStatus);
+    const offStatus = parakeet.live.onStatus((s) => {
+      setStatus(s);
+      if (s.state !== 'connected') setListening(null);
+    });
+    const offAudio = parakeet.audio.onStatus(setAudio);
 
     const flush = () => {
       frame.current = null;
@@ -71,10 +89,15 @@ export function useOverlayState() {
       });
     };
 
-    const offAsked = parakeet.live.onAsked(({ turnId, text, imageCount }) => {
+    const offAsked = parakeet.live.onAsked(({ turnId, text, imageCount, auto }) => {
       questions.current.set(turnId, text);
       const label = text || `${imageCount} screenshot${imageCount === 1 ? '' : 's'}`;
-      setTranscript((t) => [...t, { id: turnId, speaker: 'interviewer' as const, text: label }].slice(-30));
+      // Heard questions are already in the transcript; typed ones (and screenshots) are added to it.
+      setTranscript((t) =>
+        auto || t.some((l) => l.speaker === 'interviewer' && l.text === text)
+          ? t
+          : [...t, { id: turnId, speaker: 'interviewer' as const, text: label, final: true }].slice(-MAX_LINES),
+      );
       // A new question always jumps the view to its answer.
       jumpTo.current = turnId;
       setAnswers((list) =>
@@ -94,12 +117,22 @@ export function useOverlayState() {
         setAnswers((list) => list.map((a) => (a.turnId === m.turnId ? { ...a, done: true } : a)));
       } else if (m.type === 'error' && m.turnId) {
         setAnswers((list) => list.map((a) => (a.turnId === m.turnId ? { ...a, done: true, error: m.message } : a)));
+      } else if (m.type === 'transcript') {
+        // Partial updates replace the line's text until the speaker's turn is final.
+        const line: TranscriptLine = { id: m.id, speaker: m.source, text: m.text, final: m.final };
+        setTranscript((t) => {
+          const i = t.findIndex((l) => l.id === m.id);
+          return i === -1 ? [...t, line].slice(-MAX_LINES) : t.map((l, j) => (j === i ? line : l));
+        });
+      } else if (m.type === 'listening') {
+        setListening({ sources: m.sources, error: m.error });
       }
     });
 
     return () => {
       offAuth();
       offStatus();
+      offAudio();
       offAsked();
       offMsg();
       if (frame.current) cancelAnimationFrame(frame.current);
@@ -117,5 +150,5 @@ export function useOverlayState() {
   );
 
   const current = index >= 0 ? answers[index] : undefined;
-  return { auth, status, answers, index, current, transcript, go, clearAnswers, clearTranscript };
+  return { auth, status, audio, listening, answers, index, current, transcript, go, clearAnswers, clearTranscript };
 }

@@ -18,6 +18,18 @@ export const IMAGE_LIMITS = {
   maxBase64Chars: 5_000_000,
 } as const;
 
+/** Who is speaking: the interviewer (system audio) or the candidate (microphone). */
+export type AudioSource = 'interviewer' | 'you';
+
+/**
+ * Live audio travels as binary WebSocket frames: byte 0 is the source (AUDIO_SOURCE_BYTE), the rest
+ * is raw PCM in AUDIO_FORMAT. The desktop app sends ~80 ms per frame.
+ */
+export const AUDIO_FORMAT = { encoding: 'linear16', sampleRate: 16000, channels: 1 } as const;
+export const AUDIO_SOURCE_BYTE: Record<AudioSource, number> = { interviewer: 0, you: 1 };
+
+export type ListenState = 'off' | 'connecting' | 'up' | 'down';
+
 /** Client → server */
 export type ClientMessage =
   | {
@@ -30,6 +42,8 @@ export type ClientMessage =
       images?: ImageAttachment[];
     }
   | { type: 'cancel'; turnId: string }
+  /** Which audio sources to transcribe, and whether finished interviewer questions are answered automatically. */
+  | { type: 'listen'; sources: AudioSource[]; autoAnswer: boolean }
   | { type: 'image'; turnId: string; blobRef: string }
   | { type: 'ping'; t: number };
 
@@ -44,7 +58,13 @@ export type ServerMessage =
   | { type: 'done'; turnId: string; usage: Usage }
   | { type: 'error'; turnId?: string; code: string; message: string }
   | { type: 'status'; userId: string; sessionId: string; providers: Record<string, 'up' | 'degraded' | 'down'> }
-  | { type: 'pong'; t: number; serverTime: number };
+  | { type: 'pong'; t: number; serverTime: number }
+  /** Live transcript. `id` is stable for a speaking turn: partial updates replace the text until `final`. */
+  | { type: 'transcript'; id: string; source: AudioSource; text: string; final: boolean }
+  /** The server heard a question and is answering it as `turnId` (auto-answer). */
+  | { type: 'question'; turnId: string; text: string }
+  /** Speech-to-text state per source. */
+  | { type: 'listening'; sources: Record<AudioSource, ListenState>; error?: string };
 
 export function parseMessage<T extends { type: string }>(raw: string): T | null {
   try {
