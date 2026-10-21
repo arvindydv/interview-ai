@@ -253,7 +253,7 @@ fn app_quit(app: AppHandle) {
 fn create_overlay(app: &AppHandle) -> tauri::Result<()> {
     let (width, height) = (960.0, 640.0);
     let mut builder = WebviewWindowBuilder::new(app, "overlay", WebviewUrl::App("overlay.html".into()))
-        .title("Parakeet Overlay")
+        .title("Friday AI Overlay")
         .inner_size(width, height)
         .min_inner_size(520.0, 60.0)
         .decorations(false)
@@ -316,7 +316,7 @@ fn close_overlay(app: &AppHandle, live: &Live) {
 }
 
 /// Closing the main window during an interview only hides it, so the overlay keeps working (and
-/// "Open Parakeet" can bring the window back). With no interview running, closing it quits, so no
+/// "Open Friday AI" can bring the window back). With no interview running, closing it quits, so no
 /// invisible process is left behind. Closing the overlay itself (e.g. Alt+F4) ends the interview.
 fn on_close_requested(window: &tauri::Window, api: &tauri::CloseRequestApi) {
     let app = window.app_handle();
@@ -411,7 +411,7 @@ pub fn run() {
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
             let http = reqwest::Client::builder()
-                .user_agent(format!("Parakeet/{}", app.package_info().version))
+                .user_agent(format!("Friday AI/{}", app.package_info().version))
                 .connect_timeout(std::time::Duration::from_secs(5))
                 .timeout(std::time::Duration::from_secs(15))
                 .build()?;
@@ -468,7 +468,7 @@ pub fn run() {
             app_quit,
         ])
         .build(tauri::generate_context!())
-        .expect("error while building Parakeet")
+        .expect("error while building Friday AI")
         .run(|_app, _event| {
             // macOS: launching the app again while the main window is hidden (closed during an
             // interview) brings it back.

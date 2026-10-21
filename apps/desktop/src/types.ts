@@ -103,7 +103,7 @@ export interface ParakeetApi {
     discard(id: string): Promise<void>;
   };
   app: {
-    /** Whether this OS can keep Parakeet's windows out of screen sharing. */
+    /** Whether this OS can keep Friday AI's windows out of screen sharing. */
     protection(): Promise<Protection>;
     copy(text: string): Promise<void>;
     showMain(): Promise<void>;

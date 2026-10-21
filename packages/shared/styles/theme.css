@@ -1,4 +1,4 @@
-/* Parakeet design tokens + primitives, shared by apps/web and apps/desktop (Tailwind v4). */
+/* Friday AI design tokens + primitives, shared by apps/web and apps/desktop (Tailwind v4). */
 
 @theme {
   --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;

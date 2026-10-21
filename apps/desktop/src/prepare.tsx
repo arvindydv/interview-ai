@@ -259,7 +259,7 @@ function AnalysingSkeleton() {
           <div key={i} className="shimmer h-6 rounded-full" style={{ width: `${w * 4}px` }} />
         ))}
       </div>
-      <p className="text-xs text-faint">This takes about 20 seconds. Parakeet already uses your resume text in the meantime.</p>
+      <p className="text-xs text-faint">This takes about 20 seconds. Friday AI already uses your resume text in the meantime.</p>
     </div>
   );
 }
@@ -311,7 +311,7 @@ function ResumeCard({ ctx, style }: { ctx: InterviewContextState; style?: React.
       }
     >
       <p className="-mt-1 mb-4 text-sm text-muted">
-        Parakeet answers in your voice, using real examples from your experience, achievements and qualifications.
+        Friday AI answers in your voice, using real examples from your experience, achievements and qualifications.
       </p>
 
       {!resume ? (
@@ -354,7 +354,7 @@ function ResumeCard({ ctx, style }: { ctx: InterviewContextState; style?: React.
             <p className="flex gap-2 rounded-xl bg-white/[0.02] p-3 text-xs leading-relaxed text-muted ring-1 ring-line">
               <Info size={14} className="mt-0.5 shrink-0 text-brand-2" />
               <span>
-                Parakeet will use the full text of your resume for answers.
+                Friday AI will use the full text of your resume for answers.
                 {resume.error && <span className="text-faint"> {resume.error}</span>}
               </span>
             </p>
@@ -672,7 +672,7 @@ export function Prepare({ ctx, onDone }: { ctx: InterviewContextState; onDone: (
           Prepare for your <span className="text-gradient">interview</span>
         </h1>
         <p className="mt-1.5 text-sm text-muted">
-          The more Parakeet knows, the more your answers sound like you. Everything here is private to your account.
+          The more Friday AI knows, the more your answers sound like you. Everything here is private to your account.
         </p>
       </div>
       {ctx.loadError && (

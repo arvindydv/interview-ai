@@ -164,7 +164,7 @@ function SessionControl({
         disabled={!signedIn}
         title={
           !signedIn
-            ? 'Sign in from the Parakeet window first'
+            ? 'Sign in from the Friday AI window first'
             : usedUp
               ? 'Your free trial minutes are used up'
               : trial
@@ -409,7 +409,7 @@ function Overlay() {
       if (!text.trim() && !imageIds.length) return false;
       const ready = await ensureConnected();
       if (!ready) {
-        flash(ready === null ? 'Press Start interview first.' : 'Can’t reach Parakeet. Check your connection.');
+        flash(ready === null ? 'Press Start interview first.' : 'Can’t reach Friday AI. Check your connection.');
         return false;
       }
       try {
@@ -614,7 +614,7 @@ function Overlay() {
           <div data-tauri-drag-region className="flex h-full shrink-0 items-center gap-2 pr-1 pl-1.5">
             <LogoMark size={24} />
             <span data-tauri-drag-region className="hidden text-[15px] font-semibold tracking-tight @[1000px]:inline">
-              Parakeet
+              Friday AI
             </span>
           </div>
           <SessionControl
@@ -728,10 +728,10 @@ function Overlay() {
                   </span>
                 </button>
                 {[
-                  { icon: LayoutDashboard, label: 'Open Parakeet', run: () => parakeet.app.showMain() },
+                  { icon: LayoutDashboard, label: 'Open Friday AI', run: () => parakeet.app.showMain() },
                   { icon: EyeOff, label: 'Hide overlay', keys: [MOD, '\\'], run: () => parakeet.overlay.toggle() },
                   { icon: X, label: 'End interview', run: () => setConfirmEnd(true) },
-                { icon: Power, label: 'Quit Parakeet', run: () => parakeet.app.quit() },
+                { icon: Power, label: 'Quit Friday AI', run: () => parakeet.app.quit() },
                 ].map(({ icon: Icon, label, keys, run }) => (
                   <button
                     key={label}
@@ -813,7 +813,7 @@ function Overlay() {
                       : status.state === 'disconnected'
                         ? 'Press Start interview when your call begins. Minutes only count while it’s running.'
                         : 'Connecting…'
-                    : 'Sign in from the Parakeet window to start.'}
+                    : 'Sign in from the Friday AI window to start.'}
                 </span>
               )}
             </div>
@@ -981,7 +981,7 @@ function Overlay() {
                 <div>
                   <p className="text-sm text-muted">You’re signed out.</p>
                   <button onClick={() => parakeet.app.showMain()} className="btn btn-primary mt-3">
-                    Open Parakeet to sign in
+                    Open Friday AI to sign in
                   </button>
                 </div>
               </div>

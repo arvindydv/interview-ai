@@ -175,7 +175,7 @@ fn encode_jpeg(img: &RgbaImage, quality: u8) -> Result<Vec<u8>> {
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 fn permission_hint(err: &str) -> String {
     if cfg!(target_os = "macos") {
-        format!("Couldn't capture the screen. Allow Parakeet under System Settings → Privacy & Security → Screen Recording, then restart it. ({err})")
+        format!("Couldn't capture the screen. Allow Friday AI under System Settings → Privacy & Security → Screen Recording, then restart it. ({err})")
     } else {
         format!("Couldn't capture the screen: {err}")
     }

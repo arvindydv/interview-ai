@@ -26,7 +26,7 @@ export function Logo() {
   return (
     <span className="flex items-center gap-2.5 font-semibold tracking-tight">
       <LogoMark />
-      <span className="text-[17px]">Parakeet</span>
+      <span className="text-[17px]">Friday AI</span>
       <span className="rounded-md bg-accent/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-accent ring-1 ring-accent/30">
         Admin
       </span>

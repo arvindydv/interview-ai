@@ -130,7 +130,7 @@ export function CloakVisual() {
       </div>
       <div className="cloak absolute right-3 bottom-3 w-28 rounded-lg bg-surface-2 p-2 ring-1 ring-brand/40">
         <div className="mb-1.5 flex items-center gap-1 text-[9px] text-brand">
-          <Sparkles size={9} /> Parakeet
+          <Sparkles size={9} /> Friday AI
         </div>
         <div className="h-1.5 rounded-full bg-brand/40" />
         <div className="mt-1 h-1.5 w-3/4 rounded-full bg-brand/25" />

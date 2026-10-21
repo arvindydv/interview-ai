@@ -132,7 +132,7 @@ mod backend {
                 "--channels=1",
                 "--raw",
                 "--latency-msec=20",
-                "--client-name=Parakeet",
+                "--client-name=Friday AI",
             ])
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -140,7 +140,7 @@ mod backend {
             .spawn()
             .map_err(|e| match e.kind() {
                 std::io::ErrorKind::NotFound => {
-                    "Audio capture needs `parec`. Install pulseaudio-utils (or pipewire-pulse) and restart Parakeet.".to_string()
+                    "Audio capture needs `parec`. Install pulseaudio-utils (or pipewire-pulse) and restart Friday AI.".to_string()
                 }
                 _ => format!("Couldn't start audio capture: {e}"),
             })?;
@@ -280,8 +280,8 @@ mod backend {
     fn describe(source: Source, e: cpal::Error) -> String {
         match (source, e.kind()) {
             (_, cpal::ErrorKind::PermissionDenied) if cfg!(target_os = "macos") => match source {
-                Source::Interviewer => "Allow Parakeet to record system audio in System Settings → Privacy & Security → Screen & System Audio Recording.".into(),
-                Source::You => "Allow Parakeet to use the microphone in System Settings → Privacy & Security → Microphone.".into(),
+                Source::Interviewer => "Allow Friday AI to record system audio in System Settings → Privacy & Security → Screen & System Audio Recording.".into(),
+                Source::You => "Allow Friday AI to use the microphone in System Settings → Privacy & Security → Microphone.".into(),
             },
             (_, cpal::ErrorKind::PermissionDenied) => match source {
                 Source::Interviewer => format!("System audio access was denied: {e}"),

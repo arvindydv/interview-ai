@@ -143,7 +143,7 @@ export default function Dashboard() {
             <div className="flex flex-col gap-6 sm:flex-row sm:items-center">
               <div className="flex-1">
                 <Pill tone="ok">Step 2 of 4</Pill>
-                <h2 className="mt-3 text-xl font-semibold">Install Parakeet for desktop</h2>
+                <h2 className="mt-3 text-xl font-semibold">Install Friday AI for desktop</h2>
                 <p className="mt-1 max-w-lg text-sm text-muted">
                   The desktop app listens to your call and shows answers on a private overlay. Available for Windows, macOS
                   and Linux. Sign in once with this account.

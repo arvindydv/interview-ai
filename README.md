@@ -1,4 +1,4 @@
-# Parakeet: Real-Time AI Interview Assistant
+# Friday AI: Real-Time AI Interview Assistant
 
 Starter monorepo for the platform described in
 [AI_Interview_Assistant_Product_Features_and_Architecture.pdf](AI_Interview_Assistant_Product_Features_and_Architecture.pdf).
@@ -120,7 +120,7 @@ Code signing (Apple notarisation, Windows certificate) still needs certificates.
 - **Screenshot** (button or `Ctrl/⌘ ⇧ ↵`) captures the screen the overlay is on, hiding the overlay for the
   shot, and adds a thumbnail to Chat. Repeat for multi-part problems (up to 6), add an optional note, press
   Enter. Images are downscaled to 1568 px and JPEG-encoded in Rust (`src-tauri/src/screenshot.rs`) and sent with
-  the question; they are never written to disk by Parakeet.
+  the question; they are never written to disk by Friday AI.
 - Capture backends: native APIs (`xcap`) on Windows/macOS; the desktop screenshot portal on Linux (GNOME/KDE,
   Wayland and X11). macOS asks for **Screen Recording** permission the first time; some Linux desktops ask too.
 

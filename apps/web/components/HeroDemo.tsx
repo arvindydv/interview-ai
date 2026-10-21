@@ -66,7 +66,7 @@ export function HeroDemo() {
           <div className="relative flex flex-col rounded-xl bg-bg/90 p-4 ring-1 ring-brand/30 shadow-glow">
             <div className="mb-3 flex items-center gap-2 text-xs">
               <Sparkles size={14} className="text-brand" />
-              <span className="font-semibold">Parakeet</span>
+              <span className="font-semibold">Friday AI</span>
               <span className="ml-auto flex items-center gap-1 rounded-full bg-brand/10 px-2 py-0.5 text-brand">
                 <Zap size={11} /> 0.62s
               </span>

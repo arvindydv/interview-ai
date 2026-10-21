@@ -24,7 +24,7 @@ export function Logo({ href = '/' }: { href?: string }) {
   return (
     <Link href={href} className="flex items-center gap-2.5 font-semibold tracking-tight">
       <LogoMark />
-      <span className="text-[17px]">Parakeet</span>
+      <span className="text-[17px]">Friday AI</span>
     </Link>
   );
 }

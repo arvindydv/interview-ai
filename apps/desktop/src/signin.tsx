@@ -40,7 +40,7 @@ export function SignIn() {
         <div className="bg-grid absolute inset-0 -z-10" aria-hidden />
 
         <div className="rise-in flex items-center gap-2.5 font-semibold tracking-tight" style={rise(0)}>
-          <LogoMark size={30} /> Parakeet
+          <LogoMark size={30} /> Friday AI
         </div>
 
         <div>
@@ -82,7 +82,7 @@ export function SignIn() {
           <div className="mx-auto grid size-20 place-items-center animate-float">
             <LogoMark size={64} />
           </div>
-          <h2 className="mt-7 text-2xl font-semibold tracking-tight">Sign in to Parakeet</h2>
+          <h2 className="mt-7 text-2xl font-semibold tracking-tight">Sign in to Friday AI</h2>
           <p className="mt-2 text-sm text-muted">
             We'll open your browser to sign in securely. You'll be sent straight back here.
           </p>

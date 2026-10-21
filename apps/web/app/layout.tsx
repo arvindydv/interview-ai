@@ -3,7 +3,7 @@ import '@fontsource-variable/inter';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Parakeet: Real-Time AI Interview Assistant',
+  title: 'Friday AI: Real-Time AI Interview Assistant',
   description: 'Live answers during interviews, one-hotkey coding solutions and AI mock interviews.',
 };
 

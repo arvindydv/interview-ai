@@ -93,7 +93,7 @@ async function parseWithClaude(model: string, resume: string): Promise<Parsed> {
 async function parseWithOpenRouter(model: string, resume: string): Promise<Parsed> {
   const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
-    headers: { Authorization: `Bearer ${env.OPENROUTER_API_KEY}`, 'Content-Type': 'application/json', 'X-Title': 'Parakeet' },
+    headers: { Authorization: `Bearer ${env.OPENROUTER_API_KEY}`, 'Content-Type': 'application/json', 'X-Title': 'Friday AI' },
     body: JSON.stringify({
       model,
       max_tokens: 16000,

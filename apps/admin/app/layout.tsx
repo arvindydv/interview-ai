@@ -3,7 +3,7 @@ import '@fontsource-variable/inter';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Parakeet Admin',
+  title: 'Friday AI Admin',
   robots: { index: false, follow: false },
 };
 

@@ -214,10 +214,10 @@ async fn wait_for_callback(listener: &TcpListener, state: &str) -> Result<HashMa
         }
         let params: HashMap<String, String> = url.query_pairs().into_owned().collect();
         if params.get("state").map(String::as_str) != Some(state) {
-            respond(&mut stream, 400, "This sign-in link has expired. Start again from the Parakeet app.").await;
+            respond(&mut stream, 400, "This sign-in link has expired. Start again from the Friday AI app.").await;
             continue;
         }
-        respond(&mut stream, 200, "Signed in. You can close this tab and return to Parakeet.").await;
+        respond(&mut stream, 200, "Signed in. You can close this tab and return to Friday AI.").await;
         return Ok(params);
     }
 }
@@ -247,7 +247,7 @@ async fn respond(stream: &mut TcpStream, status: u16, message: &str) {
         _ => "Not Found",
     };
     let body = format!(
-        "<!doctype html><meta charset=utf-8><title>Parakeet</title>\
+        "<!doctype html><meta charset=utf-8><title>Friday AI</title>\
          <body style=\"margin:0;height:100vh;display:grid;place-items:center;background:#05070c;color:#eef1f7;\
          font-family:system-ui,sans-serif\"><p style=\"font-size:18px\">{message}</p>"
     );

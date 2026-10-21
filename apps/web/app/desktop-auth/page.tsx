@@ -57,14 +57,14 @@ function Handoff() {
             <div className="absolute -inset-6 glow" />
             <LogoMark size={56} />
           </div>
-          <h1 className="mt-6 text-xl font-semibold">Returning to Parakeet…</h1>
+          <h1 className="mt-6 text-xl font-semibold">Returning to Friday AI…</h1>
           <p className="mt-2 text-sm text-muted">
             <CheckCircle2 size={14} className="mr-1 inline text-brand" />
             You're signed in. Close this tab once the app confirms.
           </p>
           {target && (
             <a href={target} className="btn btn-secondary mt-6">
-              Open Parakeet manually <ExternalLink size={14} />
+              Open Friday AI manually <ExternalLink size={14} />
             </a>
           )}
         </>

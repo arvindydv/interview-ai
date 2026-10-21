@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "Parakeet",
+  "productName": "Friday AI",
   "version": "0.1.0",
   "identifier": "com.bidyourstay.parakeet",
   "build": {
@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Parakeet",
+        "title": "Friday AI",
         "url": "index.html",
         "width": 1040,
         "height": 760,

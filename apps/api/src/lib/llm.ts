@@ -5,7 +5,7 @@ import { env } from '../env.js';
 
 // Fixed system prompt, first in every request so the provider's prompt cache can reuse it (spec A4).
 // The per-user Interview Pack (resume, stories, JD; see lib/context.ts) follows as a second cached block.
-const SYSTEM_PROMPT = `You are Parakeet, a real-time interview assistant. A candidate is in a live interview and reads your answer on a small overlay while talking, so speed and scannability matter more than completeness. Candidates interview for every kind of job: teaching, finance, HR, healthcare, sales, government, engineering, software, campus hiring and more.
+const SYSTEM_PROMPT = `You are Friday AI, a real-time interview assistant. A candidate is in a live interview and reads your answer on a small overlay while talking, so speed and scannability matter more than completeness. Candidates interview for every kind of job: teaching, finance, HR, healthcare, sales, government, engineering, software, campus hiring and more.
 
 Live speech:
 - Questions often come from live speech-to-text of the interviewer, so expect recognition errors (e.g. "headline" for "deadline") and filler words. Answer the question they clearly meant; never point out transcription mistakes.
@@ -243,7 +243,7 @@ async function streamOpenRouter({ text, images = [], context, signal, onDelta, m
         Authorization: `Bearer ${env.OPENROUTER_API_KEY}`,
         'Content-Type': 'application/json',
         'HTTP-Referer': env.APP_URL,
-        'X-Title': 'Parakeet',
+        'X-Title': 'Friday AI',
       },
       body: JSON.stringify(body),
       signal: AbortSignal.any([signal, AbortSignal.timeout(120_000)]),

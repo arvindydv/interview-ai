@@ -18,38 +18,40 @@ export interface Installer {
 }
 
 const v = DESKTOP_VERSION;
+/** Tauri names installers after `productName` in apps/desktop/src-tauri/tauri.conf.json. */
+const name = 'Friday AI';
 
 export const installers: Installer[] = [
-  { id: 'windows', platform: 'windows', label: 'Windows', detail: 'Windows 10 & 11 · 64-bit', file: `Parakeet_${v}_x64-setup.exe` },
-  { id: 'macos', platform: 'macos', label: 'macOS', detail: 'Apple Silicon & Intel · macOS 11+', file: `Parakeet_${v}_universal.dmg` },
+  { id: 'windows', platform: 'windows', label: 'Windows', detail: 'Windows 10 & 11 · 64-bit', file: `${name}_${v}_x64-setup.exe` },
+  { id: 'macos', platform: 'macos', label: 'macOS', detail: 'Apple Silicon & Intel · macOS 11+', file: `${name}_${v}_universal.dmg` },
   {
     id: 'ubuntu',
     platform: 'linux',
     label: 'Ubuntu / Debian',
     detail: '.deb · Ubuntu 22.04+, Debian 12+, Mint, Pop!_OS',
-    file: `Parakeet_${v}_amd64.deb`,
-    hint: `sudo apt install ./Parakeet_${v}_amd64.deb`,
+    file: `${name}_${v}_amd64.deb`,
+    hint: `sudo apt install "./${name}_${v}_amd64.deb"`,
   },
   {
     id: 'arch',
     platform: 'linux',
     label: 'Arch / Manjaro',
     detail: '.AppImage · runs on any distro',
-    file: `Parakeet_${v}_amd64.AppImage`,
-    hint: `chmod +x Parakeet_${v}_amd64.AppImage && ./Parakeet_${v}_amd64.AppImage`,
+    file: `${name}_${v}_amd64.AppImage`,
+    hint: `chmod +x "${name}_${v}_amd64.AppImage" && "./${name}_${v}_amd64.AppImage"`,
   },
   {
     id: 'fedora',
     platform: 'linux',
     label: 'Fedora / openSUSE',
     detail: '.rpm · Fedora 38+, RHEL 9+',
-    file: `Parakeet-${v}-1.x86_64.rpm`,
-    hint: `sudo dnf install ./Parakeet-${v}-1.x86_64.rpm`,
+    file: `${name}-${v}-1.x86_64.rpm`,
+    hint: `sudo dnf install "./${name}-${v}-1.x86_64.rpm"`,
   },
 ];
 
 export function downloadUrl(i: Installer): string | null {
-  return DOWNLOADS_URL ? `${DOWNLOADS_URL}/${i.file}` : null;
+  return DOWNLOADS_URL ? `${DOWNLOADS_URL}/${encodeURIComponent(i.file)}` : null;
 }
 
 /** Best guess at the visitor's OS, used to highlight the right button. */

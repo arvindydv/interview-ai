@@ -2,12 +2,12 @@ import Link from 'next/link';
 import {
   ArrowRight, Camera, Check, Download, EyeOff, FileText, GraduationCap, Mic, Sparkles,
 } from 'lucide-react';
-import { Logo } from '@/components/Logo';
 import { HeroDemo } from '@/components/HeroDemo';
 import { DownloadButtons } from '@/components/DownloadButtons';
 import {
   CountUp, Faq, Magnetic, NavBar, Reveal, SpotlightGroup, TiltStage, WordRotator,
 } from '@/components/landing/motion';
+import { Eyebrow, SiteFooter } from '@/components/landing/sections';
 import { CloakVisual, ContextVisual, LiveVisual, ScanVisual, ScoreVisual, ShieldOrbit } from '@/components/landing/visuals';
 
 const features = [
@@ -65,8 +65,8 @@ const rounds = [
 
 const faqs = [
   {
-    q: 'Does Parakeet join my meeting as a bot?',
-    a: 'No. Parakeet runs on your own computer and listens to the call audio directly. Nothing joins the meeting, and no virtual audio driver is needed.',
+    q: 'Does Friday AI join my meeting as a bot?',
+    a: 'No. Friday AI runs on your own computer and listens to the call audio directly. Nothing joins the meeting, and no virtual audio driver is needed.',
   },
   {
     q: 'Can the interviewer see the overlay when I share my screen?',
@@ -85,15 +85,6 @@ const faqs = [
     a: 'The first word lands on screen in under a second. Answers lead with the key point, so you can start talking while the rest streams in.',
   },
 ];
-
-function Eyebrow({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="inline-flex items-center gap-2 rounded-full border border-brand/25 bg-brand/[0.06] px-3 py-1 text-[11px] font-semibold tracking-[0.14em] text-brand uppercase">
-      <span className="size-1 rounded-full bg-brand shadow-[0_0_8px_2px] shadow-brand/60" />
-      {children}
-    </span>
-  );
-}
 
 function Chip({ children }: { children: React.ReactNode }) {
   return (
@@ -153,7 +144,7 @@ export default function Home() {
             className="rise-in mx-auto mt-7 max-w-2xl text-base text-muted sm:text-lg"
             style={{ '--i': headline.length + 2 } as React.CSSProperties}
           >
-            Parakeet listens to your call, spots each question and shows a clear, personalised answer on a private
+            Friday AI listens to your call, spots each question and shows a clear, personalised answer on a private
             overlay, before the silence gets awkward.
           </p>
 
@@ -162,7 +153,7 @@ export default function Home() {
             style={{ '--i': headline.length + 3 } as React.CSSProperties}
           >
             <Magnetic>
-              <Link href="/login" className="btn btn-primary btn-shine px-7 py-3.5 text-[15px]">
+              <Link href="/signup" className="btn btn-primary btn-shine px-7 py-3.5 text-[15px]">
                 Start for free <ArrowRight size={17} />
               </Link>
             </Magnetic>
@@ -368,52 +359,7 @@ export default function Home() {
         </Reveal>
       </section>
 
-      {/* ───────────── footer ───────────── */}
-      <footer className="relative overflow-hidden border-t border-line">
-        <div className="mx-auto grid max-w-6xl gap-10 px-4 pt-14 pb-8 sm:grid-cols-[2fr_1fr_1fr] sm:px-6">
-          <div>
-            <Logo />
-            <p className="mt-4 max-w-xs text-sm text-muted">
-              The real-time AI copilot that helps you answer every interview question with clarity.
-            </p>
-          </div>
-          <div>
-            <p className="eyebrow">Product</p>
-            <ul className="mt-4 space-y-2.5 text-sm text-muted">
-              {[['Features', '#features'], ['How it works', '#how'], ['Privacy', '#privacy'], ['Download', '#download']].map(
-                ([l, h]) => (
-                  <li key={h}>
-                    <a href={h} className="transition hover:text-fg">{l}</a>
-                  </li>
-                ),
-              )}
-            </ul>
-          </div>
-          <div>
-            <p className="eyebrow">Account</p>
-            <ul className="mt-4 space-y-2.5 text-sm text-muted">
-              <li><Link href="/login" className="transition hover:text-fg">Sign in</Link></li>
-              <li><Link href="/login" className="transition hover:text-fg">Create account</Link></li>
-              <li><Link href="/dashboard" className="transition hover:text-fg">Dashboard</Link></li>
-            </ul>
-          </div>
-        </div>
-        <div
-          aria-hidden
-          className="pointer-events-none mx-auto max-w-6xl px-4 text-center text-[22vw] leading-[0.8] font-bold tracking-[-0.06em] select-none sm:px-6 lg:text-[15rem]"
-          style={{
-            background: 'linear-gradient(180deg, rgb(255 255 255 / 0.09), transparent 85%)',
-            WebkitBackgroundClip: 'text',
-            backgroundClip: 'text',
-            color: 'transparent',
-          }}
-        >
-          Parakeet
-        </div>
-        <div className="mx-auto max-w-6xl border-t border-line px-4 py-6 text-center text-xs text-faint sm:px-6">
-          © {new Date().getFullYear()} Parakeet. All rights reserved.
-        </div>
-      </footer>
+      <SiteFooter />
     </div>
   );
 }

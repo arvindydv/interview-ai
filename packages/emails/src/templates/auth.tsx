@@ -32,7 +32,7 @@ export function SignInEmail(props: AuthEmailProps) {
       <Eyebrow>Sign in</Eyebrow>
       <Title>Your sign-in code</Title>
       <P>
-        Enter this code in the {brand.name} window to finish signing in. It expires in 60 minutes, works once, and
+        Enter this code in the {brand.name} window to finish signing in. It expires in 10 minutes, works once, and
         replaces any code we sent you before.
       </P>
       <CodeBox code={p.token} caption={`For ${p.email} · Never share this code. ${brand.name} will never ask you for it.`} />
@@ -54,7 +54,7 @@ export function ConfirmSignupEmail(props: AuthEmailProps) {
         You’re one step away from walking into interviews with a real-time copilot. Enter this code to confirm{' '}
         <strong style={{ color: color.ink }}>{p.email}</strong> and create your account.
       </P>
-      <CodeBox code={p.token} caption={`For ${p.email} · Expires in 60 minutes`} />
+      <CodeBox code={p.token} caption={`For ${p.email} · Expires in 10 minutes`} />
       <Divider />
       <P style={{ fontSize: 14, color: color.muted, margin: '0 0 4px' }}>Or confirm with one click:</P>
       <Button href={p.confirmationUrl}>Confirm my email</Button>
@@ -73,7 +73,7 @@ export function EmailChangeEmail(props: AuthEmailProps) {
         You asked to change your {brand.name} email from <strong style={{ color: color.ink }}>{p.email}</strong> to{' '}
         <strong style={{ color: color.ink }}>{p.newEmail}</strong>. Enter this code to confirm:
       </P>
-      <CodeBox code={p.token} caption="Expires in 60 minutes" />
+      <CodeBox code={p.token} caption="Expires in 10 minutes" />
       <Button href={p.confirmationUrl}>Confirm email change</Button>
       <Callout tone="warn">Didn’t ask for this? Don’t confirm. Sign in and review your account security.</Callout>
     </Layout>
@@ -88,7 +88,7 @@ export function ReauthenticationEmail(props: AuthEmailProps) {
       <Eyebrow>Verify it’s you</Eyebrow>
       <Title>Confirm this action</Title>
       <P>You’re making a sensitive change to your account. Enter this code to continue.</P>
-      <CodeBox code={p.token} caption="Expires in 60 minutes" />
+      <CodeBox code={p.token} caption="Expires in 10 minutes" />
       <Callout tone="warn">If you didn’t start this, someone may know your sign-in details. Sign out of all devices.</Callout>
     </Layout>
   );
@@ -108,7 +108,7 @@ export function InviteEmail(props: AuthEmailProps) {
   );
 }
 
-/** Supabase "recovery" template. Parakeet is passwordless, but this keeps the flow branded if enabled. */
+/** Supabase "recovery" template. Friday AI is passwordless, but this keeps the flow branded if enabled. */
 export function RecoveryEmail(props: AuthEmailProps) {
   const p = { ...go, ...props };
   return (
@@ -116,7 +116,7 @@ export function RecoveryEmail(props: AuthEmailProps) {
       <Eyebrow>Account recovery</Eyebrow>
       <Title>Recover your account</Title>
       <P>Use this code or the button below to get back into {brand.name}.</P>
-      <CodeBox code={p.token} caption="Expires in 60 minutes" />
+      <CodeBox code={p.token} caption="Expires in 10 minutes" />
       <Button href={p.confirmationUrl}>Recover account</Button>
     </Layout>
   );

@@ -161,7 +161,7 @@ function ProfileMenu({ email, me }: { email: string; me: Me | null }) {
             onClick={() => p.app.quit()}
             className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-muted transition hover:bg-white/5 hover:text-fg"
           >
-            <Power size={15} /> Quit Parakeet
+            <Power size={15} /> Quit Friday AI
           </button>
         </div>
       )}
@@ -333,14 +333,14 @@ function SessionHero({
   const copy = live
     ? {
         title: "You're live",
-        body: `Join your call, then press ${MOD} \\ to bring up the overlay. This window hides while the overlay is open; bring it back from the overlay's ⋮ menu → Open Parakeet.`,
+        body: `Join your call, then press ${MOD} \\ to bring up the overlay. This window hides while the overlay is open; bring it back from the overlay's ⋮ menu → Open Friday AI.`,
       }
     : pending
       ? { title: 'Connecting…', body: 'Setting up a secure live session. This usually takes a second.' }
       : prepared || !ctx.loaded
         ? {
             title: 'Ready for your interview?',
-            body: 'Start a session a few minutes before your call. Parakeet will listen for questions and answer on a private overlay.',
+            body: 'Start a session a few minutes before your call. Friday AI will listen for questions and answer on a private overlay.',
           }
         : {
             title: "Let's get you prepared",
@@ -479,7 +479,7 @@ function WarmUp({ live, ctx, style }: { live: boolean; ctx: InterviewContextStat
     >
       <p className="-mt-1 mb-4 text-sm text-muted">
         {ctx.hasResume
-          ? 'Try a practice question to hear how Parakeet answers with your own experience.'
+          ? 'Try a practice question to hear how Friday AI answers with your own experience.'
           : 'Try a practice question to see how answers will look during your interview.'}
       </p>
 
@@ -628,7 +628,7 @@ function SystemStatus() {
   useEffect(load, []);
 
   const ok = health?.ok && !error;
-  const label = error ? "Can't reach Parakeet" : !health ? 'Checking services…' : ok ? 'All systems normal' : 'Some services are degraded';
+  const label = error ? "Can't reach Friday AI" : !health ? 'Checking services…' : ok ? 'All systems normal' : 'Some services are degraded';
 
   return (
     <div ref={ref} className="relative">
@@ -706,7 +706,7 @@ export function Home({ email }: { email: string }) {
 
       <header className="flex h-14 shrink-0 items-center gap-3 border-b border-line bg-bg/70 px-5 backdrop-blur-xl">
         <LogoMark size={26} />
-        <span className="font-semibold tracking-tight">Parakeet</span>
+        <span className="font-semibold tracking-tight">Friday AI</span>
         <nav className="ml-4 flex items-center gap-1 rounded-xl bg-white/[0.03] p-1 ring-1 ring-line">
           {tabs.map(({ id, label, icon: Icon }) => (
             <button

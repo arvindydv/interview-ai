@@ -25,7 +25,7 @@ export interface AppSettings {
 
 export const DEFAULT_SETTINGS: AppSettings = {
   maintenanceMode: false,
-  maintenanceMessage: 'Parakeet is down for maintenance. Please try again in a few minutes.',
+  maintenanceMessage: 'Friday AI is down for maintenance. Please try again in a few minutes.',
   dailyQuestionLimits: { free: 0 },
   fastModel: '',
   visionModel: '',

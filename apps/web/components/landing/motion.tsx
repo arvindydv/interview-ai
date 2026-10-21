@@ -226,10 +226,11 @@ export function CountUp({
 }
 
 const navLinks = [
-  ['Features', '#features'],
-  ['How it works', '#how'],
-  ['Privacy', '#privacy'],
-  ['FAQ', '#faq'],
+  ['Features', '/#features'],
+  ['How it works', '/#how'],
+  ['Pricing', '/pricing'],
+  ['Privacy', '/#privacy'],
+  ['FAQ', '/#faq'],
 ];
 
 /** Full-width bar at the top that condenses into a floating pill once you scroll, with a reading-progress line. */
@@ -266,16 +267,16 @@ export function NavBar() {
           <Logo />
           <div className="hidden gap-1 text-sm text-muted md:flex">
             {navLinks.map(([label, href]) => (
-              <a key={href} href={href} className="rounded-lg px-3 py-1.5 transition hover:bg-white/5 hover:text-fg">
+              <Link key={href} href={href} className="rounded-lg px-3 py-1.5 transition hover:bg-white/5 hover:text-fg">
                 {label}
-              </a>
+              </Link>
             ))}
           </div>
           <div className="ml-auto flex items-center gap-2">
             <Link href="/login" className="btn btn-ghost hidden sm:inline-flex">
               Sign in
             </Link>
-            <Link href="/login" className="btn btn-primary btn-shine hidden sm:inline-flex">
+            <Link href="/signup" className="btn btn-primary btn-shine hidden sm:inline-flex">
               Get started <ArrowRight size={16} />
             </Link>
             <button
@@ -298,20 +299,20 @@ export function NavBar() {
         >
           <div className="flex flex-col p-2">
             {navLinks.map(([label, href]) => (
-              <a
+              <Link
                 key={href}
                 href={href}
                 onClick={() => setOpen(false)}
                 className="rounded-xl px-4 py-3 text-sm text-muted hover:bg-white/5 hover:text-fg"
               >
                 {label}
-              </a>
+              </Link>
             ))}
             <div className="mt-2 grid grid-cols-2 gap-2 border-t border-line p-2 pt-3">
               <Link href="/login" className="btn btn-secondary">
                 Sign in
               </Link>
-              <Link href="/login" className="btn btn-primary">
+              <Link href="/signup" className="btn btn-primary">
                 Get started
               </Link>
             </div>

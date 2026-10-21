@@ -24,7 +24,7 @@ const schema = z.object({
   SMTP_PORT: z.coerce.number().default(587),
   BREVO_SMTP_LOGIN: z.string().optional(),
   BREVO_SMTP_KEY: z.string().optional(),
-  EMAIL_FROM: z.string().default('Parakeet <no-reply@localhost>'),
+  EMAIL_FROM: z.string().default('Friday AI <no-reply@localhost>'),
   EMAIL_REPLY_TO: z.string().optional(),
 });
 

@@ -2,7 +2,7 @@
 // plain hex and applied inline. Gradients get a solid fallback for Outlook.
 
 export const brand = {
-  name: 'Parakeet',
+  name: 'Friday AI',
   tagline: 'Real-time AI interview assistant',
   company: 'BidYourStay',
 };
