@@ -1,3 +1,4 @@
+import path from 'node:path';
 import type { NextConfig } from 'next';
 
 const dev = process.env.NODE_ENV !== 'production';
@@ -42,6 +43,10 @@ const securityHeaders = [
 const nextConfig: NextConfig = {
   transpilePackages: ['@parakeet/shared'],
   poweredByHeader: false,
+  // Self-contained server for the Docker image (see /Dockerfile); traced from the monorepo root so
+  // workspace packages are included.
+  output: 'standalone',
+  outputFileTracingRoot: path.join(__dirname, '../../'),
   async headers() {
     return [{ source: '/:path*', headers: securityHeaders }];
   },

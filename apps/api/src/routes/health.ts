@@ -27,11 +27,16 @@ export async function healthReport(): Promise<HealthReport> {
   ]);
   const checks = { postgres, redis: redisCheck, auth };
   const ok = Object.values(checks).every((c) => c.ok);
-  return { ok, version: process.env.npm_package_version ?? '0.0.0', checks };
+  // GIT_SHA is set in the Docker image, so a deploy can check that the new build is the one serving.
+  return { ok, version: process.env.GIT_SHA ?? process.env.npm_package_version ?? '0.0.0', checks };
 }
 
 export default async function healthRoutes(app: FastifyInstance) {
-  app.get('/health', async (_req, reply): Promise<HealthReport> => {
+  // Liveness for the container healthcheck: the process is up and serving. Unlike /health it doesn't
+  // touch Postgres, Redis or Auth, so an outage there doesn't get healthy containers restarted.
+  app.get('/livez', async () => ({ ok: true }));
+
+  app.get('/health',async (_req, reply): Promise<HealthReport> => {
     const report = await healthReport();
     reply.code(report.ok ? 200 : 503);
     return report;

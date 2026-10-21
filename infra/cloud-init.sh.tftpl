@@ -1,0 +1,51 @@
+#!/bin/bash
+# First-boot setup for the Parakeet server (rendered by Terraform; runs once, as root).
+# Log: /var/log/cloud-init-output.log
+set -euxo pipefail
+export DEBIAN_FRONTEND=noninteractive
+
+# 2 GB swap so a memory spike slows things down instead of getting a container OOM-killed.
+if [ ! -f /swapfile ]; then
+  fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+  echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  echo 'vm.swappiness=10' > /etc/sysctl.d/99-swap.conf && sysctl -p /etc/sysctl.d/99-swap.conf
+fi
+
+# Docker Engine + Compose plugin from Docker's apt repository.
+apt-get update
+apt-get install -y ca-certificates curl jq unzip amazon-ecr-credential-helper
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+chmod a+r /etc/apt/keyrings/docker.asc
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+  > /etc/apt/sources.list.d/docker.list
+apt-get update
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+systemctl enable --now docker
+
+# AWS CLI v2 (reads secrets from SSM, fetches release bundles from S3).
+curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
+unzip -q /tmp/awscliv2.zip -d /tmp && /tmp/aws/install --update && rm -rf /tmp/aws /tmp/awscliv2.zip
+
+# Pull from ECR with the instance role; no `docker login`, no stored credentials.
+mkdir -p /root/.docker
+cat > /root/.docker/config.json <<'JSON'
+{ "credHelpers": { "${registry}": "ecr-login" } }
+JSON
+
+# Settings deploy/deploy.sh reads on every deploy.
+mkdir -p /opt/parakeet/env /opt/parakeet/releases
+chmod 700 /opt/parakeet/env
+cat > /opt/parakeet/config.env <<'ENV'
+DOMAIN=${domain}
+ACME_EMAIL=${acme_email}
+REGISTRY=${registry}
+AWS_REGION=${region}
+SSM_PREFIX=${ssm_prefix}
+ENV
+
+# Security updates install automatically (Ubuntu default); reboot at 04:00 UTC only when one needs it.
+cat > /etc/apt/apt.conf.d/52parakeet-reboot <<'APT'
+Unattended-Upgrade::Automatic-Reboot "true";
+Unattended-Upgrade::Automatic-Reboot-Time "04:00";
+APT

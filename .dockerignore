@@ -1,0 +1,20 @@
+# Keep the build context small and secrets out of images. Everything the server images need is
+# rebuilt inside the Dockerfile.
+**/node_modules
+**/dist
+**/.next
+**/*.tsbuildinfo
+**/.env
+**/.env.*
+!**/.env.example
+.git
+.github
+infra
+deploy
+apps/desktop/*
+!apps/desktop/package.json
+packages/emails/preview
+supabase/.branches
+supabase/.temp
+*.pdf
+**/.DS_Store

@@ -50,8 +50,13 @@ export const installers: Installer[] = [
   },
 ];
 
+/** GitHub Releases replaces spaces in asset names with dots: "Friday AI_…" is served as "Friday.AI_…". */
+const githubRelease = DOWNLOADS_URL.startsWith('https://github.com/');
+
 export function downloadUrl(i: Installer): string | null {
-  return DOWNLOADS_URL ? `${DOWNLOADS_URL}/${encodeURIComponent(i.file)}` : null;
+  if (!DOWNLOADS_URL) return null;
+  const file = githubRelease ? i.file.replaceAll(' ', '.') : i.file;
+  return `${DOWNLOADS_URL}/${encodeURIComponent(file)}`;
 }
 
 /** Best guess at the visitor's OS, used to highlight the right button. */

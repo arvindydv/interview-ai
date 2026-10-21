@@ -1,0 +1,83 @@
+# Production stack for one server: Caddy (HTTPS) → web, admin, api; worker and Redis behind them.
+# Run by deploy/deploy.sh, which sets TAG, reads DOMAIN / ACME_EMAIL / REGISTRY from
+# /opt/parakeet/config.env, and writes /opt/parakeet/env/{api,worker}.env from SSM Parameter Store.
+# Postgres + Auth are Supabase, not part of this stack.
+name: parakeet
+
+x-service: &service
+  restart: unless-stopped
+  init: true
+  logging:
+    driver: json-file
+    options: { max-size: 10m, max-file: "5" }
+
+services:
+  caddy:
+    <<: *service
+    image: caddy:2.10-alpine
+    ports: ["80:80", "443:443", "443:443/udp"]
+    environment:
+      DOMAIN: ${DOMAIN:?set in /opt/parakeet/config.env}
+      ACME_EMAIL: ${ACME_EMAIL:?set in /opt/parakeet/config.env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data # TLS certificates; keep across deploys or Let's Encrypt rate-limits you
+      - caddy-config:/config
+    depends_on: [web, admin, api]
+    mem_limit: 128m
+
+  web:
+    <<: *service
+    image: ${REGISTRY:?}/parakeet-web:${TAG:?}
+    environment:
+      NODE_OPTIONS: --max-old-space-size=256
+    mem_limit: 384m
+
+  admin:
+    <<: *service
+    image: ${REGISTRY:?}/parakeet-admin:${TAG:?}
+    environment:
+      NODE_OPTIONS: --max-old-space-size=160
+    mem_limit: 256m
+
+  api:
+    <<: *service
+    image: ${REGISTRY:?}/parakeet-api:${TAG:?}
+    env_file: ${PARAKEET_HOME:-/opt/parakeet}/env/api.env
+    environment:
+      REDIS_URL: redis://redis:6379
+      NODE_OPTIONS: --max-old-space-size=384
+    depends_on:
+      redis: { condition: service_healthy }
+    stop_grace_period: 30s
+    mem_limit: 512m
+
+  worker:
+    <<: *service
+    image: ${REGISTRY:?}/parakeet-worker:${TAG:?}
+    env_file: ${PARAKEET_HOME:-/opt/parakeet}/env/worker.env
+    environment:
+      REDIS_URL: redis://redis:6379
+      NODE_OPTIONS: --max-old-space-size=256
+    depends_on:
+      redis: { condition: service_healthy }
+    stop_grace_period: 60s # let a running job (resume analysis, email) finish
+    mem_limit: 384m
+
+  redis:
+    <<: *service
+    image: redis:7.4-alpine
+    # BullMQ needs noeviction: under any eviction policy Redis silently drops queued jobs when full.
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "200mb", "--maxmemory-policy", "noeviction"]
+    volumes: [redis-data:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    mem_limit: 256m
+
+volumes:
+  caddy-data:
+  caddy-config:
+  redis-data:

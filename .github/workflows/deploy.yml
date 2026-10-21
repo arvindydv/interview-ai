@@ -1,0 +1,140 @@
+# Builds the server images and deploys them to the production server on every push to main.
+#
+#   build:  4 images (api, worker, web, admin) in parallel → ECR, tagged with the commit SHA
+#   deploy: release bundle (deploy/) → S3, then deploy/deploy.sh runs on the server via SSM,
+#           then a smoke test checks the live API reports this exact commit
+#
+# AWS access is short-lived via GitHub OIDC (no stored keys). One-time setup: docs/DEPLOYMENT.md.
+# Until the AWS_DEPLOY_ROLE_ARN variable is set, this workflow skips itself.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'apps/desktop/**'
+      - 'infra/**'
+      - '**/*.md'
+      - '.github/workflows/desktop.yml'
+      - '.github/workflows/ci.yml'
+      - '.github/workflows/uptime.yml'
+  workflow_dispatch:
+
+# One deploy at a time; a newer push waits rather than cancelling one halfway.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  id-token: write # OIDC token for AWS
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.app }}
+    if: vars.AWS_DEPLOY_ROLE_ARN != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: true
+      matrix:
+        app: [api, worker, web, admin]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: ${{ matrix.app }}
+          push: true
+          provenance: false
+          tags: ${{ steps.ecr.outputs.registry }}/parakeet-${{ matrix.app }}:${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.app }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.app }}
+          # NEXT_PUBLIC_* are compiled into web/admin; the api and worker images ignore them.
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+            NEXT_PUBLIC_API_URL=${{ vars.NEXT_PUBLIC_API_URL }}
+            NEXT_PUBLIC_SUPABASE_URL=${{ vars.NEXT_PUBLIC_SUPABASE_URL }}
+            NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=${{ vars.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
+            NEXT_PUBLIC_DOWNLOADS_URL=${{ vars.NEXT_PUBLIC_DOWNLOADS_URL }}
+            NEXT_PUBLIC_DESKTOP_VERSION=${{ vars.NEXT_PUBLIC_DESKTOP_VERSION }}
+
+  deploy:
+    name: Deploy to production
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment:
+      name: production
+      url: ${{ vars.WEB_URL }}
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      INSTANCE_ID: ${{ vars.SERVER_INSTANCE_ID }}
+      BUNDLE: s3://${{ vars.DEPLOY_BUCKET }}/releases/${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Upload release bundle
+        run: aws s3 cp --recursive --quiet deploy/ "$BUNDLE/"
+
+      - name: Run deploy on the server
+        run: |
+          dir="/opt/parakeet/releases/$GITHUB_SHA"
+          params=$(jq -nc --arg b "$BUNDLE" --arg d "$dir" --arg t "$GITHUB_SHA" '{
+            commands: [
+              "set -eu",
+              "aws s3 cp --recursive --quiet \($b)/ \($d)/",
+              "chmod +x \($d)/deploy.sh",
+              "\($d)/deploy.sh \($t)"
+            ],
+            executionTimeout: ["900"]
+          }')
+          id=$(aws ssm send-command --instance-ids "$INSTANCE_ID" --document-name AWS-RunShellScript \
+            --comment "deploy ${GITHUB_SHA::7}" --parameters "$params" --query Command.CommandId --output text)
+          echo "SSM command $id"
+
+          status=Pending
+          for _ in $(seq 1 90); do
+            sleep 10
+            status=$(aws ssm get-command-invocation --command-id "$id" --instance-id "$INSTANCE_ID" \
+              --query Status --output text 2>/dev/null || echo Pending)
+            case $status in Pending|InProgress|Delayed) continue ;; *) break ;; esac
+          done
+
+          aws ssm get-command-invocation --command-id "$id" --instance-id "$INSTANCE_ID" \
+            --query '[StandardOutputContent, StandardErrorContent]' --output text || true
+          if [ "$status" != Success ]; then
+            echo "::error::Deploy finished with status $status"
+            exit 1
+          fi
+
+      - name: Smoke test
+        env:
+          API_URL: ${{ vars.NEXT_PUBLIC_API_URL }}
+          WEB_URL: ${{ vars.WEB_URL }}
+        run: |
+          for _ in $(seq 1 12); do
+            version=$(curl -fsS --max-time 10 "$API_URL/health" | jq -r .version) || version=
+            if [ "$version" = "$GITHUB_SHA" ]; then
+              curl -fsS --max-time 10 -o /dev/null "$WEB_URL" && echo "Live: $GITHUB_SHA" && exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::$API_URL/health is not healthy on $GITHUB_SHA (got '${version}')"
+          exit 1

@@ -1,0 +1,8 @@
+# Copy to terraform.tfvars (git-ignored) and fill in.
+region     = "ap-south-1" # same region as your Supabase project
+domain     = "example.com"
+acme_email = "you@example.com"
+
+# github_repo                 = "arvindydv/interview-ai"
+# instance_type               = "t3.small"
+# create_github_oidc_provider = false # if the account already has GitHub's OIDC provider

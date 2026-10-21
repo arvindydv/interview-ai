@@ -96,6 +96,12 @@ files and run `npx supabase link` + `npx supabase db push` to apply `supabase/mi
 `SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET` in `supabase/.env`, set `enabled = true` under
 `[auth.external.google]` in `supabase/config.toml`, then restart Supabase.
 
+## Deploying
+
+Server apps run as Docker images (`Dockerfile`, one `--target` per app) on an AWS EC2 server behind Caddy,
+with infrastructure in `infra/` (Terraform) and every push to `main` deployed by `.github/workflows/deploy.yml`.
+Step-by-step first deploy, operations and desktop releases: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**.
+
 ## Building installers
 
 `pnpm build:desktop` builds installers for the OS you're on, into `apps/desktop/src-tauri/target/release/bundle/`:

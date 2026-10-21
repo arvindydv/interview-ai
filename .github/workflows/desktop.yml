@@ -3,6 +3,9 @@
 #   Windows: NSIS .exe + .msi
 #   Linux:   .deb (Ubuntu/Debian), .rpm (Fedora), .AppImage (any distro, incl. Arch)
 # Built on Ubuntu 22.04 so the Linux binaries run on older and newer glibc alike.
+#
+# Pushing a desktop-v* tag also uploads every installer to a draft GitHub Release for that tag;
+# review it and click Publish. Release asset URLs feed NEXT_PUBLIC_DOWNLOADS_URL on the website.
 name: Desktop
 
 on:
@@ -11,6 +14,9 @@ on:
     tags: ['desktop-v*']
   pull_request:
     paths: ['apps/desktop/**', 'packages/shared/**', '.github/workflows/desktop.yml']
+
+permissions:
+  contents: write # create the GitHub Release on desktop-v* tags
 
 jobs:
   build:
@@ -60,10 +66,17 @@ jobs:
       # Code signing: add APPLE_* (macOS notarisation) and Windows certificate secrets here before
       # distributing; unsigned builds trigger Gatekeeper / SmartScreen warnings.
       - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           projectPath: apps/desktop
           tauriScript: pnpm tauri
           args: ${{ matrix.args }}
+          # Only tag builds publish; PR and manual builds just upload workflow artifacts below.
+          tagName: ${{ startsWith(github.ref, 'refs/tags/desktop-v') && github.ref_name || '' }}
+          releaseName: 'Friday AI ${{ github.ref_name }}'
+          releaseBody: 'Download the installer for your system below.'
+          releaseDraft: true
 
       - uses: actions/upload-artifact@v4
         with:
