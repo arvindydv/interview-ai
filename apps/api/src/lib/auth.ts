@@ -7,6 +7,8 @@ export interface AuthUser {
   id: string;
   email: string;
   provider: string;
+  /** Full name given at sign-up (Supabase user_metadata.full_name), if any. */
+  name: string;
 }
 
 declare module 'fastify' {
@@ -23,7 +25,7 @@ const hsSecret = env.SUPABASE_JWT_SECRET ? new TextEncoder().encode(env.SUPABASE
 export async function verifyAccessToken(token: string): Promise<AuthUser> {
   const { alg } = decodeProtectedHeader(token);
   const opts = { issuer, audience: 'authenticated' };
-  let payload: JWTPayload & { email?: string; app_metadata?: { provider?: string } };
+  let payload: JWTPayload & { email?: string; app_metadata?: { provider?: string }; user_metadata?: { full_name?: unknown } };
   if (alg === 'HS256') {
     if (!hsSecret) throw new Error('HS256 token but SUPABASE_JWT_SECRET is not set');
     ({ payload } = await jwtVerify(token, hsSecret, opts));
@@ -35,6 +37,7 @@ export async function verifyAccessToken(token: string): Promise<AuthUser> {
     id: payload.sub,
     email: payload.email ?? '',
     provider: payload.app_metadata?.provider ?? 'email',
+    name: typeof payload.user_metadata?.full_name === 'string' ? payload.user_metadata.full_name.trim().slice(0, 80) : '',
   };
 }
 
@@ -50,24 +53,35 @@ export async function requireAuth(req: FastifyRequest, reply: FastifyReply) {
     req.log.debug({ err }, 'token verification failed');
     return reply.code(401).send({ error: 'unauthorized', message: 'Invalid or expired token' });
   }
-  if (await isSuspended(req.user.id)) {
+  const status = await accountStatus(req.user.id);
+  if (status.suspended) {
     return reply.code(403).send({ error: 'suspended', message: 'This account has been suspended. Contact support.' });
+  }
+  // Supabase withholds a session until the address is confirmed, but only if "Confirm email" is on
+  // for the project. Enforce it here too so a misconfigured project can't let unverified emails in.
+  if (!status.confirmed) {
+    return reply.code(403).send({ error: 'email_unverified', message: 'Confirm your email address to continue.' });
   }
 }
 
-// Account status set from the admin console. Cached briefly so authenticated requests don't each
-// hit Postgres; suspending a user also clears their entry (see forgetUserStatus).
+// Account status (suspension from the admin console, email confirmation). Cached briefly so
+// authenticated requests don't each hit Postgres; suspending a user also clears their entry (see
+// forgetUserStatus).
 const STATUS_CACHE_MS = 15_000;
-const statusCache = new Map<string, { suspended: boolean; at: number }>();
+const statusCache = new Map<string, { suspended: boolean; confirmed: boolean; at: number }>();
 
-export async function isSuspended(userId: string) {
+async function accountStatus(userId: string) {
   const hit = statusCache.get(userId);
-  if (hit && Date.now() - hit.at < STATUS_CACHE_MS) return hit.suspended;
-  const [row] = await sql<{ status: string }[]>`select status from public.users where id = ${userId}`;
-  const suspended = row?.status === 'suspended';
+  if (hit && Date.now() - hit.at < STATUS_CACHE_MS) return hit;
+  const [row] = await sql<{ status: string | null; confirmed: boolean }[]>`
+    select u.status, a.email_confirmed_at is not null as confirmed
+    from auth.users a left join public.users u on u.id = a.id
+    where a.id = ${userId}`;
+  const entry = { suspended: row?.status === 'suspended', confirmed: row?.confirmed ?? false, at: Date.now() };
   if (statusCache.size > 10_000) statusCache.clear();
-  statusCache.set(userId, { suspended, at: Date.now() });
-  return suspended;
+  // Don't cache "unconfirmed": the user is about to enter their code and shouldn't wait 15 s.
+  if (entry.confirmed) statusCache.set(userId, entry);
+  return entry;
 }
 
 export function forgetUserStatus(userId: string) {

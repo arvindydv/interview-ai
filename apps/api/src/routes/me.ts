@@ -8,7 +8,10 @@ import { TRIAL_PLAN } from '../lib/trial.js';
 import { env } from '../env.js';
 
 /** "sourabh.k@x.com" → "Sourabh" */
-function firstName(email: string) {
+/** The first word of the sign-up name, else a guess from the email address. */
+function firstName(email: string, name = '') {
+  const given = name.split(/\s+/)[0];
+  if (given) return given;
   const local = email.split('@')[0].split(/[._+-]/)[0] || 'there';
   return local.charAt(0).toUpperCase() + local.slice(1);
 }
@@ -25,7 +28,7 @@ export default async function meRoutes(app: FastifyInstance) {
 
   // Returns the app-side user, creating it on first sign-in.
   app.get('/v1/me', async (req): Promise<Me> => {
-    const { id, email, provider } = req.user;
+    const { id, email, provider, name } = req.user;
     const [row] = await sql<
       {
         id: string; email: string; auth_provider: string; plan: string; created_at: Date;
@@ -38,7 +41,7 @@ export default async function meRoutes(app: FastifyInstance) {
       returning id, email, auth_provider, plan, created_at, trial_seconds, trial_used_seconds, (xmax = 0) as inserted`;
     if (row.inserted && row.email) {
       await sendEmail(
-        { template: 'welcome', to: row.email, props: { name: firstName(row.email), email: row.email, appUrl: env.APP_URL } },
+        { template: 'welcome', to: row.email, props: { name: firstName(row.email, name), email: row.email, appUrl: env.APP_URL } },
         `welcome-${row.id}`,
         req.log,
       );

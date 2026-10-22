@@ -30,16 +30,13 @@ function stubAnswer(question: string, imageCount: number, context: InterviewCont
     '',
     using ? `_Context loaded: ${using}. The real model will use it to answer._` : '_No interview context yet: add your resume in Prepare._',
     '',
-    '**Direct answer:** open with one sentence you can say out loud, then back it up with a real example from your own experience.',
+    "So the way I'd answer this is to start with one plain sentence I can say straight away, then back it up with a real example from my own work.",
     '',
-    '### 🔑 Key points',
-    '- Restate what they are really asking, in one line.',
-    '- Give your answer, then one concrete example: the situation, what *you* did, and the result.',
-    '- Close by linking it back to this role and organisation.',
+    "I'd talk through what was going on, what I actually did, and how it turned out, and then tie it back to why that matters for this role.",
     ...(imageCount
       ? [
           '',
-          '### 💻 Example code (screenshot questions)',
+          'Here’s the kind of code you’d get for a coding screenshot:',
           '```python',
           'def two_sum(nums, target):',
           '    seen = {}',
@@ -102,6 +99,19 @@ async function answerTurn(
   trialEnded: () => boolean,
 ) {
   const images = msg.images ?? [];
+  // Settings, the daily count and the candidate's context are independent lookups: run them at once
+  // so a heard question reaches the model after one database round trip, not three.
+  // Loaded per question so edits in the main window apply to the very next answer. A failure here
+  // must never block an answer: fall back to answering without the candidate's context.
+  const contextP = loadInterviewContext(userId).catch((err) => {
+    log.warn({ err, turnId: msg.turnId }, 'could not load interview context');
+    return null;
+  });
+  // If the count can't be read, answer rather than lock the user out.
+  const usageP = questionsToday(userId).catch((err) => {
+    log.warn({ err }, 'could not count questions for the daily limit');
+    return null;
+  });
   const settings = await getSettings().catch((err) => {
     log.warn({ err }, 'could not load settings');
     return DEFAULT_SETTINGS;
@@ -117,11 +127,7 @@ async function answerTurn(
     return send({ type: 'error', turnId: msg.turnId, code: 'trial_ended', message: TRIAL_ENDED_MESSAGE });
   }
   if (Object.values(settings.dailyQuestionLimits).some((n) => n > 0)) {
-    // If the count can't be read, answer rather than lock the user out.
-    const usage = await questionsToday(userId).catch((err) => {
-      log.warn({ err }, 'could not count questions for the daily limit');
-      return null;
-    });
+    const usage = await usageP;
     const plan = usage?.plan ?? 'free';
     const limit = settings.dailyQuestionLimits[plan] ?? 0;
     if (usage && limit > 0 && usage.n >= limit) {
@@ -134,12 +140,7 @@ async function answerTurn(
     }
   }
 
-  // Loaded per question so edits in the main window apply to the very next answer. A failure here
-  // must never block an answer: fall back to answering without the candidate's context.
-  const context = await loadInterviewContext(userId).catch((err) => {
-    log.warn({ err, turnId: msg.turnId }, 'could not load interview context');
-    return null;
-  });
+  const context = await contextP;
   Object.assign(turn, {
     field: context?.field ?? '',
     company: context?.company ?? '',

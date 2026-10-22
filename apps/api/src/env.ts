@@ -29,10 +29,13 @@ const schema = z.object({
   DEEPGRAM_MODEL: z.string().default('flux-general-en'),
   /** Confidence needed to end a turn (0.5–0.9). Higher waits longer before answering. */
   DEEPGRAM_EOT_THRESHOLD: z.coerce.number().min(0.5).max(0.9).default(0.7),
-  /** Confidence at which an answer starts speculatively, before the turn is confirmed (0.3–0.9). */
-  DEEPGRAM_EAGER_EOT_THRESHOLD: z.coerce.number().min(0.3).max(0.9).default(0.5),
+  /**
+   * Confidence at which an answer starts speculatively, before the turn is confirmed (0.3–0.9).
+   * Lower starts sooner; a speculative answer for a question that turns out unfinished is discarded.
+   */
+  DEEPGRAM_EAGER_EOT_THRESHOLD: z.coerce.number().min(0.3).max(0.9).default(0.4),
   /** A turn ends after this much silence even if the model is unsure. */
-  DEEPGRAM_EOT_TIMEOUT_MS: z.coerce.number().int().min(500).max(10000).default(3000),
+  DEEPGRAM_EOT_TIMEOUT_MS: z.coerce.number().int().min(500).max(10000).default(2000),
   /** Public website URL, used for links in emails. */
   APP_URL: z.url().default('http://localhost:3100'),
 

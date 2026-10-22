@@ -128,8 +128,9 @@ fn live_ask(
     live.ask(&app, &text, images)
 }
 
-/// Captures the screen the overlay is on (spec D1). The overlay is hidden for the capture so it
-/// never appears in the image, then restored, even if the capture fails.
+/// Captures the screen the overlay is on (spec D1). Where the OS already keeps the overlay out of
+/// captures (Windows 10 2004+, macOS ≤14), it stays on screen, so nothing blinks. Elsewhere it is
+/// hidden only for the instant of the capture, then restored, even if the capture fails.
 #[tauri::command]
 async fn screenshot_capture(app: AppHandle) -> CmdResult<Shot> {
     use screenshot::Rect;
@@ -140,23 +141,27 @@ async fn screenshot_capture(app: AppHandle) -> CmdResult<Shot> {
         height: m.size().height,
     };
     let overlay = app.get_webview_window("overlay");
-    let was_visible = overlay.as_ref().is_some_and(|w| w.is_visible().unwrap_or(false));
     let target = overlay
         .as_ref()
         .and_then(|w| w.current_monitor().ok().flatten())
         .or_else(|| app.primary_monitor().ok().flatten())
         .map(|m| rect(&m));
     let all: Vec<Rect> = app.available_monitors().map(|ms| ms.iter().map(rect).collect()).unwrap_or_default();
+    let data_dir = app.path().app_data_dir().map_err(err)?;
 
-    if was_visible {
+    // Opening may show the desktop's screen picker the first time, so do it before hiding anything.
+    let source = screenshot::Source::open(target, all, data_dir).await;
+    let hide = protection::status().level != "hidden"
+        && overlay.as_ref().is_some_and(|w| w.is_visible().unwrap_or(false));
+    if hide {
         if let Some(w) = &overlay {
             let _ = w.hide();
         }
         // Give the compositor a frame or two to remove the window before capturing.
-        tokio::time::sleep(std::time::Duration::from_millis(180)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(120)).await;
     }
-    let captured = screenshot::capture_screen(target, all).await;
-    if was_visible {
+    let captured = source.capture().await;
+    if hide {
         if let Some(w) = &overlay {
             let _ = w.show();
         }

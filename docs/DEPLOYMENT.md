@@ -67,10 +67,14 @@ stack idles at about 250 MB of RAM.
    ```
 3. **Authentication → URL Configuration:** set Site URL to `https://example.com`, and add Redirect URL
    `https://example.com/**`.
-4. **Authentication → Emails → Templates:** paste each file from `supabase/templates/` into the matching template.
-5. **Authentication → Emails → SMTP Settings:** enter your Brevo SMTP details. Supabase's built-in sender
+4. **Authentication → Sign In / Providers → Email:** turn **Confirm email** on (or run
+   `npx supabase config push`, which applies `enable_confirmations = true` from `supabase/config.toml`).
+   Without it, sign-up skips the 6-digit code and any email address works; the API also refuses
+   unconfirmed accounts.
+5. **Authentication → Emails → Templates:** paste each file from `supabase/templates/` into the matching template.
+6. **Authentication → Emails → SMTP Settings:** enter your Brevo SMTP details. Supabase's built-in sender
    is limited to a few emails an hour.
-6. Google sign-in (optional): in Google Cloud, add the redirect URI `https://<ref>.supabase.co/auth/v1/callback`,
+7. Google sign-in (optional): in Google Cloud, add the redirect URI `https://<ref>.supabase.co/auth/v1/callback`,
    then enable **Authentication → Providers → Google** with the client id and secret.
 7. Note these for later:
    - Project URL (`https://<ref>.supabase.co`)

@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { ArrowLeft, ArrowRight, Check, Eye, EyeOff, Laptop, Lock, Mail } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, CircleCheck, Eye, EyeOff, Laptop, Lock, Mail, User } from 'lucide-react';
 import type { EmailOtpType } from '@supabase/supabase-js';
 import { company } from '@/lib/company';
 import { handoffSupabase, isAllowedDesktopRedirect, supabase } from '@/lib/supabase';
@@ -23,8 +23,12 @@ export type AuthMode = 'signin' | 'signup';
  * - `forgot`: email only, to receive a password-reset code
  * - `code`: enter the 6-digit code sent for `codeType`
  * - `reset`: choose a new password after a recovery code was verified
+ * - `verified`: sign-up email confirmed; shown briefly before continuing to the dashboard
  */
-type Step = 'password' | 'email' | 'forgot' | 'code' | 'reset';
+type Step = 'password' | 'email' | 'forgot' | 'code' | 'reset' | 'verified';
+
+// How long the "Email verified" confirmation stays up before redirecting.
+const VERIFIED_REDIRECT_MS = 1200;
 
 /** Turns Supabase Auth errors into guidance the user can act on. */
 function friendlyError(message: string, email: string) {
@@ -86,6 +90,26 @@ function PasswordInput({
   );
 }
 
+function NameInput({ value, onChange, autoFocus }: { value: string; onChange: (v: string) => void; autoFocus?: boolean }) {
+  return (
+    <div className="relative">
+      <User size={17} className="pointer-events-none absolute top-1/2 left-3.5 -translate-y-1/2 text-faint" />
+      <input
+        id="name"
+        type="text"
+        required
+        autoFocus={autoFocus}
+        autoComplete="name"
+        maxLength={80}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="input !pl-10"
+        placeholder="Full name"
+      />
+    </div>
+  );
+}
+
 function EmailInput({ value, onChange, autoFocus }: { value: string; onChange: (v: string) => void; autoFocus?: boolean }) {
   return (
     <div className="relative">
@@ -121,8 +145,10 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
 
   const [step, setStep] = useState<Step>('password');
   const [codeType, setCodeType] = useState<EmailOtpType>('email');
+  const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -205,13 +231,25 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
   const submitPassword = () =>
     run(async () => {
       if (signup) {
+        if (!name.trim()) throw new Error('Please enter your name.');
+        if (password.length < MIN_PASSWORD_LENGTH) {
+          throw new Error(`Your password needs at least ${MIN_PASSWORD_LENGTH} characters.`);
+        }
+        if (password !== confirmPassword) throw new Error("The passwords don't match.");
         const { data, error } = await client.auth.signUp({
           email,
           password,
-          options: { emailRedirectTo: callbackUrl() },
+          options: { emailRedirectTo: callbackUrl(), data: { full_name: name.trim() } },
         });
         if (error) throw error;
-        if (data.session) return router.replace(next);
+        // A session here means the project auto-confirms emails, so no code was sent and the
+        // address is unverified. Never continue in that state: it would let any email sign up.
+        if (data.session) {
+          await client.auth.signOut();
+          throw new Error(
+            'Email verification is turned off on the server, so we can’t confirm your address. Please contact support.',
+          );
+        }
         // With email confirmations on, signing up an existing address returns a user with no
         // identities instead of an error (so addresses can't be enumerated).
         if (data.user && data.user.identities?.length === 0) {
@@ -249,6 +287,11 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
         if (codeType === 'recovery') {
           setPassword('');
           setStep('reset');
+          return;
+        }
+        if (codeType === 'signup') {
+          setStep('verified');
+          setTimeout(() => router.replace(next), VERIFIED_REDIRECT_MS);
           return;
         }
         router.replace(next);
@@ -302,7 +345,8 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
               submitPassword();
             }}
           >
-            <EmailInput value={email} onChange={setEmail} autoFocus />
+            {signup && <NameInput value={name} onChange={setName} autoFocus />}
+            <EmailInput value={email} onChange={setEmail} autoFocus={!signup} />
             <div>
               <PasswordInput
                 value={password}
@@ -310,6 +354,16 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
                 autoComplete={signup ? 'new-password' : 'current-password'}
                 placeholder={signup ? `Password (${MIN_PASSWORD_LENGTH}+ characters)` : 'Password'}
               />
+              {signup && (
+                <div className="mt-4">
+                  <PasswordInput
+                    value={confirmPassword}
+                    onChange={setConfirmPassword}
+                    autoComplete="new-password"
+                    placeholder="Confirm password"
+                  />
+                </div>
+              )}
               {!signup && (
                 <div className="mt-2 text-right">
                   <button
@@ -399,6 +453,19 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
             )}
           </p>
         </form>
+      )}
+
+      {step === 'verified' && (
+        <div role="status" className="flex flex-col items-center text-center">
+          <span className="grid size-14 place-items-center rounded-full bg-brand/15 text-brand">
+            <CircleCheck size={28} />
+          </span>
+          <h1 className="mt-6 text-3xl font-semibold tracking-tight">Email verified</h1>
+          <p className="mt-2 text-muted">
+            Your account is ready. Taking you to {desktop ? 'the app' : 'your dashboard'}…
+          </p>
+          <Spinner className="mt-6 text-brand" />
+        </div>
       )}
 
       {step === 'reset' && (

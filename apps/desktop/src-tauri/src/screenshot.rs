@@ -4,9 +4,10 @@
 //! JPEG-encodes it. Full images stay in Rust (keyed by id) until a question is sent; the webview only
 //! gets a small thumbnail, so large images never round-trip through IPC.
 //!
-//! Capture backends: `xcap` (native APIs) on Windows and macOS; the xdg-desktop-portal Screenshot
-//! interface on Linux, which works on GNOME and KDE under Wayland and X11 without PipeWire/clang at
-//! build time. The desktop may ask the user to allow screenshots the first time.
+//! Capture backends: `xcap` (native APIs) on Windows and macOS. On Linux, a frame from the
+//! xdg-desktop-portal ScreenCast interface (read with GStreamer at runtime, so no PipeWire/clang at
+//! build time), falling back to the Screenshot portal, which flashes the screen and plays a shutter
+//! sound on GNOME. The desktop may ask the user to pick a screen the first time.
 
 use std::{
     collections::VecDeque,
@@ -87,24 +88,165 @@ pub struct Rect {
     pub height: u32,
 }
 
-/// Captures `target` (the overlay's monitor). `all` is every monitor, used on Linux to locate the
-/// target inside the portal's whole-desktop image.
+/// A capture that is ready to take. Opening one can be slow (the Linux screencast session, which may
+/// ask the user the first time), so the caller opens it first and hides the overlay only for the
+/// instant of `capture()`. `all` is every monitor, used to locate `target` in a whole-desktop image.
 #[cfg(any(target_os = "windows", target_os = "macos"))]
-pub async fn capture_screen(target: Option<Rect>, _all: Vec<Rect>) -> Result<RgbaImage> {
-    tauri::async_runtime::spawn_blocking(move || {
-        use xcap::Monitor;
-        let monitor = target
-            .and_then(|r| Monitor::from_point(r.x + r.width as i32 / 2, r.y + r.height as i32 / 2).ok())
-            .or_else(|| Monitor::all().ok()?.into_iter().find(|m| m.is_primary().unwrap_or(false)))
-            .or_else(|| Monitor::all().ok()?.into_iter().next())
-            .ok_or_else(|| anyhow!("No display found to capture"))?;
-        monitor.capture_image().map_err(|e| anyhow!(permission_hint(&e.to_string())))
-    })
-    .await?
+pub struct Source {
+    target: Option<Rect>,
+}
+
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+impl Source {
+    pub async fn open(target: Option<Rect>, _all: Vec<Rect>, _data_dir: std::path::PathBuf) -> Self {
+        Self { target }
+    }
+
+    pub async fn capture(self) -> Result<RgbaImage> {
+        let target = self.target;
+        tauri::async_runtime::spawn_blocking(move || {
+            use xcap::Monitor;
+            let monitor = target
+                .and_then(|r| Monitor::from_point(r.x + r.width as i32 / 2, r.y + r.height as i32 / 2).ok())
+                .or_else(|| Monitor::all().ok()?.into_iter().find(|m| m.is_primary().unwrap_or(false)))
+                .or_else(|| Monitor::all().ok()?.into_iter().next())
+                .ok_or_else(|| anyhow!("No display found to capture"))?;
+            monitor.capture_image().map_err(|e| anyhow!(permission_hint(&e.to_string())))
+        })
+        .await?
+    }
+}
+
+/// Linux: one frame from a ScreenCast portal session, read with GStreamer's pipewiresrc. Unlike the
+/// Screenshot portal, this doesn't flash the screen or play GNOME's shutter sound. The session is
+/// persisted with a restore token, so the monitor picker only appears the first time. If the
+/// screencast path isn't available (no GStreamer PipeWire plugin, portal refused), falls back to
+/// the Screenshot portal.
+#[cfg(target_os = "linux")]
+pub enum Source {
+    Cast(linux_cast::Cast),
+    Portal { target: Option<Rect>, all: Vec<Rect> },
 }
 
 #[cfg(target_os = "linux")]
-pub async fn capture_screen(target: Option<Rect>, all: Vec<Rect>) -> Result<RgbaImage> {
+impl Source {
+    pub async fn open(target: Option<Rect>, all: Vec<Rect>, data_dir: std::path::PathBuf) -> Self {
+        match linux_cast::Cast::open(&data_dir).await {
+            Ok(cast) => Self::Cast(cast),
+            Err(e) => {
+                log::warn!("screenshot: screencast unavailable, using the screenshot portal: {e:#}");
+                Self::Portal { target, all }
+            }
+        }
+    }
+
+    pub async fn capture(self) -> Result<RgbaImage> {
+        match self {
+            Self::Cast(cast) => cast.grab().await,
+            Self::Portal { target, all } => portal_screenshot(target, all).await,
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+mod linux_cast {
+    use std::{os::fd::{AsRawFd, OwnedFd}, path::{Path, PathBuf}, time::Duration};
+
+    use anyhow::{anyhow, Context, Result};
+    use ashpd::desktop::{
+        screencast::{CursorMode, Screencast, SelectSourcesOptions, SourceType},
+        PersistMode, Session,
+    };
+    use image::RgbaImage;
+
+    /// The frame must arrive quickly; otherwise fall back rather than leave the overlay hidden.
+    const GRAB_TIMEOUT: Duration = Duration::from_secs(4);
+
+    pub struct Cast {
+        session: Session<Screencast>,
+        fd: OwnedFd,
+        node: u32,
+    }
+
+    fn token_file(data_dir: &Path) -> PathBuf {
+        data_dir.join("screencast.token")
+    }
+
+    impl Cast {
+        pub async fn open(data_dir: &Path) -> Result<Self> {
+            // Check for the GStreamer plugin first, so a missing one never opens a portal dialog.
+            which_gst().context("GStreamer's pipewiresrc isn't installed")?;
+            let token_path = token_file(data_dir);
+            let token = std::fs::read_to_string(&token_path).ok();
+
+            let proxy = Screencast::new().await?;
+            let session = proxy.create_session(Default::default()).await?;
+            proxy
+                .select_sources(
+                    &session,
+                    SelectSourcesOptions::default()
+                        .set_cursor_mode(CursorMode::Hidden)
+                        .set_sources(Some(SourceType::Monitor.into()))
+                        .set_multiple(false)
+                        .set_restore_token(token.as_deref().map(str::trim))
+                        .set_persist_mode(PersistMode::ExplicitlyRevoked),
+                )
+                .await?
+                .response()?;
+            let streams = proxy.start(&session, None, Default::default()).await?.response()?;
+            // Restore tokens are single use: keep the new one for the next capture.
+            if let Some(t) = streams.restore_token() {
+                if let Err(e) = std::fs::write(&token_path, t) {
+                    log::warn!("screenshot: couldn't save the screencast token: {e}");
+                }
+            }
+            let node = streams.streams().first().ok_or_else(|| anyhow!("No screen was shared"))?.pipe_wire_node_id();
+            let fd = proxy.open_pipe_wire_remote(&session, Default::default()).await?;
+            Ok(Self { session, fd, node })
+        }
+
+        pub async fn grab(self) -> Result<RgbaImage> {
+            let result = self.read_frame().await;
+            let _ = self.session.close().await;
+            result
+        }
+
+        async fn read_frame(&self) -> Result<RgbaImage> {
+            // The child inherits the PipeWire fd: clear close-on-exec so it survives exec.
+            rustix::io::fcntl_setfd(&self.fd, rustix::io::FdFlags::empty())?;
+            let child = tokio::process::Command::new("gst-launch-1.0")
+                .args(["-q", "pipewiresrc", &format!("fd={}", self.fd.as_raw_fd()), &format!("path={}", self.node)])
+                .args(["num-buffers=1", "always-copy=true", "!", "videoconvert", "!", "pngenc", "compression-level=1"])
+                .args(["!", "fdsink", "fd=1"])
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .kill_on_drop(true)
+                .spawn()
+                .context("Couldn't start gst-launch-1.0")?;
+            let out = tokio::time::timeout(GRAB_TIMEOUT, child.wait_with_output())
+                .await
+                .map_err(|_| anyhow!("Timed out waiting for a screen frame"))??;
+            if !out.status.success() || out.stdout.is_empty() {
+                return Err(anyhow!("GStreamer failed: {}", String::from_utf8_lossy(&out.stderr).trim()));
+            }
+            Ok(image::load_from_memory(&out.stdout).context("Couldn't decode the screen frame")?.to_rgba8())
+        }
+    }
+
+    fn which_gst() -> Result<()> {
+        let ok = std::process::Command::new("gst-inspect-1.0")
+            .args(["--exists", "pipewiresrc"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success());
+        if ok { Ok(()) } else { Err(anyhow!("gst-inspect-1.0 --exists pipewiresrc failed")) }
+    }
+}
+
+#[cfg(target_os = "linux")]
+async fn portal_screenshot(target: Option<Rect>, all: Vec<Rect>) -> Result<RgbaImage> {
     use ashpd::desktop::screenshot::Screenshot;
 
     log::info!("screenshot: requesting portal capture");
