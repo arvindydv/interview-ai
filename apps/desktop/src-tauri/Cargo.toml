@@ -2,7 +2,7 @@
 name = "parakeet"
 version = "0.1.0"
 description = "Friday AI: Real-Time AI Interview Assistant"
-authors = ["BidYourStay"]
+authors = ["Friday AI"]
 license = ""
 repository = ""
 edition = "2024"

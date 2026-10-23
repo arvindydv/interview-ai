@@ -6,7 +6,7 @@
 
 use std::{fs, path::{Path, PathBuf}};
 
-const SERVICE: &str = "com.bidyourstay.parakeet";
+const SERVICE: &str = "in.friday-ai.desktop";
 const ACCOUNT: &str = "supabase-refresh-token";
 
 pub struct SecureStore {

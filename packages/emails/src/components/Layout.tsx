@@ -4,19 +4,7 @@ import { brand, color, font, gradient } from '../theme.js';
 
 /** Logo built from HTML (no image), so it renders even when the client blocks remote images. */
 export function Logo() {
-  const bar = (h: number) => (
-    <span
-      style={{
-        display: 'inline-block',
-        width: '4px',
-        height: `${h}px`,
-        margin: '0 1.5px',
-        borderRadius: '2px',
-        backgroundColor: color.dark,
-        verticalAlign: 'middle',
-      }}
-    />
-  );
+  // Mirrors the app mark: a speech bubble (square bottom-left corner) holding an F and an AI spark.
   return (
     <table role="presentation" cellPadding={0} cellSpacing={0} style={{ borderCollapse: 'collapse' }}>
       <tbody>
@@ -26,11 +14,20 @@ export function Logo() {
             height={36}
             align="center"
             valign="middle"
-            style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: color.cyan, backgroundImage: gradient, lineHeight: '36px' }}
+            style={{
+              width: 36,
+              height: 36,
+              borderRadius: '10px 10px 10px 3px',
+              backgroundColor: color.cyan,
+              backgroundImage: gradient,
+              lineHeight: '36px',
+              fontFamily: font.sans,
+              fontSize: 21,
+              fontWeight: 800,
+              color: color.dark,
+            }}
           >
-            {bar(10)}
-            {bar(20)}
-            {bar(13)}
+            F<span style={{ fontSize: 11, verticalAlign: 'middle' }}>&#10022;</span>
           </td>
           <td style={{ paddingLeft: 10, fontFamily: font.sans, fontSize: 19, fontWeight: 700, color: color.ink, letterSpacing: '-0.3px' }}>
             {brand.name}

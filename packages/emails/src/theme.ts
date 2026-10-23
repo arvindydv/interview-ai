@@ -4,7 +4,7 @@
 export const brand = {
   name: 'Friday AI',
   tagline: 'Real-time AI interview assistant',
-  company: 'BidYourStay',
+  company: 'Friday AI',
 };
 
 export const color = {
