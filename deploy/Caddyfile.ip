@@ -1,0 +1,31 @@
+# TEMPORARY: serves the stack on the server's bare IP over plain HTTP while the domain is unusable.
+# Enabled by deploy/compose.ip.yml; see the comment there for how to switch it on and off.
+#
+#   http://<ip>       → web
+#   http://<ip>:8080  → api (its own origin, the same way api.DOMAIN is in production)
+#
+# admin is deliberately not exposed: its login would travel unencrypted. Reach it through an SSM
+# port forward instead (docs in compose.ip.yml).
+{
+	auto_https off
+}
+
+(proxy_defaults) {
+	encode zstd gzip
+	header -Server
+}
+
+:80 {
+	import proxy_defaults
+	reverse_proxy web:3100 {
+		lb_try_duration 10s
+	}
+}
+
+:8080 {
+	import proxy_defaults
+	reverse_proxy api:4000 {
+		lb_try_duration 10s
+		stream_close_delay 30m
+	}
+}

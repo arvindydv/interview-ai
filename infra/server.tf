@@ -23,6 +23,15 @@ resource "aws_security_group" "server" {
     cidr_blocks      = ["0.0.0.0/0"]
     ipv6_cidr_blocks = ["::/0"]
   }
+  # TEMPORARY: the API over plain HTTP on the bare IP (deploy/compose.ip.yml). Remove with it.
+  ingress {
+    description      = "API over HTTP (IP testing)"
+    from_port        = 8080
+    to_port          = 8080
+    protocol         = "tcp"
+    cidr_blocks      = ["0.0.0.0/0"]
+    ipv6_cidr_blocks = ["::/0"]
+  }
   ingress {
     description      = "HTTPS"
     from_port        = 443

@@ -1,0 +1,20 @@
+# TEMPORARY override: run the stack on the server's bare IP over HTTP (deploy/Caddyfile.ip) until
+# the domain resolves. compose.yml and the production Caddyfile are left untouched.
+#
+# Switch on, on the server (deploy.sh sources config.env, and Compose reads COMPOSE_FILE from it):
+#   echo 'COMPOSE_FILE=compose.yml:compose.ip.yml' | sudo tee -a /opt/parakeet/config.env
+# Switch off (back to HTTPS on DOMAIN): delete that line, then redeploy.
+#
+# Admin panel from your machine (then open http://localhost:3200):
+#   aws ssm start-session --region ap-south-1 --target <instance-id> \
+#     --document-name AWS-StartPortForwardingSessionToRemoteHost \
+#     --parameters '{"host":["127.0.0.1"],"portNumber":["3200"],"localPortNumber":["3200"]}'
+services:
+  caddy:
+    ports: ["8080:8080"]
+    volumes:
+      - ./Caddyfile.ip:/etc/caddy/Caddyfile:ro
+
+  admin:
+    # Only on the server's loopback, for the port forward above.
+    ports: ["127.0.0.1:3200:3200"]
