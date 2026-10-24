@@ -91,13 +91,13 @@ jobs:
             "//*[local-name()='Properties']/*[local-name()='DisplayName']"
           )
           if (-not $packageDisplay) { throw "Package DisplayName missing" }
-          $packageDisplay.InnerText = "Friday AI"
+          $packageDisplay.InnerText = "Friday AI Desktop Assistant"
 
           $visualElements = $manifest.SelectSingleNode(
             "//*[local-name()='VisualElements']"
           )
           if (-not $visualElements) { throw "VisualElements missing" }
-          $visualElements.SetAttribute("DisplayName", "Friday AI")
+          $visualElements.SetAttribute("DisplayName", "Friday AI Desktop Assistant")
           $manifest.Save((Resolve-Path Package.appxmanifest).Path)
 
           winapp manifest update-assets ../../src-tauri/icons/128x128@2x.png
