@@ -49,17 +49,19 @@ jobs:
         shell: pwsh
         working-directory: apps/desktop
         run: |
+          $ErrorActionPreference = "Stop"
+
           New-Item -ItemType Directory -Force store-msix/payload | Out-Null
 
           $exe = Get-ChildItem -Path src-tauri/target -Recurse -Filter parakeet.exe |
-            Where-Object { $_.FullName -match '[\\/]release[\\/]parakeet\.exe$' } |
+            Where-Object { $_.FullName -match '[\\/]release[\\/]parakeet\\.exe$' } |
             Select-Object -First 1
 
           if (-not $exe) { throw "Windows executable not found" }
 
           Copy-Item $exe.FullName store-msix/payload/parakeet.exe
 
-          Set-Location store-msix
+          Set-Location store-msix/payload
 
           winapp manifest generate . `
             --package-name "FridayAI.FridayAIDesktopAssistant" `
@@ -68,23 +70,31 @@ jobs:
             --description "Friday AI Desktop Assistant" `
             --entrypoint "parakeet.exe"
 
+          if ($LASTEXITCODE -ne 0) { throw "Manifest generation failed" }
+
           [xml]$manifest = Get-Content Package.appxmanifest
           $publisherDisplay = $manifest.SelectSingleNode(
             "//*[local-name()='Properties']/*[local-name()='PublisherDisplayName']"
           )
+
           if (-not $publisherDisplay) {
             throw "PublisherDisplayName not found in manifest"
           }
+
           $publisherDisplay.InnerText = "Friday AI"
           $manifest.Save((Resolve-Path Package.appxmanifest).Path)
 
-          winapp manifest update-assets ../src-tauri/icons/128x128@2x.png
+          winapp manifest update-assets ../../src-tauri/icons/128x128@2x.png
 
-          winapp pack ./payload `
+          if ($LASTEXITCODE -ne 0) { throw "Asset generation failed" }
+
+          winapp pack . `
             --manifest ./Package.appxmanifest `
             --executable parakeet.exe `
             --no-sign `
-            --output FridayAI_0.1.0.0_x64.msix
+            --output ../FridayAI_0.1.0.0_x64.msix
+
+          if ($LASTEXITCODE -ne 0) { throw "MSIX packaging failed" }
 
       - uses: actions/upload-artifact@v4
         with:
