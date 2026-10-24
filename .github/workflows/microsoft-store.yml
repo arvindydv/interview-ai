@@ -1,0 +1,90 @@
+name: Microsoft Store MSIX
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  msix:
+    runs-on: windows-latest
+
+    env:
+      PARAKEET_WEB_URL: ${{ vars.PARAKEET_WEB_URL }}
+      PARAKEET_API_URL: ${{ vars.PARAKEET_API_URL }}
+      PARAKEET_SUPABASE_URL: ${{ vars.PARAKEET_SUPABASE_URL }}
+      PARAKEET_SUPABASE_PUBLISHABLE_KEY: ${{ vars.PARAKEET_SUPABASE_PUBLISHABLE_KEY }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri -> target
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm --filter @parakeet/shared build
+
+      - name: Build Windows executable
+        working-directory: apps/desktop
+        run: pnpm tauri build --no-bundle
+
+      - uses: microsoft/setup-WinAppCli@v0.1
+
+      - name: Generate Store manifest and MSIX
+        shell: pwsh
+        working-directory: apps/desktop
+        run: |
+          New-Item -ItemType Directory -Force store-msix/payload | Out-Null
+
+          $exe = Get-ChildItem -Path src-tauri/target -Recurse -Filter parakeet.exe |
+            Where-Object { $_.FullName -match '[\\/]release[\\/]parakeet\.exe$' } |
+            Select-Object -First 1
+
+          if (-not $exe) { throw "Windows executable not found" }
+
+          Copy-Item $exe.FullName store-msix/payload/parakeet.exe
+
+          Set-Location store-msix
+
+          winapp manifest generate . `
+            --package-name "FridayAI.FridayAIDesktopAssistant" `
+            --publisher-name "CN=68B4F28C-1583-4F8B-B95E-109DB1059BC5" `
+            --version "0.1.0.0" `
+            --description "Friday AI Desktop Assistant" `
+            --entrypoint "parakeet.exe"
+
+          [xml]$manifest = Get-Content Package.appxmanifest
+          $publisherDisplay = $manifest.SelectSingleNode(
+            "//*[local-name()='Properties']/*[local-name()='PublisherDisplayName']"
+          )
+          if (-not $publisherDisplay) {
+            throw "PublisherDisplayName not found in manifest"
+          }
+          $publisherDisplay.InnerText = "Friday AI"
+          $manifest.Save((Resolve-Path Package.appxmanifest).Path)
+
+          winapp manifest update-assets ../src-tauri/icons/128x128@2x.png
+
+          winapp pack ./payload `
+            --manifest ./Package.appxmanifest `
+            --executable parakeet.exe `
+            --no-sign `
+            --output FridayAI_0.1.0.0_x64.msix
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: friday-ai-microsoft-store
+          path: apps/desktop/store-msix/*.msix
+          if-no-files-found: error
