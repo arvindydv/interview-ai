@@ -53,8 +53,12 @@ jobs:
 
           New-Item -ItemType Directory -Force store-msix/payload | Out-Null
 
-          $exe = Get-ChildItem -Path src-tauri/target -Recurse -Filter parakeet.exe |
-            Where-Object { $_.FullName -match '[\\/]release[\\/]parakeet\\.exe$' } |
+          Write-Host "=== Available Windows executables ==="
+          Get-ChildItem -Path src-tauri/target -Recurse -Filter "*.exe" |
+            Select-Object -ExpandProperty FullName
+
+          $exe = Get-ChildItem -Path src-tauri/target -Recurse -File -Filter "parakeet.exe" |
+            Where-Object { $_.Directory.Name -eq "release" } |
             Select-Object -First 1
 
           if (-not $exe) { throw "Windows executable not found" }
