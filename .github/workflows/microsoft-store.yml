@@ -2,6 +2,9 @@ name: Microsoft Store MSIX
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - feat/windows-store-msix
 
 permissions:
   contents: read
