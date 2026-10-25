@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { ArrowLeft, ArrowRight, Check, CircleCheck, Eye, EyeOff, Laptop, Lock, Mail, User } from 'lucide-react';
 import type { EmailOtpType } from '@supabase/supabase-js';
 import { company } from '@/lib/company';
+import { safeNext } from '@/lib/safeNext';
 import { handoffSupabase, isAllowedDesktopRedirect, supabase } from '@/lib/supabase';
 import { Logo } from '@/components/Logo';
 import { OtpInput } from '@/components/OtpInput';
@@ -138,7 +139,7 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
   const client = desktop ? handoffSupabase() : supabase();
   const next = desktop
     ? `/desktop-auth?${new URLSearchParams({ redirect: redirect!, state })}`
-    : '/dashboard';
+    : safeNext(params.get('next'));
   // Switching between sign in and sign up must keep the desktop handoff params.
   const query = params.toString() ? `?${params}` : '';
   const signup = mode === 'signup';
