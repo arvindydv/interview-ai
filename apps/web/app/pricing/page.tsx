@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { ArrowRight, CalendarDays, CalendarRange, Check, Timer } from 'lucide-react';
+import { FREE_MINUTES, MIN_MINUTES, PLANS, PRICE_PER_MINUTE } from '@parakeet/shared';
 import { Faq, Magnetic, NavBar, Reveal, SpotlightGroup } from '@/components/landing/motion';
 import { Eyebrow, SiteFooter } from '@/components/landing/sections';
 
@@ -9,10 +10,10 @@ export const metadata: Metadata = {
   description: 'Pay ₹10 per minute, or go unlimited with a monthly or yearly plan. Your first 10 minutes are free.',
 };
 
-const PER_MINUTE = 10;
-const MONTHLY = 2999;
-const YEARLY = 19999;
-const FREE_MINUTES = 10;
+// Rupees. The API charges from the same catalog (@parakeet/shared billing).
+const PER_MINUTE = PRICE_PER_MINUTE;
+const MONTHLY = PLANS.monthly.amount / 100;
+const YEARLY = PLANS.yearly.amount / 100;
 
 const inr = (n: number) => `₹${n.toLocaleString('en-IN')}`;
 
@@ -32,8 +33,9 @@ const plans = [
     unit: '/ minute',
     blurb: 'For the occasional interview. Only pay for the minutes Friday AI is listening.',
     note: 'Billed by the minute of live session time. No subscription.',
-    perks: [`First ${FREE_MINUTES} minutes free`, 'No monthly commitment', 'Top up whenever you need'],
+    perks: [`First ${FREE_MINUTES} minutes free`, `Buy any amount from ${MIN_MINUTES} minutes`, 'Minutes never expire'],
     cta: 'Start paying as you go',
+    href: '/billing?product=minutes_30',
     featured: false,
   },
   {
@@ -43,8 +45,9 @@ const plans = [
     unit: '/ month',
     blurb: 'For an active job search with several rounds every week.',
     note: `Pays for itself after about ${Math.ceil(MONTHLY / PER_MINUTE)} minutes a month.`,
-    perks: ['Unlimited session minutes', 'Cancel anytime'],
+    perks: ['Unlimited session minutes', 'One-time payment, no auto-renewal'],
     cta: 'Go monthly',
+    href: '/billing?product=monthly',
     featured: true,
   },
   {
@@ -56,6 +59,7 @@ const plans = [
     note: `Works out to ${inr(Math.round(YEARLY / 12))}/month. You save ${inr(MONTHLY * 12 - YEARLY)} a year.`,
     perks: ['Unlimited session minutes', `Save ${Math.round((1 - YEARLY / (MONTHLY * 12)) * 100)}% vs monthly`],
     cta: 'Go yearly',
+    href: '/billing?product=yearly',
     featured: false,
   },
 ];
@@ -78,8 +82,8 @@ const faqs = [
     a: 'Yes. Live Assist, Screenshot Solve, Practice Mode and the desktop app are included on all three plans. Plans differ only in how you pay.',
   },
   {
-    q: 'Can I cancel a subscription?',
-    a: 'Monthly plans can be cancelled anytime and stay active until the end of the billing period. Yearly plans run for the full year you paid for.',
+    q: 'Do plans renew automatically?',
+    a: 'No. Monthly and yearly plans are one-time payments with nothing to cancel. Your plan runs for the period you paid for, and buying again before it ends adds to the remaining time.',
   },
   {
     q: 'Are prices inclusive of GST?',
@@ -123,7 +127,7 @@ export default function PricingPage() {
       {/* ───────────── plans ───────────── */}
       <section className="mx-auto max-w-6xl px-4 sm:px-6">
         <SpotlightGroup className="grid items-stretch gap-4 lg:grid-cols-3">
-          {plans.map(({ icon: Icon, name, price, unit, blurb, note, perks, cta, featured }, i) => (
+          {plans.map(({ icon: Icon, name, price, unit, blurb, note, perks, cta, href, featured }, i) => (
             <Reveal key={name} delay={i * 110}>
               <div
                 className={`spot relative flex h-full flex-col rounded-[var(--radius-card)] p-7 transition duration-500 hover:-translate-y-1 ${
@@ -152,7 +156,7 @@ export default function PricingPage() {
                 <p className="mt-2 min-h-[2.5rem] text-xs leading-relaxed text-faint">{note}</p>
 
                 <Link
-                  href="/signup"
+                  href={href}
                   className={`btn mt-6 w-full py-3 ${featured ? 'btn-primary btn-shine' : 'btn-secondary'}`}
                 >
                   {cta} <ArrowRight size={16} />

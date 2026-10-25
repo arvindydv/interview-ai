@@ -45,6 +45,13 @@ const schema = z.object({
   /** Signs admin session tokens. Changing it signs every admin out. */
   ADMIN_JWT_SECRET: z.string().optional(),
   ADMIN_SESSION_HOURS: z.coerce.number().default(12),
+
+  // Payments: Razorpay (Dashboard → Account & Settings → API Keys). /v1/billing checkout is disabled
+  // until the key id and secret are set. Use rzp_test_ keys outside production.
+  RAZORPAY_KEY_ID: z.string().optional(),
+  RAZORPAY_KEY_SECRET: z.string().optional(),
+  /** Secret entered when creating the webhook (Dashboard → Webhooks). Without it, /v1/billing/webhook is off. */
+  RAZORPAY_WEBHOOK_SECRET: z.string().optional(),
 });
 
 // Empty values in .env mean "not set".
