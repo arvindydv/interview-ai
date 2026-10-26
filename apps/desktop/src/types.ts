@@ -1,5 +1,7 @@
 // Contract between the Rust backend (via src/bridge.ts) and the React windows.
-import type { HealthReport, Interview, InterviewInput, Me, Resume, ResumeUpload, ServerMessage } from '@parakeet/shared';
+import type {
+  HealthReport, Interview, InterviewInput, Me, ReportInput, ReportReceipt, Resume, ResumeUpload, ServerMessage,
+} from '@parakeet/shared';
 
 export type LiveState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
 export interface LiveStatus {
@@ -69,6 +71,10 @@ export interface ParakeetApi {
     deleteResume(): Promise<void>;
     interview(): Promise<Interview | null>;
     saveInterview(input: InterviewInput): Promise<Interview>;
+  };
+  /** Reporting AI-generated answers for review. */
+  reports: {
+    submit(report: ReportInput): Promise<ReportReceipt>;
   };
   live: {
     connect(): Promise<void>;

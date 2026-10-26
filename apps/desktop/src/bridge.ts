@@ -2,7 +2,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
-import type { Interview, Resume } from '@parakeet/shared';
+import type { Interview, ReportReceipt, Resume } from '@parakeet/shared';
 import type { AudioStatus, AuthState, LiveEvent, LiveStatus, OverlayCommand, ParakeetApi, Protection, Screenshot } from './types';
 
 /** Adapts Tauri's async `listen` to a synchronous unsubscribe function. */
@@ -41,6 +41,9 @@ export const parakeet: ParakeetApi = {
     deleteResume: () => call<void>('profile_resume_delete'),
     interview: () => call<{ interview: Interview | null }>('profile_interview').then((r) => r.interview),
     saveInterview: (interview) => call<{ interview: Interview }>('profile_interview_save', { interview }).then((r) => r.interview),
+  },
+  reports: {
+    submit: (report) => call<ReportReceipt>('report_answer', { report }),
   },
   live: {
     connect: () => call('live_connect'),

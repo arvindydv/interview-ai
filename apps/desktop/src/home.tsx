@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  AlertTriangle, Briefcase, Camera, Check, ChevronDown, ClipboardList, Copy, EyeOff, Home as HomeIcon, Keyboard, LogOut,
+  AlertTriangle, Briefcase, Camera, Check, ChevronDown, ClipboardList, Copy, EyeOff, Flag, Home as HomeIcon, Keyboard, LogOut,
   MessageSquare, PanelTopOpen, Pencil, Play, Power, RefreshCw, SendHorizontal, ShieldAlert, ShieldCheck, Sparkles, Square,
   Timer, Zap,
 } from 'lucide-react';
@@ -9,6 +9,8 @@ import type { LiveStatus, Protection } from './types';
 import { parakeet as p } from './bridge';
 import { useLiveAnswer } from './useLiveAnswer';
 import { renderMarkdown } from './overlay/markdown';
+import { canReport } from './report';
+import { ReportForm } from './reportForm';
 import { Kbd, LogoMark, Panel, Spinner, StatusDot } from './ui';
 import { Prepare } from './prepare';
 import { useInterviewContext, type InterviewContextState } from './useInterviewContext';
@@ -437,6 +439,9 @@ function WarmUp({ live, ctx, style }: { live: boolean; ctx: InterviewContextStat
   const [question, setQuestion] = useState('');
   const [asked, setAsked] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  /** The answer whose "Report response" form is open; a new answer closes it. */
+  const [reportFor, setReportFor] = useState<string | null>(null);
+  const reportable = answer && { ...answer, question: asked ?? '' };
   const html = useMemo(() => (answer ? renderMarkdown(answer.text, !answer.done) : ''), [answer]);
   const streaming = !!answer && !answer.done;
 
@@ -545,8 +550,22 @@ function WarmUp({ live, ctx, style }: { live: boolean; ctx: InterviewContextStat
                   {copied ? <Check size={12} className="text-brand" /> : <Copy size={12} />} {copied ? 'Copied' : 'Copy'}
                 </button>
               )}
+              {canReport(reportable) && (
+                <button
+                  onClick={() => setReportFor((id) => (id === answer.turnId ? null : answer.turnId))}
+                  title="Report response"
+                  className={`btn btn-ghost !px-2 !py-1 text-xs ${reportFor === answer.turnId ? '!text-danger' : ''}`}
+                >
+                  <Flag size={12} /> Report
+                </button>
+              )}
             </div>
           </div>
+          {reportFor === answer.turnId && canReport(reportable) && (
+            <div className="border-b border-line px-4 py-3">
+              <ReportForm answer={reportable} onClose={() => setReportFor(null)} />
+            </div>
+          )}
           <div className="pk-md overflow-y-auto px-4 py-3" onClick={onAnswerClick}>
             <div dangerouslySetInnerHTML={{ __html: html }} />
             {streaming && <span className="inline-block h-4 w-[3px] translate-y-0.5 animate-caret bg-brand" />}
