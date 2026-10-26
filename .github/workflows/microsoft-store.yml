@@ -1,0 +1,151 @@
+name: Microsoft Store MSIX
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feat/windows-store-msix
+      - feat/ai-content-reporting
+
+permissions:
+  contents: read
+
+jobs:
+  msix:
+    runs-on: windows-latest
+
+    env:
+      # Store package identity: must stay exactly as reserved in Partner Center.
+      MSIX_PACKAGE_NAME: FridayAI.FridayAIDesktopAssistant
+      MSIX_PUBLISHER: CN=68B4F28C-1583-4F8B-B95E-109DB1059BC5
+      # Bump for every Store submission (the fourth part must stay 0).
+      MSIX_VERSION: 0.1.1.0
+      PARAKEET_WEB_URL: ${{ vars.PARAKEET_WEB_URL }}
+      PARAKEET_API_URL: ${{ vars.PARAKEET_API_URL }}
+      PARAKEET_SUPABASE_URL: ${{ vars.PARAKEET_SUPABASE_URL }}
+      PARAKEET_SUPABASE_PUBLISHABLE_KEY: ${{ vars.PARAKEET_SUPABASE_PUBLISHABLE_KEY }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri -> target
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm --filter @parakeet/shared build
+
+      - name: Build Windows executable
+        working-directory: apps/desktop
+        run: pnpm tauri build --no-bundle
+
+      # Policy 11.16: the Store build must contain the "Report response" feature.
+      - name: Verify AI content reporting is in the build
+        shell: pwsh
+        working-directory: apps/desktop
+        run: |
+          $ErrorActionPreference = "Stop"
+          Write-Host "Commit: $env:GITHUB_SHA"
+          $ui = Get-ChildItem dist/assets -Filter "*.js" | Get-Content -Raw
+          foreach ($s in @("Report this response", "report_answer", "Submit report")) {
+            if (-not ($ui -match [regex]::Escape($s))) { throw "Built UI is missing '$s'" }
+          }
+          $exe = Get-ChildItem -Path src-tauri/target -Recurse -File -Filter "parakeet.exe" |
+            Where-Object { $_.Directory.Name -eq "release" } | Select-Object -First 1
+          $bin = [IO.File]::ReadAllText($exe.FullName, [Text.Encoding]::Latin1)
+          foreach ($s in @("report_answer", "/v1/reports")) {
+            if (-not $bin.Contains($s)) { throw "parakeet.exe is missing '$s'" }
+          }
+          Write-Host "Reporting feature present in UI bundle and parakeet.exe"
+
+      - uses: microsoft/setup-WinAppCli@v0.1
+
+      - name: Generate Store manifest and MSIX
+        shell: pwsh
+        working-directory: apps/desktop
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          New-Item -ItemType Directory -Force store-msix/payload | Out-Null
+
+          Write-Host "=== Available Windows executables ==="
+          Get-ChildItem -Path src-tauri/target -Recurse -Filter "*.exe" |
+            Select-Object -ExpandProperty FullName
+
+          $exe = Get-ChildItem -Path src-tauri/target -Recurse -File -Filter "parakeet.exe" |
+            Where-Object { $_.Directory.Name -eq "release" } |
+            Select-Object -First 1
+
+          if (-not $exe) { throw "Windows executable not found" }
+
+          Copy-Item $exe.FullName store-msix/payload/parakeet.exe
+
+          Set-Location store-msix/payload
+
+          winapp manifest generate . `
+            --package-name "$env:MSIX_PACKAGE_NAME" `
+            --publisher-name "$env:MSIX_PUBLISHER" `
+            --version "$env:MSIX_VERSION" `
+            --description "Friday AI Desktop Assistant" `
+            --entrypoint "parakeet.exe"
+
+          if ($LASTEXITCODE -ne 0) { throw "Manifest generation failed" }
+
+          [xml]$manifest = Get-Content Package.appxmanifest
+          $publisherDisplay = $manifest.SelectSingleNode(
+            "//*[local-name()='Properties']/*[local-name()='PublisherDisplayName']"
+          )
+
+          if (-not $publisherDisplay) {
+            throw "PublisherDisplayName not found in manifest"
+          }
+
+          $publisherDisplay.InnerText = "Friday AI"
+
+          $packageDisplay = $manifest.SelectSingleNode(
+            "//*[local-name()='Properties']/*[local-name()='DisplayName']"
+          )
+          if (-not $packageDisplay) { throw "Package DisplayName missing" }
+          $packageDisplay.InnerText = "Friday AI Desktop Assistant"
+
+          $visualElements = $manifest.SelectSingleNode(
+            "//*[local-name()='VisualElements']"
+          )
+          if (-not $visualElements) { throw "VisualElements missing" }
+          $visualElements.SetAttribute("DisplayName", "Friday AI Desktop Assistant")
+          $manifest.Save((Resolve-Path Package.appxmanifest).Path)
+
+          $identity = $manifest.SelectSingleNode("//*[local-name()='Identity']")
+          if (-not $identity) { throw "Identity missing" }
+          if ($identity.Name -ne $env:MSIX_PACKAGE_NAME) { throw "Identity Name is '$($identity.Name)'" }
+          if ($identity.Publisher -ne $env:MSIX_PUBLISHER) { throw "Identity Publisher is '$($identity.Publisher)'" }
+          if ($identity.Version -ne $env:MSIX_VERSION) { throw "Identity Version is '$($identity.Version)'" }
+          Write-Host "Identity: $($identity.Name) / $($identity.Publisher) / $($identity.Version)"
+
+          winapp manifest update-assets ../../src-tauri/icons/128x128@2x.png
+
+          if ($LASTEXITCODE -ne 0) { throw "Asset generation failed" }
+
+          winapp pack . `
+            --manifest ./Package.appxmanifest `
+            --executable parakeet.exe `
+            --no-sign `
+            --output "../FridayAI_$($env:MSIX_VERSION)_x64.msix"
+
+          if ($LASTEXITCODE -ne 0) { throw "MSIX packaging failed" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: friday-ai-microsoft-store-${{ env.MSIX_VERSION }}
+          path: apps/desktop/store-msix/*.msix
+          if-no-files-found: error

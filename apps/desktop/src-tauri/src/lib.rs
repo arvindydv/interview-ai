@@ -107,7 +107,11 @@ async fn profile_interview_save(auth: State<'_, Auth>, api: State<'_, Api>, inte
 
 /// Reports an AI-generated answer for review (Microsoft Store policy 11.16).
 #[tauri::command]
-async fn report_answer(auth: State<'_, Auth>, api: State<'_, Api>, report: api::Report) -> CmdResult<Value> {
+async fn report_answer(
+    auth: State<'_, Auth>,
+    api: State<'_, Api>,
+    report: api::Report,
+) -> CmdResult<Value> {
     api.report_answer(&auth, &report).await.map_err(err)
 }
 

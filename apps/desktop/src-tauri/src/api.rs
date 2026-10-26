@@ -73,7 +73,13 @@ impl Api {
 
     /// Reports an AI-generated answer for review (Microsoft Store policy 11.16).
     pub async fn report_answer(&self, auth: &Auth, report: &Report) -> Result<Value> {
-        self.send(auth, reqwest::Method::POST, "/v1/reports", Some(report.body())).await
+        self.send(
+            auth,
+            reqwest::Method::POST,
+            "/v1/reports",
+            Some(report.body()),
+        )
+        .await
     }
 
     /// Registers this install for device limits and compatibility analytics (spec A1/I6).
@@ -160,7 +166,8 @@ mod tests {
 
     #[test]
     fn report_optional_fields_default_to_empty() {
-        let report: Report = serde_json::from_value(json!({ "turnId": "t-1", "reason": "other" })).unwrap();
+        let report: Report =
+            serde_json::from_value(json!({ "turnId": "t-1", "reason": "other" })).unwrap();
         assert_eq!(report.body()["details"], "");
         assert_eq!(report.body()["answer"], "");
     }
