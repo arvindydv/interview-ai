@@ -68,6 +68,13 @@ jobs:
           }
           Write-Host "Reporting feature present in UI bundle and parakeet.exe"
 
+          # The app's own version (tauri.conf.json, baked into parakeet.exe) must match the MSIX version.
+          $appVersion = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          if ("$appVersion.0" -ne $env:MSIX_VERSION) { throw "tauri.conf.json version $appVersion does not match MSIX $env:MSIX_VERSION" }
+          $fileVersion = $exe.VersionInfo.FileVersion
+          if (-not "$fileVersion".StartsWith($appVersion)) { throw "parakeet.exe file version is '$fileVersion', expected $appVersion" }
+          Write-Host "App version $appVersion (parakeet.exe $fileVersion) matches MSIX $env:MSIX_VERSION"
+
       - uses: microsoft/setup-WinAppCli@v0.1
 
       - name: Generate Store manifest and MSIX
