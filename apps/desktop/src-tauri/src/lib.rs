@@ -105,6 +105,12 @@ async fn profile_interview_save(auth: State<'_, Auth>, api: State<'_, Api>, inte
     api.save_interview(&auth, interview).await.map_err(err)
 }
 
+/// Reports an AI-generated answer for review (Microsoft Store policy 11.16).
+#[tauri::command]
+async fn report_answer(auth: State<'_, Auth>, api: State<'_, Api>, report: api::Report) -> CmdResult<Value> {
+    api.report_answer(&auth, &report).await.map_err(err)
+}
+
 #[tauri::command]
 fn live_connect(app: AppHandle, live: State<'_, Live>) {
     live.connect(app);
@@ -456,6 +462,7 @@ pub fn run() {
             profile_resume_delete,
             profile_interview,
             profile_interview_save,
+            report_answer,
             live_connect,
             live_disconnect,
             live_ask,

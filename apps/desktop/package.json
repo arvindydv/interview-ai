@@ -10,7 +10,8 @@
     "dev:ui": "vite",
     "build:ui": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "test": "node --test \"test/*.test.ts\" && cargo test --manifest-path src-tauri/Cargo.toml --lib"
   },
   "dependencies": {
     "@parakeet/shared": "workspace:*",
