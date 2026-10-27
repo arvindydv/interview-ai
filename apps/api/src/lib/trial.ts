@@ -46,6 +46,11 @@ async function charge(userId: string, liveSessionId: string | null, seconds: num
   return row?.total == null || row.used == null ? null : { totalSeconds: row.total, usedSeconds: row.used };
 }
 
+/** Spends `seconds` of the user's minutes outside a live session (practice). Null if not metered. */
+export const chargeMinutes = (userId: string, seconds: number) => charge(userId, null, seconds);
+
+export const minutesLeft = (t: TrialBalance) => left(t);
+
 interface MeterLog {
   warn: (o: object, m: string) => void;
 }

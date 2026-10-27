@@ -18,4 +18,4 @@ export const company = {
 } as const;
 
 /** Shown as "Last updated" on every legal page. Bump it whenever a policy changes. */
-export const LEGAL_UPDATED = '21 October 2026';
+export const LEGAL_UPDATED = '27 October 2026';

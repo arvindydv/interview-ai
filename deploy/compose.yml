@@ -46,6 +46,8 @@ services:
     env_file: ${PARAKEET_HOME:-/opt/parakeet}/env/api.env
     environment:
       REDIS_URL: redis://redis:6379
+      # Caddy is the only hop in front: trust its X-Forwarded-For for the client IP.
+      TRUST_PROXY: 1
       NODE_OPTIONS: --max-old-space-size=384
     depends_on:
       redis: { condition: service_healthy }

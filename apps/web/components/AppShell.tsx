@@ -13,15 +13,12 @@ type NavItem = { icon: LucideIcon; label: string; href: string };
 
 const workspace: NavItem[] = [
   { icon: LayoutDashboard, label: 'Overview', href: '/dashboard' },
+  { icon: Mic, label: 'Interviews', href: '/interviews' },
+  { icon: FileText, label: 'Resume', href: '/resume' },
+  { icon: GraduationCap, label: 'Practice', href: '/practice' },
+  { icon: History, label: 'History', href: '/history' },
   { icon: CreditCard, label: 'Plans & billing', href: '/billing' },
-];
-
-const soon: { icon: LucideIcon; label: string }[] = [
-  { icon: Mic, label: 'Interviews' },
-  { icon: FileText, label: 'Resume' },
-  { icon: GraduationCap, label: 'Practice' },
-  { icon: History, label: 'History' },
-  { icon: Settings, label: 'Settings' },
+  { icon: Settings, label: 'Settings', href: '/settings' },
 ];
 
 const explore: NavItem[] = [
@@ -73,19 +70,14 @@ function SidebarContent({ email, onNavigate }: { email: string; onNavigate?: () 
       <nav className="mt-8 flex-1 space-y-7 overflow-y-auto" aria-label="Main">
         <NavGroup title="Workspace">
           {workspace.map((item) => (
-            <NavLink key={item.href} item={item} active={pathname === item.href} onNavigate={onNavigate} />
+            <NavLink
+              key={item.href}
+              item={item}
+              active={pathname === item.href || pathname.startsWith(`${item.href}/`)}
+              onNavigate={onNavigate}
+            />
           ))}
         </NavGroup>
-
-        <NavGroup title="Coming soon">
-          {soon.map(({ icon: Icon, label }) => (
-            <div key={label} className="flex cursor-default items-center gap-3 px-3 py-1.5 text-sm text-faint">
-              <Icon size={16} />
-              {label}
-            </div>
-          ))}
-        </NavGroup>
-
         <NavGroup title="Explore">
           {explore.map((item) => (
             <NavLink key={item.href} item={item} active={false} onNavigate={onNavigate} />

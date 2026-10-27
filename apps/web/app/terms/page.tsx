@@ -107,8 +107,10 @@ export default function TermsPage() {
       <LegalSection id="payments" title="6. Plans and payments">
         <ul>
           <li>
-            <strong>Free trial.</strong> Every new account gets a one-time free allowance of live session minutes, shown on
-            the <Link href="/pricing">pricing page</Link>. No payment details are needed for the trial.
+            <strong>Free trial.</strong> Each person gets a one-time free allowance of live session minutes, shown on the{' '}
+            <Link href="/pricing">pricing page</Link>, the first time they sign in to the desktop app. It is given once per
+            person, email address and computer, and not to temporary email addresses. No payment details are needed for the
+            trial.
           </li>
           <li>
             <strong>Paid plans.</strong> You can pay per minute of live session time or buy a monthly or yearly plan. The

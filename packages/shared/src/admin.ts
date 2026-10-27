@@ -1,6 +1,6 @@
 // Admin console API (/admin/*), used by apps/admin. Authenticated with an admin token from POST /admin/login.
 
-import type { TrialBalance } from './api.js';
+import type { FreeTrialStatus, TrialBalance } from './api.js';
 
 export type UserStatus = 'active' | 'suspended';
 export type TurnStatus = 'done' | 'error' | 'cancelled' | 'blocked';
@@ -173,6 +173,10 @@ export interface AdminUserDetail {
   };
   /** Free-trial balance; shown whatever the plan, so admins can see what a paid user had used. */
   trial: TrialBalance;
+  /** Whether the once-per-person free trial was granted, and if not, why. */
+  trialStatus: FreeTrialStatus;
+  /** Other accounts whose desktop app ran on the same computer: the usual sign of free-trial farming. */
+  sameComputer: { id: string; email: string; createdAt: string; trialStatus: FreeTrialStatus }[];
   /** Live session minutes per day (30d), to one decimal. */
   minutes: DayPoint[];
   devices: AdminDevice[];

@@ -3,6 +3,7 @@ mod audio;
 mod auth;
 mod config;
 mod live;
+mod machine;
 mod protection;
 mod screenshot;
 mod store;
@@ -57,15 +58,23 @@ async fn auth_sign_in(app: AppHandle, auth: State<'_, Auth>, api: State<'_, Api>
 }
 
 #[tauri::command]
-async fn auth_sign_out(app: AppHandle, auth: State<'_, Auth>, live: State<'_, Live>) -> CmdResult<()> {
+async fn auth_sign_out(app: AppHandle, auth: State<'_, Auth>, api: State<'_, Api>, live: State<'_, Live>) -> CmdResult<()> {
     live.disconnect(&app);
     auth.sign_out().await;
+    api.forget_registration();
     let _ = app.emit("auth:changed", AuthState { user: None });
     Ok(())
 }
 
 #[tauri::command]
-async fn api_me(auth: State<'_, Auth>, api: State<'_, Api>) -> CmdResult<Value> {
+async fn api_me(app: AppHandle, auth: State<'_, Auth>, api: State<'_, Api>) -> CmdResult<Value> {
+    // Register this computer once per run before reading the account, so a session restored from the
+    // keychain also claims the free trial (granted at registration) and the balance shown includes it.
+    if !api.is_registered() {
+        if let Err(e) = api.register_device(&auth, &app.package_info().version.to_string()).await {
+            log::warn!("device registration failed: {e}");
+        }
+    }
     api.me(&auth).await.map_err(err)
 }
 

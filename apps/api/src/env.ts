@@ -36,6 +36,13 @@ const schema = z.object({
   DEEPGRAM_EAGER_EOT_THRESHOLD: z.coerce.number().min(0.3).max(0.9).default(0.4),
   /** A turn ends after this much silence even if the model is unsure. */
   DEEPGRAM_EOT_TIMEOUT_MS: z.coerce.number().int().min(500).max(10000).default(2000),
+  /**
+   * Behind a reverse proxy (deploy/Caddyfile), how many hops to trust for the client IP
+   * (X-Forwarded-For). 0 = use the socket address. Wrong here means every user shares one IP.
+   */
+  TRUST_PROXY: z.coerce.number().int().min(0).max(5).default(0),
+  /** Mixed into stored machine and network hashes (lib/freeTrial.ts). Changing it forgets every free-trial claim. */
+  DEVICE_ID_PEPPER: z.string().optional(),
   /** Public website URL, used for links in emails. */
   APP_URL: z.url().default('http://localhost:3100'),
 
