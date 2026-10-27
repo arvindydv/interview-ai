@@ -23,52 +23,54 @@ export function LegalPage({
       <div className="grain" aria-hidden />
       <NavBar />
 
-      <header className="relative isolate pt-36 pb-14 sm:pt-44">
-        <div className="aurora -z-10" aria-hidden>
-          <span />
-          <span />
-          <span />
-        </div>
-        <div className="bg-grid pointer-events-none absolute inset-0 -z-10" aria-hidden />
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 -z-10 h-64 bg-gradient-to-b from-transparent to-bg" />
-
-        <div className="mx-auto max-w-3xl px-4 text-center sm:px-6">
-          <div className="animate-fade-up">
-            <Eyebrow>{eyebrow}</Eyebrow>
+      <main>
+        <header className="relative isolate pt-36 pb-14 sm:pt-44">
+          <div className="aurora -z-10" aria-hidden>
+            <span />
+            <span />
+            <span />
           </div>
-          <h1 className="rise-in mt-6 text-[2.4rem] leading-[1.05] font-semibold tracking-[-0.035em] sm:text-6xl">
-            {title}
-          </h1>
-          <div className="rise-in mx-auto mt-6 max-w-xl text-base text-muted sm:text-lg" style={{ '--i': 1 } as React.CSSProperties}>
-            {intro}
+          <div className="bg-grid pointer-events-none absolute inset-0 -z-10" aria-hidden />
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 -z-10 h-64 bg-gradient-to-b from-transparent to-bg" />
+
+          <div className="mx-auto max-w-3xl px-4 text-center sm:px-6">
+            <div className="animate-fade-up">
+              <Eyebrow>{eyebrow}</Eyebrow>
+            </div>
+            <h1 className="rise-in mt-6 text-[2.4rem] leading-[1.05] font-semibold tracking-[-0.035em] sm:text-6xl">
+              {title}
+            </h1>
+            <div className="rise-in mx-auto mt-6 max-w-xl text-base text-muted sm:text-lg" style={{ '--i': 1 } as React.CSSProperties}>
+              {intro}
+            </div>
+            <p className="rise-in mt-6 text-xs text-faint" style={{ '--i': 2 } as React.CSSProperties}>
+              Last updated {LEGAL_UPDATED}
+            </p>
           </div>
-          <p className="rise-in mt-6 text-xs text-faint" style={{ '--i': 2 } as React.CSSProperties}>
-            Last updated {LEGAL_UPDATED}
-          </p>
+        </header>
+
+        <div className="mx-auto grid max-w-6xl gap-10 px-4 pb-28 sm:px-6 lg:grid-cols-[220px_1fr]">
+          <aside className="hidden lg:block">
+            <nav className="sticky top-28 text-sm" aria-label="On this page">
+              <p className="eyebrow">On this page</p>
+              <ol className="mt-4 space-y-2 border-l border-line">
+                {sections.map(([id, heading]) => (
+                  <li key={id}>
+                    <a href={`#${id}`} className="-ml-px block border-l border-transparent pl-4 text-muted transition hover:border-brand hover:text-fg">
+                      {heading}
+                    </a>
+                  </li>
+                ))}
+              </ol>
+            </nav>
+          </aside>
+
+          <article className="glass rounded-[var(--radius-card)] p-6 sm:p-10">
+            <div className="space-y-12">{children}</div>
+            <LegalContact />
+          </article>
         </div>
-      </header>
-
-      <div className="mx-auto grid max-w-6xl gap-10 px-4 pb-28 sm:px-6 lg:grid-cols-[220px_1fr]">
-        <aside className="hidden lg:block">
-          <nav className="sticky top-28 text-sm" aria-label="On this page">
-            <p className="eyebrow">On this page</p>
-            <ol className="mt-4 space-y-2 border-l border-line">
-              {sections.map(([id, heading]) => (
-                <li key={id}>
-                  <a href={`#${id}`} className="-ml-px block border-l border-transparent pl-4 text-muted transition hover:border-brand hover:text-fg">
-                    {heading}
-                  </a>
-                </li>
-              ))}
-            </ol>
-          </nav>
-        </aside>
-
-        <article className="glass rounded-[var(--radius-card)] p-6 sm:p-10">
-          <div className="space-y-12">{children}</div>
-          <LegalContact />
-        </article>
-      </div>
+      </main>
 
       <SiteFooter />
     </div>
