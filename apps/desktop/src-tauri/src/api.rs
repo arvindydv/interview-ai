@@ -71,6 +71,17 @@ impl Api {
         self.send(auth, reqwest::Method::PUT, "/v1/interview", Some(interview)).await
     }
 
+    /// Reports an AI-generated answer for review (Microsoft Store policy 11.16).
+    pub async fn report_answer(&self, auth: &Auth, report: &Report) -> Result<Value> {
+        self.send(
+            auth,
+            reqwest::Method::POST,
+            "/v1/reports",
+            Some(report.body()),
+        )
+        .await
+    }
+
     /// Registers this install for device limits and compatibility analytics (spec A1/I6).
     pub async fn register_device(&self, auth: &Auth, app_version: &str) -> Result<()> {
         let token = auth.access_token().await?;
@@ -103,5 +114,61 @@ impl Api {
         }
         let _ = fs::write(&self.device_file, json!({ "deviceKey": key }).to_string());
         key
+    }
+}
+
+/// A report about one answer, as sent by the webview (see `ReportInput` in @parakeet/shared).
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Report {
+    pub turn_id: String,
+    pub reason: String,
+    #[serde(default)]
+    pub details: String,
+    #[serde(default)]
+    pub question: String,
+    #[serde(default)]
+    pub answer: String,
+}
+
+impl Report {
+    /// JSON body for POST /v1/reports.
+    fn body(&self) -> Value {
+        json!({
+            "turnId": self.turn_id,
+            "reason": self.reason,
+            "details": self.details,
+            "question": self.question,
+            "answer": self.answer,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn report_round_trips_to_the_api_contract() {
+        let report: Report = serde_json::from_value(json!({
+            "turnId": "t-1",
+            "reason": "harmful",
+            "details": "Encourages lying",
+            "question": "Q?",
+            "answer": "A.",
+        }))
+        .unwrap();
+        assert_eq!(
+            report.body(),
+            json!({ "turnId": "t-1", "reason": "harmful", "details": "Encourages lying", "question": "Q?", "answer": "A." })
+        );
+    }
+
+    #[test]
+    fn report_optional_fields_default_to_empty() {
+        let report: Report =
+            serde_json::from_value(json!({ "turnId": "t-1", "reason": "other" })).unwrap();
+        assert_eq!(report.body()["details"], "");
+        assert_eq!(report.body()["answer"], "");
     }
 }

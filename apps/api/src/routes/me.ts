@@ -31,14 +31,16 @@ export default async function meRoutes(app: FastifyInstance) {
     const { id, email, provider, name } = req.user;
     const [row] = await sql<
       {
-        id: string; email: string; auth_provider: string; plan: string; created_at: Date;
+        id: string; email: string; auth_provider: string; plan: string; plan_expires_at: Date | null; created_at: Date;
         trial_seconds: number; trial_used_seconds: number; inserted: boolean;
       }[]
     >`
       insert into public.users (id, email, auth_provider)
       values (${id}, ${email}, ${provider})
       on conflict (id) do update set email = excluded.email
-      returning id, email, auth_provider, plan, created_at, trial_seconds, trial_used_seconds, (xmax = 0) as inserted`;
+      returning id, email, auth_provider, public.current_plan(plan, plan_expires_at) as plan,
+        case when plan_expires_at > now() then plan_expires_at end as plan_expires_at,
+        created_at, trial_seconds, trial_used_seconds, (xmax = 0) as inserted`;
     if (row.inserted && row.email) {
       await sendEmail(
         { template: 'welcome', to: row.email, props: { name: firstName(row.email, name), email: row.email, appUrl: env.APP_URL } },
@@ -51,6 +53,7 @@ export default async function meRoutes(app: FastifyInstance) {
       email: row.email,
       authProvider: row.auth_provider,
       plan: row.plan,
+      planExpiresAt: row.plan_expires_at?.toISOString() ?? null,
       createdAt: row.created_at.toISOString(),
       trial: row.plan === TRIAL_PLAN ? { totalSeconds: row.trial_seconds, usedSeconds: row.trial_used_seconds } : null,
     };

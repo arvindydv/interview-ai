@@ -11,9 +11,12 @@ import meRoutes from './routes/me.js';
 import jobRoutes from './routes/jobs.js';
 import liveRoutes from './routes/live.js';
 import profileRoutes from './routes/profile.js';
+import billingRoutes, { billingWebhookRoutes } from './routes/billing.js';
+import reportRoutes from './routes/reports.js';
 import adminAuthRoutes from './routes/admin/auth.js';
 import adminOverviewRoutes from './routes/admin/overview.js';
 import adminUserRoutes from './routes/admin/users.js';
+import adminReportRoutes from './routes/admin/reports.js';
 
 const app = Fastify({ logger: { level: env.NODE_ENV === 'production' ? 'info' : 'debug' } });
 
@@ -30,9 +33,13 @@ await app.register(meRoutes);
 await app.register(jobRoutes);
 await app.register(liveRoutes);
 await app.register(profileRoutes);
+await app.register(billingRoutes);
+await app.register(billingWebhookRoutes);
+await app.register(reportRoutes);
 await app.register(adminAuthRoutes);
 await app.register(adminOverviewRoutes);
 await app.register(adminUserRoutes);
+await app.register(adminReportRoutes);
 
 const shutdown = async () => {
   await app.close();

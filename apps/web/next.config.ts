@@ -16,15 +16,21 @@ function connectSources() {
   return [...out].join(' ');
 }
 
+// Razorpay Checkout: its script, the payment iframe it opens, and its telemetry endpoint.
+const RAZORPAY_SCRIPT = 'https://checkout.razorpay.com';
+const RAZORPAY_FRAMES = 'https://api.razorpay.com https://checkout.razorpay.com';
+const RAZORPAY_CONNECT = 'https://lumberjack.razorpay.com';
+
 // Next's inline bootstrap scripts need 'unsafe-inline' unless every page is rendered with a nonce;
-// the rest of the policy (no framing, no plugins, no foreign scripts/forms) still applies.
+// the rest of the policy (no framing, no plugins, no other foreign scripts/forms) still applies.
 const csp = [
   "default-src 'self'",
-  `script-src 'self' 'unsafe-inline'${dev ? " 'unsafe-eval'" : ''}`,
+  `script-src 'self' 'unsafe-inline'${dev ? " 'unsafe-eval'" : ''} ${RAZORPAY_SCRIPT}`,
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob:",
   "font-src 'self' data:",
-  `connect-src ${connectSources()}`,
+  `connect-src ${connectSources()} ${RAZORPAY_CONNECT}`,
+  `frame-src ${RAZORPAY_FRAMES}`,
   "frame-ancestors 'none'",
   "base-uri 'self'",
   "form-action 'self'",
@@ -36,7 +42,7 @@ const securityHeaders = [
   { key: 'X-Frame-Options', value: 'DENY' },
   { key: 'X-Content-Type-Options', value: 'nosniff' },
   { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
-  { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=(), payment=()' },
+  { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=(), payment=(self "https://api.razorpay.com")' },
   ...(dev ? [] : [{ key: 'Strict-Transport-Security', value: 'max-age=63072000; includeSubDomains; preload' }]),
 ];
 

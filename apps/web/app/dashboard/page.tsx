@@ -1,11 +1,12 @@
 'use client';
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
   Activity, Check, Cpu, FileText, GraduationCap, History, LayoutDashboard, LogOut, Mic, Plus,
-  RefreshCw, Settings, User,
+  CreditCard, RefreshCw, Settings, User,
 } from 'lucide-react';
-import { trialLeft, type HealthReport, type Me, type PingJobResult } from '@parakeet/shared';
+import { planLabel, trialLeft, type HealthReport, type Me, type PingJobResult } from '@parakeet/shared';
 import { api, API_URL } from '@/lib/api';
 import { supabase } from '@/lib/supabase';
 import { Logo, LogoMark } from '@/components/Logo';
@@ -174,15 +175,29 @@ export default function Dashboard() {
               </ul>
             </Card>
 
-            <Card title="Account" icon={User}>
+            <Card
+              title="Account"
+              icon={User}
+              action={
+                <Link href="/billing" className="btn btn-secondary !px-3 !py-1.5 text-xs">
+                  <CreditCard size={14} /> {me.state === 'ok' && me.data.plan !== 'free' ? 'Billing' : 'Upgrade'}
+                </Link>
+              }
+            >
               {me.state === 'loading' && <Spinner className="text-muted" />}
               {me.state === 'error' && <p className="text-sm text-danger">{me.error}</p>}
               {me.state === 'ok' && (
                 <dl className="space-y-3 text-sm">
-                  <div className="flex justify-between gap-4"><dt className="text-muted">Plan</dt><dd><Pill tone="ok">{me.data.plan}</Pill></dd></div>
+                  <div className="flex justify-between gap-4"><dt className="text-muted">Plan</dt><dd><Pill tone="ok">{planLabel(me.data.plan)}</Pill></dd></div>
+                  {me.data.planExpiresAt && (
+                    <div className="flex justify-between gap-4">
+                      <dt className="text-muted">Active until</dt>
+                      <dd>{new Date(me.data.planExpiresAt).toLocaleDateString()}</dd>
+                    </div>
+                  )}
                   {me.data.trial && (
                     <div className="flex justify-between gap-4">
-                      <dt className="text-muted">Free trial</dt>
+                      <dt className="text-muted">Session minutes</dt>
                       <dd>{trialLeft(me.data.trial)}</dd>
                     </div>
                   )}

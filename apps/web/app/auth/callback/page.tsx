@@ -1,17 +1,8 @@
 'use client';
 import { Suspense, useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { safeNext } from '@/lib/safeNext';
 import { handoffSupabase, supabase } from '@/lib/supabase';
-
-/**
- * Only same-site paths may follow sign-in. `startsWith('/')` alone would let `//evil.com` and
- * `/\evil.com` through, which browsers treat as another origin.
- */
-function safeNext(raw: string | null) {
-  if (!raw || !/^\/(?![/\\])/.test(raw)) return '/dashboard';
-  const u = new URL(raw, location.origin);
-  return u.origin === location.origin ? u.pathname + u.search : '/dashboard';
-}
 
 // Shown instead of the provider's `error_description`, which anyone can put in a link.
 const SIGN_IN_FAILED = 'That sign-in link is invalid or has expired. Please go back and try again.';

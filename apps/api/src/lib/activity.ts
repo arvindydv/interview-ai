@@ -62,7 +62,7 @@ export async function recordTurn(t: TurnRecord) {
 /** Questions the user has asked since 00:00 UTC (blocked attempts don't count). */
 export async function questionsToday(userId: string) {
   const [row] = await sql<{ plan: string; n: number }[]>`
-    select u.plan, (
+    select public.current_plan(u.plan, u.plan_expires_at) as plan, (
       select count(*)::int from public.live_turns t
       where t.user_id = u.id and t.status <> 'blocked'
         and t.created_at >= date_trunc('day', now() at time zone 'utc') at time zone 'utc'

@@ -5,12 +5,14 @@ export interface Me {
   email: string;
   authProvider: string;
   plan: string;
+  /** When a paid plan ends (it doesn't renew). Null when the plan has no end date. */
+  planExpiresAt: string | null;
   createdAt: string;
-  /** Free-trial live session time. Null when the plan isn't metered. */
+  /** Metered live session time (free trial plus bought minutes). Null when the plan isn't metered. */
   trial: TrialBalance | null;
 }
 
-/** Free-trial live session time, in seconds. */
+/** Metered live session time, in seconds: the free trial plus any minute packs bought. */
 export interface TrialBalance {
   totalSeconds: number;
   usedSeconds: number;
@@ -34,9 +36,9 @@ export interface PingJobResult {
   result: { pong: true; processedBy: string; queuedMs: number };
 }
 
-/** "7 of 10 min left" / "Trial used up" */
+/** "7 of 10 min left" / "No minutes left" */
 export function trialLeft(trial: TrialBalance) {
   const left = Math.max(trial.totalSeconds - trial.usedSeconds, 0);
-  if (left === 0) return 'Trial used up';
+  if (left === 0) return 'No minutes left';
   return `${Math.ceil(left / 60)} of ${Math.round(trial.totalSeconds / 60)} min left`;
 }

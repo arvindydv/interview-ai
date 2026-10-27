@@ -149,7 +149,7 @@ export default async function adminUserRoutes(app: FastifyInstance) {
       }[req.query.sort ?? ''] ?? sql`u.created_at desc`;
 
       const rows = await sql<(UserRow & { total: number })[]>`
-        select u.id, u.email, u.auth_provider, u.plan, u.status, u.created_at, u.last_active_at, a.last_sign_in_at,
+        select u.id, u.email, u.auth_provider, public.current_plan(u.plan, u.plan_expires_at) as plan, u.status, u.created_at, u.last_active_at, a.last_sign_in_at,
           (select count(*)::int from public.devices d where d.user_id = u.id) as devices,
           (select count(*)::int from public.live_turns t where t.user_id = u.id and t.status <> 'blocked') as questions,
           exists (select 1 from public.resumes r where r.user_id = u.id) as has_resume,
@@ -157,7 +157,7 @@ export default async function adminUserRoutes(app: FastifyInstance) {
         from public.users u
         left join auth.users a on a.id = u.id
         where (${q} = '' or u.email ilike ${likePattern(q)} or u.id::text = ${q})
-          and (${plan} = '' or u.plan = ${plan})
+          and (${plan} = '' or public.current_plan(u.plan, u.plan_expires_at) = ${plan})
           and (${status} = '' or u.status = ${status})
         order by ${order}
         limit ${PAGE_SIZE} offset ${(page - 1) * PAGE_SIZE}`;
@@ -172,7 +172,7 @@ export default async function adminUserRoutes(app: FastifyInstance) {
 
     const [[user], [stats], devices, [resume], interviews, sessions, turns, activity, minutes] = await Promise.all([
       sql<(UserRow & { admin_note: string; email_confirmed_at: Date | null; trial_seconds: number; trial_used_seconds: number })[]>`
-        select u.id, u.email, u.auth_provider, u.plan, u.status, u.created_at, u.last_active_at, u.admin_note,
+        select u.id, u.email, u.auth_provider, public.current_plan(u.plan, u.plan_expires_at) as plan, u.status, u.created_at, u.last_active_at, u.admin_note,
           u.trial_seconds, u.trial_used_seconds,
           a.last_sign_in_at, a.email_confirmed_at,
           (select count(*)::int from public.devices d where d.user_id = u.id) as devices,
@@ -281,13 +281,18 @@ export default async function adminUserRoutes(app: FastifyInstance) {
     if (!body.success) return reply.code(400).send({ error: 'bad_request', message: body.error.issues[0]?.message ?? 'Invalid update' });
     const { plan, status, adminNote } = body.data;
 
-    const [before] = await sql<{ plan: string; status: string }[]>`select plan, status from public.users where id = ${id}`;
+    const [before] = await sql<{ plan: string; status: string }[]>`
+      select public.current_plan(plan, plan_expires_at) as plan, status from public.users where id = ${id}`;
     if (!before) return reply.code(404).send({ error: 'not_found', message: 'No such user' });
 
     await sql.begin(async (tx) => {
       await tx`
         update public.users set
           plan = coalesce(${plan ?? null}, plan),
+          -- Changing the plan by hand removes a bought plan's end date: admin-set plans don't expire.
+          plan_expires_at = case
+            when ${plan ?? null}::text is distinct from public.current_plan(plan, plan_expires_at) and ${plan ?? null}::text is not null then null
+            else plan_expires_at end,
           status = coalesce(${status ?? null}, status),
           admin_note = coalesce(${adminNote ?? null}, admin_note)
         where id = ${id}`;

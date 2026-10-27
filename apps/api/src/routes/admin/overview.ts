@@ -66,7 +66,7 @@ export default async function adminOverviewRoutes(app: FastifyInstance) {
       sql<{ day: string; n: number }[]>`
         select ${utcDay('connected_at')} as day, count(distinct user_id)::int as n from public.live_sessions
         where connected_at >= ${since} group by 1`,
-      sql<Breakdown[]>`select plan as label, count(*)::int as value from public.users group by 1 order by 2 desc`,
+      sql<Breakdown[]>`select public.current_plan(plan, plan_expires_at) as label, count(*)::int as value from public.users group by 1 order by 2 desc`,
       sql<Breakdown[]>`
         select os as label, count(*)::int as value from public.devices group by 1 order by 2 desc limit 8`,
       // Current (latest) interview per user.

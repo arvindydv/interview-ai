@@ -2,7 +2,7 @@ import { StrictMode, useCallback, useEffect, useMemo, useRef, useState } from 'r
 import { createRoot } from 'react-dom/client';
 import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
 import {
-  AudioLines, Blend, Camera, ChevronDown, ImagePlus, Loader2, ShieldAlert, ShieldCheck, ChevronLeft, ChevronRight, Copy, Check, EyeOff, LayoutDashboard, Maximize2,
+  AudioLines, Blend, Camera, ChevronDown, ImagePlus, Loader2, ShieldAlert, ShieldCheck, ChevronLeft, ChevronRight, Copy, Check, EyeOff, Flag, LayoutDashboard, Maximize2,
   MessageSquare, Mic, MicOff, Minimize2, Move, MoreVertical, PanelBottomOpen, Play, Power, SendHorizontal, Sparkles, Square, Volume2, VolumeX, X, Zap,
 } from 'lucide-react';
 import type { ListenState } from '@parakeet/shared';
@@ -11,6 +11,8 @@ import { parakeet } from './bridge';
 import type { AudioSettings, LiveStatus, Protection, Screenshot, SourceStatus } from './types';
 import { LogoMark } from './ui';
 import { renderMarkdown } from './overlay/markdown';
+import { canReport } from './report';
+import { ReportForm } from './reportForm';
 import { useOverlayState, type OverlayAnswer } from './overlay/useOverlayState';
 import { clock, useElapsed, useMe, useTrial, type TrialState } from './useSession';
 import './styles.css';
@@ -336,6 +338,8 @@ function Overlay() {
     return () => clearTimeout(id);
   }, [confirmEnd]);
   const [copied, setCopied] = useState(false);
+  /** The answer whose "Report response" form is open; navigating to another answer closes it. */
+  const [reportFor, setReportFor] = useState<string | null>(null);
   const [atBottom, setAtBottom] = useState(true);
   const expandedHeight = useRef(640);
   const stackRef = useRef<HTMLDivElement>(null);
@@ -953,6 +957,17 @@ function Overlay() {
               {copied ? <Check size={15} className="text-brand" /> : <Copy size={15} />}
             </button>
             <button
+              onClick={() => setReportFor((id) => (id === current?.turnId ? null : (current?.turnId ?? null)))}
+              disabled={!canReport(current)}
+              title="Report response"
+              aria-label="Report response"
+              className={`grid size-8 place-items-center rounded-lg hover:bg-white/[0.07] hover:text-fg disabled:opacity-30 ${
+                reportFor && reportFor === current?.turnId ? 'text-danger' : 'text-muted'
+              }`}
+            >
+              <Flag size={15} />
+            </button>
+            <button
               onClick={clearAnswers}
               className="flex h-8 items-center rounded-lg px-2.5 text-[12.5px] text-muted hover:bg-white/[0.07] hover:text-fg"
             >
@@ -1014,6 +1029,11 @@ function Overlay() {
             )}
           </div>
 
+          {current && reportFor === current.turnId && (
+            <div className="absolute inset-x-0 top-11 bottom-0 z-10 animate-fade-up overflow-y-auto bg-[#0b0f17]/95 px-5 py-4 backdrop-blur-xl [animation-duration:150ms]">
+              <ReportForm answer={current} onClose={() => setReportFor(null)} />
+            </div>
+          )}
           {!atBottom && current && (
             <button
               onClick={() => {

@@ -2,12 +2,13 @@ import type { TrialBalance } from '@parakeet/shared';
 import { sql } from './db.js';
 
 // Live session metering. Every connection's time is recorded on its live_sessions row (minutes
-// history for the admin console). Users on the 'free' plan also spend `users.trial_seconds` of free
-// trial; other plans are unlimited.
+// history for the admin console). Users on the 'free' plan also spend `users.trial_seconds`: the free
+// trial plus any minute packs they bought (lib/billing.ts). Other plans are unlimited until they
+// expire (public.current_plan), after which the user is metered again.
 
 export const TRIAL_PLAN = 'free';
 export const TRIAL_ENDED_MESSAGE =
-  'Your free trial minutes are used up. Upgrade your plan to keep using live sessions.';
+  'You are out of session minutes. Buy more minutes or get a monthly or yearly plan to keep using live sessions.';
 
 /** Charge at most this often, so an open session overshoots the allowance by a few seconds at most. */
 const TICK_MS = 10_000;
@@ -17,7 +18,8 @@ const left = (t: TrialBalance) => Math.max(t.totalSeconds - t.usedSeconds, 0);
 /** The user's trial balance, or null when their plan isn't metered. */
 export async function trialBalance(userId: string): Promise<TrialBalance | null> {
   const [row] = await sql<{ plan: string; total: number; used: number }[]>`
-    select plan, trial_seconds as total, trial_used_seconds as used from public.users where id = ${userId}`;
+    select public.current_plan(plan, plan_expires_at) as plan, trial_seconds as total, trial_used_seconds as used
+    from public.users where id = ${userId}`;
   return row?.plan === TRIAL_PLAN ? { totalSeconds: row.total, usedSeconds: row.used } : null;
 }
 
@@ -29,7 +31,8 @@ async function charge(userId: string, liveSessionId: string | null, seconds: num
   // Data-modifying CTEs all run; `s` sees what `u` actually took from the trial.
   const [row] = await sql<{ total: number | null; used: number | null }[]>`
     with b as (
-      select id, plan, trial_seconds, trial_used_seconds as before from public.users where id = ${userId} for update
+      select id, public.current_plan(plan, plan_expires_at) as plan, trial_seconds, trial_used_seconds as before
+      from public.users where id = ${userId} for update
     ), u as (
       update public.users p set trial_used_seconds = least(b.trial_seconds, b.before + ${seconds})
       from b where p.id = b.id and b.plan = ${TRIAL_PLAN}
