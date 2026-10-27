@@ -91,6 +91,8 @@ export interface InterviewInput {
   role: string;
   roundType: RoundType;
   jobDescription: string;
+  /** The candidate's own instructions for how answers should sound, e.g. "Keep it short, definition then example". */
+  instructions: string;
 }
 
 export interface Interview extends InterviewInput {
@@ -109,6 +111,7 @@ export const PROFILE_LIMITS = {
   maxCompanyChars: 120,
   maxRoleChars: 120,
   maxJobDescriptionChars: 20_000,
+  maxInstructionsChars: 1_000,
 } as const;
 
 export const RESUME_TYPES: Record<string, 'pdf' | 'docx' | 'text'> = {
