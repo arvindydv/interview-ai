@@ -67,7 +67,7 @@ const plans = [
 const faqs = [
   {
     q: 'Is there a free trial?',
-    a: `Yes. Every new account gets ${FREE_MINUTES} free minutes of live session time, no card needed, so you can try Friday AI on a real call before you pay.`,
+    a: `Yes. You get ${FREE_MINUTES} free minutes of live session time when you first sign in to the desktop app, no card needed, so you can try Friday AI on a real call before you pay. It's one free trial per person and per computer.`,
   },
   {
     q: 'What counts as a billable minute?',
@@ -201,7 +201,7 @@ export default function PricingPage() {
               Try it on your <span className="text-gradient">next interview</span>
             </h2>
             <p className="mx-auto mt-5 max-w-xl text-muted">
-              Create an account in a minute and get {FREE_MINUTES} minutes free. Upgrade whenever it makes sense.
+              Create an account in a minute and get {FREE_MINUTES} free minutes in the desktop app. Upgrade whenever it makes sense.
             </p>
             <div className="mt-10 flex justify-center">
               <Magnetic>

@@ -4,7 +4,7 @@ import {
   MessageSquare, PanelTopOpen, Pencil, Play, Power, RefreshCw, SendHorizontal, ShieldAlert, ShieldCheck, Sparkles, Square,
   Timer, Zap,
 } from 'lucide-react';
-import { ROUND_TYPES, trialLeft, type HealthReport, type Interview, type Me } from '@parakeet/shared';
+import { ROUND_TYPES, freeTrialMessage, trialLeft, type FreeTrialStatus, type HealthReport, type Interview, type Me } from '@parakeet/shared';
 import type { LiveStatus, Protection } from './types';
 import { parakeet as p } from './bridge';
 import { useLiveAnswer } from './useLiveAnswer';
@@ -290,8 +290,18 @@ function SessionClock({ elapsed, trial }: { elapsed: string; trial: TrialState |
   );
 }
 
-function FreeTrial({ trial, style }: { trial: TrialState; style?: React.CSSProperties }) {
+function FreeTrial({ trial, status, style }: { trial: TrialState; status?: FreeTrialStatus; style?: React.CSSProperties }) {
   const { totalSeconds, leftSeconds } = trial;
+  // No free minutes were granted to this account (one trial per computer and email): say why.
+  const refused = totalSeconds === 0 && status && status !== 'granted' ? freeTrialMessage(status) : null;
+  if (refused) {
+    return (
+      <Panel title="Session minutes" icon={Timer} className="rise-in" style={style}>
+        <p className="text-sm leading-relaxed text-muted">{refused}</p>
+        <p className="mt-3 text-xs text-faint">Minutes and plans are on the website, under Plans &amp; billing.</p>
+      </Panel>
+    );
+  }
   const pct = totalSeconds ? (leftSeconds / totalSeconds) * 100 : 0;
   return (
     <Panel title="Free trial" icon={Timer} className="rise-in" style={style}>
@@ -766,7 +776,7 @@ export function Home({ email }: { email: string }) {
             <div className="grid gap-5 lg:grid-cols-[1.45fr_1fr]">
               <WarmUp live={live} ctx={ctx} style={rise(2)} />
               <div className="space-y-5">
-                {trial && <FreeTrial trial={trial} style={rise(3)} />}
+                {trial && <FreeTrial trial={trial} status={me?.trialStatus} style={rise(3)} />}
                 <Hotkeys style={rise(3)} />
                 <Privacy style={rise(4)} />
               </div>

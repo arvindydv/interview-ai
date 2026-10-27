@@ -4,7 +4,8 @@ import {
   MessageSquareText, Plus, RefreshCw, Sparkles, Star, Trash2, UserRound,
 } from 'lucide-react';
 import {
-  FIELDS, PROFILE_LIMITS, ROUND_TYPES, SOFTWARE_FIELDS, type InterviewInput, type Resume, type ResumeProfile,
+  FIELDS, FIELD_EXAMPLES, INSTRUCTION_IDEAS, PROFILE_LIMITS, ROUND_TYPES, SOFTWARE_FIELDS, type InterviewInput, type Resume,
+  type ResumeProfile,
 } from '@parakeet/shared';
 import { Panel, Spinner } from './ui';
 import { RESUME_ACCEPT, type ContextStrength, type InterviewContextState } from './useInterviewContext';
@@ -384,25 +385,6 @@ const pick = (i: InterviewInput): InterviewInput => ({
   instructions: i.instructions ?? '',
 });
 
-/** Example organisation and title per field, so the form speaks the user's language. */
-const EXAMPLES: Record<string, [string, string]> = {
-  'Teaching & education': ['Delhi Public School', 'Maths Teacher (Grades 9–12)'],
-  'Finance & accounting': ['Deloitte', 'Financial Analyst'],
-  'HR & recruiting': ['Infosys', 'HR Business Partner'],
-  'Sales & marketing': ['HubSpot', 'Account Executive'],
-  'Healthcare & nursing': ['Apollo Hospitals', 'Staff Nurse'],
-  'Software & IT': ['Stripe', 'Backend Engineer'],
-  'Data & analytics': ['Flipkart', 'Data Analyst'],
-  Engineering: ['Larsen & Toubro', 'Site Engineer'],
-  'Design & creative': ['Ogilvy', 'Graphic Designer'],
-  'Operations & supply chain': ['Amazon', 'Operations Manager'],
-  'Customer service': ['Airtel', 'Customer Support Lead'],
-  Banking: ['HDFC Bank', 'Relationship Manager'],
-  Legal: ['Khaitan & Co', 'Associate'],
-  'Government & public sector': ['Ministry of Finance', 'Assistant Section Officer'],
-  'Consulting & management': ['McKinsey', 'Business Analyst'],
-  'Internship / campus': ['TCS', 'Graduate Trainee'],
-};
 const QUICK_FIELDS = 8;
 
 function FieldPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
@@ -504,7 +486,7 @@ type InterviewDraft = ReturnType<typeof useInterviewDraft>;
 
 function InterviewCard({ form, style }: { form: InterviewDraft; style?: React.CSSProperties }) {
   const { draft, set, error } = form;
-  const example = EXAMPLES[draft.field];
+  const example = FIELD_EXAMPLES[draft.field];
   // Coding and system design only make sense for software roles (kept if already chosen).
   const software = SOFTWARE_FIELDS.includes(draft.field);
   const rounds = ROUND_TYPES.filter((r) => !r.softwareOnly || software || r.id === draft.roundType);
@@ -592,15 +574,6 @@ function InterviewCard({ form, style }: { form: InterviewDraft; style?: React.CS
 
 // ---- answer instructions -------------------------------------------------------------------------
 
-/** One-tap starting points; each adds a line the user can then edit. */
-const INSTRUCTION_IDEAS = [
-  'Keep answers short, under 60 words',
-  'For "what is" questions: a short definition first, then an example',
-  'Use very simple English',
-  'Sound casual and friendly, not formal',
-  'Always link answers to my own projects',
-  'Give a little more detail and depth',
-];
 
 function InstructionsCard({ form, style }: { form: InterviewDraft; style?: React.CSSProperties }) {
   const { draft, set } = form;

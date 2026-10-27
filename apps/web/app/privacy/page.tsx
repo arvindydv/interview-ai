@@ -66,7 +66,9 @@ export default function PrivacyPage() {
           </li>
           <li>
             <strong>Usage and device data:</strong> session start and end times, minutes used, your operating system and
-            version, and the app version. We use these for metering, trial limits and compatibility.
+            version, and the app version. We use these for metering, trial limits and compatibility. To give one free trial
+            per computer, the desktop app also sends a one-way hash of your computer&rsquo;s system ID, and we keep a
+            one-way hash of the network address it was claimed from. Neither can be turned back into the original.
           </li>
           <li>
             <strong>Payment records:</strong> the plan you bought, the amount, the payment status, and Razorpay&rsquo;s
@@ -125,6 +127,11 @@ export default function PrivacyPage() {
       <LegalSection id="retention" title="5. How long we keep it">
         <ul>
           <li>We keep account, profile and session data while your account is open.</li>
+          <li>
+            You choose how long we keep the questions and answers from your live sessions (Settings, Privacy &amp; history):
+            not at all, 7, 30 or 90 days, or until you delete them. Text older than your choice is deleted within 24 hours.
+            Usage time is kept for billing. You can delete your history, or all your data, at any time.
+          </li>
           <li>When you delete a resume, we delete it from our database.</li>
           <li>
             When you ask us to delete your account, we delete your account and everything linked to it within 30 days.

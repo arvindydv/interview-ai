@@ -142,6 +142,7 @@ async function answerTurn(
 
   const context = await contextP;
   Object.assign(turn, {
+    interviewId: context?.interviewId ?? null,
     field: context?.field ?? '',
     company: context?.company ?? '',
     role: context?.role ?? '',
@@ -188,7 +189,7 @@ async function answerTracked(
   const started = performance.now();
   const turn: TurnRecord = {
     userId, liveSessionId: null, turnId: msg.turnId, question: msg.text ?? '', answer: '',
-    imageCount: msg.images?.length ?? 0, field: '', company: '', role: '', hasResume: false,
+    imageCount: msg.images?.length ?? 0, interviewId: null, field: '', company: '', role: '', hasResume: false,
     model: null, tier: null, status: 'cancelled', errorCode: null, tokensIn: 0, tokensOut: 0, ttftMs: null, durationMs: null,
   };
   const tracked = (m: ServerMessage) => {

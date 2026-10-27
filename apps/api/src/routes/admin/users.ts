@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type {
-  AdminInterviewRow, AdminTurn, AdminUserDetail, AdminUserRow, Paged, TurnStatus, UserStatus,
+  AdminInterviewRow, AdminTurn, AdminUserDetail, AdminUserRow, FreeTrialStatus, Paged, TurnStatus, UserStatus,
 } from '@parakeet/shared';
 import { audit, requireAdmin } from '../../lib/adminAuth.js';
 import { forgetUserStatus } from '../../lib/auth.js';
@@ -170,10 +170,13 @@ export default async function adminUserRoutes(app: FastifyInstance) {
     const id = req.params.id;
     if (!uuid.safeParse(id).success) return reply.code(404).send({ error: 'not_found', message: 'No such user' });
 
-    const [[user], [stats], devices, [resume], interviews, sessions, turns, activity, minutes] = await Promise.all([
-      sql<(UserRow & { admin_note: string; email_confirmed_at: Date | null; trial_seconds: number; trial_used_seconds: number })[]>`
+    const [[user], [stats], devices, [resume], interviews, sessions, turns, activity, minutes, sameComputer] = await Promise.all([
+      sql<(UserRow & {
+        admin_note: string; email_confirmed_at: Date | null; trial_seconds: number; trial_used_seconds: number;
+        trial_status: FreeTrialStatus;
+      })[]>`
         select u.id, u.email, u.auth_provider, public.current_plan(u.plan, u.plan_expires_at) as plan, u.status, u.created_at, u.last_active_at, u.admin_note,
-          u.trial_seconds, u.trial_used_seconds,
+          u.trial_seconds, u.trial_used_seconds, u.trial_status,
           a.last_sign_in_at, a.email_confirmed_at,
           (select count(*)::int from public.devices d where d.user_id = u.id) as devices,
           (select count(*)::int from public.live_turns t where t.user_id = u.id and t.status <> 'blocked') as questions,
@@ -228,6 +231,13 @@ export default async function adminUserRoutes(app: FastifyInstance) {
         where user_id = ${id}
           and connected_at >= (date_trunc('day', now() at time zone 'utc') - interval '29 days') at time zone 'utc'
         group by 1`,
+      sql<{ id: string; email: string; created_at: Date; trial_status: FreeTrialStatus }[]>`
+        select distinct u.id, u.email, u.created_at, u.trial_status
+        from public.devices mine
+        join public.devices other on other.machine_hash = mine.machine_hash and other.user_id <> mine.user_id
+        join public.users u on u.id = other.user_id
+        where mine.user_id = ${id} and mine.machine_hash is not null
+        order by u.created_at desc limit 50`,
     ]);
     if (!user) return reply.code(404).send({ error: 'not_found', message: 'No such user' });
 
@@ -249,6 +259,8 @@ export default async function adminUserRoutes(app: FastifyInstance) {
         avgTtftMs: stats.avg_ttft,
       },
       trial: { totalSeconds: user.trial_seconds, usedSeconds: user.trial_used_seconds },
+      trialStatus: user.trial_status,
+      sameComputer: sameComputer.map((u) => ({ id: u.id, email: u.email, createdAt: u.created_at.toISOString(), trialStatus: u.trial_status })),
       minutes: fillDays(minutes),
       devices: devices.map((d) => ({
         id: d.id, os: d.os, osVersion: d.os_version, appVersion: d.app_version, lastSeen: d.last_seen.toISOString(),

@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Activity, Check, CreditCard, RefreshCw, User } from 'lucide-react';
-import { planLabel, trialLeft, type HealthReport, type Me } from '@parakeet/shared';
+import { freeTrialMessage, planLabel, trialLeft, type HealthReport, type Me } from '@parakeet/shared';
 import { api, API_URL } from '@/lib/api';
 import { supabase } from '@/lib/supabase';
 import { AppShell } from '@/components/AppShell';
@@ -141,6 +141,9 @@ export default function Dashboard() {
                     <dt className="text-muted">Session minutes</dt>
                     <dd>{trialLeft(me.data.trial)}</dd>
                   </div>
+                )}
+                {me.data.trial && me.data.trial.totalSeconds === 0 && freeTrialMessage(me.data.trialStatus) && (
+                  <p className="rounded-lg bg-white/[0.03] px-3 py-2 text-xs text-muted">{freeTrialMessage(me.data.trialStatus)}</p>
                 )}
                 <div className="flex justify-between gap-4"><dt className="text-muted">Sign-in</dt><dd className="capitalize">{me.data.authProvider}</dd></div>
                 <div className="flex justify-between gap-4"><dt className="text-muted">Member since</dt><dd>{new Date(me.data.createdAt).toLocaleDateString()}</dd></div>

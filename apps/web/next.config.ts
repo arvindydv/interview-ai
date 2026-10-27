@@ -20,29 +20,32 @@ function connectSources() {
 const RAZORPAY_SCRIPT = 'https://checkout.razorpay.com';
 const RAZORPAY_FRAMES = 'https://api.razorpay.com https://checkout.razorpay.com';
 const RAZORPAY_CONNECT = 'https://lumberjack.razorpay.com';
+// Cloudflare Turnstile on the sign-in forms (lib/captcha.tsx): its script and challenge iframe.
+const TURNSTILE = 'https://challenges.cloudflare.com';
 
 // Next's inline bootstrap scripts need 'unsafe-inline' unless every page is rendered with a nonce;
 // the rest of the policy (no framing, no plugins, no other foreign scripts/forms) still applies.
 const csp = [
   "default-src 'self'",
-  `script-src 'self' 'unsafe-inline'${dev ? " 'unsafe-eval'" : ''} ${RAZORPAY_SCRIPT}`,
+  `script-src 'self' 'unsafe-inline'${dev ? " 'unsafe-eval'" : ''} ${RAZORPAY_SCRIPT} ${TURNSTILE}`,
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob:",
   "font-src 'self' data:",
   `connect-src ${connectSources()} ${RAZORPAY_CONNECT}`,
-  `frame-src ${RAZORPAY_FRAMES}`,
+  `frame-src ${RAZORPAY_FRAMES} ${TURNSTILE}`,
   "frame-ancestors 'none'",
   "base-uri 'self'",
   "form-action 'self'",
   "object-src 'none'",
 ].join('; ');
 
+// The microphone is for spoken answers in practice mode (app/practice).
 const securityHeaders = [
   { key: 'Content-Security-Policy', value: csp },
   { key: 'X-Frame-Options', value: 'DENY' },
   { key: 'X-Content-Type-Options', value: 'nosniff' },
   { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
-  { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=(), payment=(self "https://api.razorpay.com")' },
+  { key: 'Permissions-Policy', value: 'camera=(), microphone=(self), geolocation=(), payment=(self "https://api.razorpay.com")' },
   ...(dev ? [] : [{ key: 'Strict-Transport-Security', value: 'max-age=63072000; includeSubDomains; preload' }]),
 ];
 

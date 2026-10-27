@@ -32,6 +32,32 @@ export const profileQueue = new Queue<{ resumeId: string }>(PROFILE_QUEUE, {
   },
 });
 
+// Mock interviews (spec F1/F2), run by apps/worker. Jobs "practice.plan" and "practice.score", data { sessionId }.
+export const PRACTICE_QUEUE = 'practice';
+export const practiceQueue = new Queue<{ sessionId: string }>(PRACTICE_QUEUE, {
+  connection,
+  defaultJobOptions: {
+    attempts: 3,
+    backoff: { type: 'exponential', delay: 3_000 },
+    removeOnComplete: { age: 24 * 3600 },
+    removeOnFail: { age: 7 * 24 * 3600 },
+  },
+});
+
+// History (spec G2/G3), run by apps/worker: "history.summary" { sessionId } writes a post-interview
+// summary; "history.purge" { userId? } clears question and answer text past the retention setting (also
+// run hourly by the worker for everyone).
+export const HISTORY_QUEUE = 'history';
+export const historyQueue = new Queue<{ sessionId?: string; userId?: string }>(HISTORY_QUEUE, {
+  connection,
+  defaultJobOptions: {
+    attempts: 3,
+    backoff: { type: 'exponential', delay: 5_000 },
+    removeOnComplete: { age: 24 * 3600 },
+    removeOnFail: { age: 7 * 24 * 3600 },
+  },
+});
+
 /**
  * Queues an email. `dedupeKey` becomes the job ID, so retried requests can't send it twice.
  * Never throws: email is best-effort and must not fail the request that triggered it.

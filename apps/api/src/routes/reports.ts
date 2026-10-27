@@ -41,7 +41,7 @@ export default async function reportRoutes(app: FastifyInstance) {
       )
       insert into public.content_reports (user_id, turn_id, live_turn_id, reason, details, question, answer, model)
       select ${req.user.id}, ${turnId}, turn.id, ${reason}, ${details},
-        coalesce(turn.question, ${question}), coalesce(turn.answer, ${answer}), turn.model
+        coalesce(nullif(turn.question, ''), ${question}), coalesce(nullif(turn.answer, ''), ${answer}), turn.model
       from (select 1) one left join turn on true
       on conflict (user_id, turn_id) do update
         set reason = excluded.reason, details = excluded.details,

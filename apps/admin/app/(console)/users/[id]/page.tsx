@@ -6,13 +6,32 @@ import {
   ArrowLeft, Ban, BriefcaseBusiness, CircleCheck, FileText, History, Laptop, LogOut, MessageSquareText, NotebookPen,
   RefreshCw, Timer, Trash2, UserCog,
 } from 'lucide-react';
-import { ROUND_TYPES, trialLeft, type AdminUserDetail, type ResumeProfile } from '@parakeet/shared';
+import { ROUND_TYPES, trialLeft, type AdminUserDetail, type FreeTrialStatus, type ResumeProfile } from '@parakeet/shared';
 import { adminApi } from '@/lib/api';
 import { ago, date, dateTime, duration, int, ms } from '@/lib/format';
 import { useAction, useAsync } from '@/lib/useAsync';
 import { DailyColumns } from '@/components/charts';
 import { TurnDrawer, TurnRow, turnHead } from '@/components/turns';
 import { Card, Dot, Empty, ErrorNote, Pill, Spinner, Stat, Table } from '@/components/ui';
+
+const TRIAL_LABEL: Record<FreeTrialStatus, string> = {
+  granted: 'Trial granted',
+  pending: 'Trial not claimed',
+  device_used: 'Computer already used',
+  email_used: 'Email already used',
+  disposable_email: 'Temporary email',
+  network_limit: 'Network limit',
+  no_device_id: 'No machine id',
+};
+const TRIAL_TONE: Record<FreeTrialStatus, 'ok' | 'warn' | 'neutral'> = {
+  granted: 'ok',
+  pending: 'neutral',
+  device_used: 'warn',
+  email_used: 'warn',
+  disposable_email: 'warn',
+  network_limit: 'warn',
+  no_device_id: 'neutral',
+};
 
 const roundLabel = (id: string) => ROUND_TYPES.find((r) => r.id === id)?.label ?? id;
 
@@ -96,7 +115,15 @@ export default function UserDetailPage() {
         <Stat
           label="Free trial"
           value={<span className="text-lg">{trialLeft(d.trial)}</span>}
-          hint={`${duration(d.trial.usedSeconds)} used of ${duration(d.trial.totalSeconds)}${u.plan === 'free' ? '' : ` · not metered on ${u.plan}`}`}
+          hint={
+            <>
+              {duration(d.trial.usedSeconds)} used of {duration(d.trial.totalSeconds)}
+              {u.plan === 'free' ? '' : ` · not metered on ${u.plan}`}
+              <span className="mt-1 block">
+                <Pill tone={TRIAL_TONE[d.trialStatus]}>{TRIAL_LABEL[d.trialStatus]}</Pill>
+              </span>
+            </>
+          }
         />
         <Stat label="Avg. first token" value={ms(d.stats.avgTtftMs)} />
         <Stat label="Input tokens" value={d.stats.tokensIn} />
@@ -257,6 +284,26 @@ export default function UserDetailPage() {
                 </li>
               ))}
             </ul>
+          )}
+          {d.sameComputer.length > 0 && (
+            <div className="mt-4 rounded-lg border border-warn/30 bg-warn/[0.06] p-3">
+              <p className="text-xs font-semibold text-warn">
+                {d.sameComputer.length} other account{d.sameComputer.length === 1 ? '' : 's'} used the same computer
+              </p>
+              <ul className="mt-2 space-y-1.5">
+                {d.sameComputer.map((o) => (
+                  <li key={o.id} className="flex items-center justify-between gap-2 text-xs">
+                    <Link href={`/users/${o.id}`} className="min-w-0 truncate hover:text-fg hover:underline">
+                      {o.email}
+                    </Link>
+                    <span className="flex shrink-0 items-center gap-2 text-faint">
+                      {date(o.createdAt)}
+                      <Pill tone={TRIAL_TONE[o.trialStatus]}>{TRIAL_LABEL[o.trialStatus]}</Pill>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
         </Card>
       </div>

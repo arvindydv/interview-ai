@@ -1,6 +1,10 @@
 //! Edge API client. Every authenticated call goes through Rust, so tokens never reach the webview.
 
-use std::{fs, path::{Path, PathBuf}};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    sync::atomic::{AtomicBool, Ordering},
+};
 
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
@@ -10,11 +14,13 @@ use crate::{auth::Auth, config};
 pub struct Api {
     http: reqwest::Client,
     device_file: PathBuf,
+    /// This run has registered the device for the signed-in account.
+    registered: AtomicBool,
 }
 
 impl Api {
     pub fn new(http: reqwest::Client, data_dir: &Path) -> Self {
-        Self { http, device_file: data_dir.join("device.json") }
+        Self { http, device_file: data_dir.join("device.json"), registered: AtomicBool::new(false) }
     }
 
     async fn parse(res: reqwest::Response) -> Result<Value> {
@@ -88,6 +94,8 @@ impl Api {
         let info = os_info::get();
         let body = json!({
             "deviceKey": self.device_key(),
+            // Grants the free trial once per computer (see machine.rs and the API's lib/freeTrial.ts).
+            "machineId": crate::machine::fingerprint(),
             "os": std::env::consts::OS,
             "osVersion": format!("{} {}", info.os_type(), info.version()),
             "appVersion": app_version,
@@ -96,7 +104,17 @@ impl Api {
             self.http.post(format!("{}/v1/devices", config::API_URL)).bearer_auth(token).json(&body).send().await?,
         )
         .await?;
+        self.registered.store(true, Ordering::Relaxed);
         Ok(())
+    }
+
+    pub fn is_registered(&self) -> bool {
+        self.registered.load(Ordering::Relaxed)
+    }
+
+    /// The next account to sign in registers again.
+    pub fn forget_registration(&self) {
+        self.registered.store(false, Ordering::Relaxed);
     }
 
     /// Stable random identifier for this install.

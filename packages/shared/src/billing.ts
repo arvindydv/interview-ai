@@ -5,7 +5,7 @@ import type { TrialBalance } from './api.js';
 
 /** Live session price for minute packs, in rupees. */
 export const PRICE_PER_MINUTE = 10;
-/** Free live session time every new account starts with (users.trial_seconds default). */
+/** Free live session time, once per person (granted by the API's lib/freeTrial.ts when the desktop app first signs in). */
 export const FREE_MINUTES = 10;
 
 /** Minutes someone can buy in one payment, when they pick their own amount. */

@@ -1,4 +1,4 @@
-import { ROUND_TYPES, type ResumeProfile, type RoundType } from '@parakeet/shared';
+import { ROUND_TYPES, renderResumeProfile, type ResumeProfile, type RoundType } from '@parakeet/shared';
 import { sql } from './db.js';
 
 /** Resume text included verbatim alongside the structured profile, so no detail is lost. */
@@ -9,56 +9,23 @@ export interface InterviewContext {
   text: string;
   hasResume: boolean;
   hasJobDescription: boolean;
+  /** The active interview, if the user has one. */
+  interviewId: string | null;
   field: string;
   company: string;
   role: string;
 }
 
-function renderProfile(p: ResumeProfile) {
-  const lines: string[] = [];
-  if (p.name) lines.push(`Name: ${p.name}`);
-  if (p.headline) lines.push(`Headline: ${p.headline}`);
-  if (p.totalYearsExperience !== null) lines.push(`Total experience: ${p.totalYearsExperience} years`);
-  if (p.summary) lines.push(`Summary: ${p.summary}`);
-  if (p.skills.length) {
-    lines.push(`Skills: ${p.skills.map((s) => (s.years ? `${s.name} (${s.years} yrs)` : s.name)).join(', ')}`);
-  }
-  if (p.experience.length) {
-    lines.push('Experience:');
-    for (const e of p.experience) {
-      lines.push(`- ${e.title}, ${e.company}${e.period ? ` (${e.period})` : ''}`);
-      for (const h of e.highlights) lines.push(`  • ${h}`);
-    }
-  }
-  if (p.projects.length) {
-    lines.push('Projects:');
-    for (const pr of p.projects) {
-      const summary = /[.!?]$/.test(pr.summary) ? pr.summary : `${pr.summary}.`;
-      lines.push(`- ${pr.name}: ${summary}${pr.tech.length ? ` Tools/skills: ${pr.tech.join(', ')}.` : ''}${pr.impact ? ` Impact: ${pr.impact}` : ''}`);
-    }
-  }
-  // Profiles analysed before certifications existed don't have the key.
-  if (p.certifications?.length) lines.push(`Certifications: ${p.certifications.join(', ')}`);
-  if (p.education.length) {
-    lines.push(`Education: ${p.education.map((e) => [e.degree, e.school, e.year].filter(Boolean).join(', ')).join('; ')}`);
-  }
-  if (p.stories.length) {
-    lines.push('STAR stories (from the resume):');
-    for (const s of p.stories) {
-      lines.push(`- ${s.title}. Situation: ${s.situation} Action: ${s.action} Result: ${s.result}`);
-    }
-  }
-  return lines.join('\n');
-}
 
 /**
- * Loads the user's current interview (latest setup) and latest resume and renders them as one block.
+ * Loads the user's active interview and latest resume and renders them as one block.
  * Output is deterministic for unchanged data, so the provider's prompt cache keeps hitting across turns.
  * Returns null when the user hasn't prepared anything.
  */
 export async function loadInterviewContext(userId: string): Promise<InterviewContext | null> {
   const [row] = await sql<
     {
+      interview_id: string | null;
       field: string | null;
       company: string | null;
       role: string | null;
@@ -69,11 +36,11 @@ export async function loadInterviewContext(userId: string): Promise<InterviewCon
       parsed_json: ResumeProfile | null;
     }[]
   >`
-    select i.field, i.company, i.role, i.round_type, i.jd_text, i.instructions, r.text as resume_text, r.parsed_json
+    select i.id as interview_id, i.field, i.company, i.role, i.round_type, i.jd_text, i.instructions, r.text as resume_text, r.parsed_json
     from (select 1) one
     left join lateral (
-      select field, company, role, round_type, jd_text, instructions from public.interview_sessions
-      where user_id = ${userId} order by updated_at desc limit 1
+      select id, field, company, role, round_type, jd_text, instructions from public.interview_sessions
+      where user_id = ${userId} order by active_at desc limit 1
     ) i on true
     left join lateral (
       select text, parsed_json from public.resumes
@@ -102,7 +69,7 @@ export async function loadInterviewContext(userId: string): Promise<InterviewCon
     );
   }
   if (resumeText) {
-    if (row?.parsed_json) parts.push('<candidate_profile>', renderProfile(row.parsed_json), '</candidate_profile>');
+    if (row?.parsed_json) parts.push('<candidate_profile>', renderResumeProfile(row.parsed_json), '</candidate_profile>');
     parts.push('<resume_text>', resumeText.slice(0, MAX_RESUME_TEXT_IN_PROMPT), '</resume_text>');
   }
 
@@ -113,6 +80,7 @@ export async function loadInterviewContext(userId: string): Promise<InterviewCon
     text: [candidate, preferences].filter(Boolean).join('\n\n'),
     hasResume: Boolean(resumeText),
     hasJobDescription: Boolean(jd),
+    interviewId: row?.interview_id ?? null,
     field,
     company,
     role,

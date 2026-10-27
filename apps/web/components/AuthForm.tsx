@@ -4,12 +4,15 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ArrowLeft, ArrowRight, Check, CircleCheck, Eye, EyeOff, Laptop, Lock, Mail, User } from 'lucide-react';
 import type { EmailOtpType } from '@supabase/supabase-js';
+import { FREE_MINUTES } from '@parakeet/shared';
 import { company } from '@/lib/company';
 import { safeNext } from '@/lib/safeNext';
 import { handoffSupabase, isAllowedDesktopRedirect, supabase } from '@/lib/supabase';
 import { Logo } from '@/components/Logo';
 import { OtpInput } from '@/components/OtpInput';
 import { Spinner } from '@/components/ui';
+import { useCaptcha } from '@/lib/captcha';
+import { API_URL } from '@/lib/api';
 
 // Matches `max_frequency` in supabase/config.toml; resending sooner is rejected by Supabase.
 const RESEND_COOLDOWN_S = 60;
@@ -30,6 +33,23 @@ type Step = 'password' | 'email' | 'forgot' | 'code' | 'reset' | 'verified';
 
 // How long the "Email verified" confirmation stays up before redirecting.
 const VERIFIED_REDIRECT_MS = 1200;
+
+/**
+ * Whether a new account may use this address (temporary inboxes may not; see the API's
+ * lib/freeTrial.ts). If the check can't be reached, sign-up isn't blocked over it.
+ */
+async function checkEmail(email: string): Promise<{ ok: boolean; message?: string }> {
+  try {
+    const res = await fetch(`${API_URL}/v1/auth/email-check`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+    return res.ok ? await res.json() : { ok: true };
+  } catch {
+    return { ok: true };
+  }
+}
 
 /** Turns Supabase Auth errors into guidance the user can act on. */
 function friendlyError(message: string, email: string) {
@@ -144,6 +164,7 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
   const query = params.toString() ? `?${params}` : '';
   const signup = mode === 'signup';
 
+  const captcha = useCaptcha();
   const [step, setStep] = useState<Step>('password');
   const [codeType, setCodeType] = useState<EmailOtpType>('email');
   const [name, setName] = useState('');
@@ -189,6 +210,8 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
     } catch (e) {
       setError(friendlyError((e as Error).message, email));
     } finally {
+      // Captcha tokens are single use.
+      captcha.reset();
       setBusy(false);
     }
   }
@@ -214,24 +237,31 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
 
   const sendSignInCode = (resent = false) =>
     run(async () => {
+      // Existing accounts can always sign in; a temporary inbox can't create a new one.
+      const check = await checkEmail(email);
       const { error } = await client.auth.signInWithOtp({
         email,
-        options: { shouldCreateUser: true, emailRedirectTo: callbackUrl() },
+        options: { shouldCreateUser: check.ok, emailRedirectTo: callbackUrl(), captchaToken: captcha.require() },
       });
+      if (error && !check.ok && /signups? not allowed|not found/i.test(error.message)) throw new Error(check.message);
       if (error) throw error;
       awaitCode('email', resent);
     });
 
   const sendResetCode = (resent = false) =>
     run(async () => {
-      const { error } = await client.auth.resetPasswordForEmail(email, { redirectTo: callbackUrl() });
+      const { error } = await client.auth.resetPasswordForEmail(email, { redirectTo: callbackUrl(), captchaToken: captcha.require() });
       if (error) throw error;
       awaitCode('recovery', resent);
     });
 
   const resendConfirmation = (resent = false) =>
     run(async () => {
-      const { error } = await client.auth.resend({ type: 'signup', email, options: { emailRedirectTo: callbackUrl() } });
+      const { error } = await client.auth.resend({
+        type: 'signup',
+        email,
+        options: { emailRedirectTo: callbackUrl(), captchaToken: captcha.require() },
+      });
       if (error) throw error;
       awaitCode('signup', resent);
     });
@@ -250,10 +280,12 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
           throw new Error(`Your password needs at least ${MIN_PASSWORD_LENGTH} characters.`);
         }
         if (password !== confirmPassword) throw new Error("The passwords don't match.");
+        const check = await checkEmail(email);
+        if (!check.ok) throw new Error(check.message);
         const { data, error } = await client.auth.signUp({
           email,
           password,
-          options: { emailRedirectTo: callbackUrl(), data: { full_name: name.trim() } },
+          options: { emailRedirectTo: callbackUrl(), data: { full_name: name.trim() }, captchaToken: captcha.require() },
         });
         if (error) throw error;
         // A session here means the project auto-confirms emails, so no code was sent and the
@@ -272,9 +304,16 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
         awaitCode('signup', false);
         return;
       }
-      const { error } = await client.auth.signInWithPassword({ email, password });
+      const { error } = await client.auth.signInWithPassword({ email, password, options: { captchaToken: captcha.require() } });
       if (error) {
         if (/email not confirmed/i.test(error.message)) {
+          // With captcha on, the sign-in used up the token, so the code is sent from the next screen.
+          if (captcha.enabled) {
+            awaitCode('signup', false);
+            setResendIn(0);
+            setNotice('Confirm your email to finish signing in. Press “Resend code” to get a code.');
+            return;
+          }
           const { error: resendError } = await client.auth.resend({ type: 'signup', email });
           if (resendError) throw resendError;
           awaitCode('signup', false);
@@ -351,7 +390,7 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
         <>
           <h1 className="text-3xl font-semibold tracking-tight">{signup ? 'Create your account' : 'Welcome back'}</h1>
           <p className="mt-2 text-muted">
-            {signup ? 'Start with free minutes. No card required.' : `Sign in to continue to ${company.brand}.`}
+            {signup ? `Get ${FREE_MINUTES} free minutes in the desktop app. No card required.` : `Sign in to continue to ${company.brand}.`}
           </p>
 
           <form
@@ -530,6 +569,7 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
         </Link>
         .
       </p>
+      {captcha.element}
     </div>
   );
 }

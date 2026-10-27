@@ -37,12 +37,14 @@ function InstallerLink({
   className = '',
   children,
   onUnavailable,
+  onStart,
 }: {
   installer: Installer;
   primary?: boolean;
   className?: string;
   children: React.ReactNode;
   onUnavailable: () => void;
+  onStart?: () => void;
 }) {
   const href = downloadUrl(installer);
   return (
@@ -53,6 +55,8 @@ function InstallerLink({
         if (!href) {
           e.preventDefault();
           onUnavailable();
+        } else {
+          onStart?.();
         }
       }}
       className={`btn ${primary ? 'btn-primary' : 'btn-secondary'} ${className}`}
@@ -90,6 +94,7 @@ export function DownloadButtons({ size = 'md' }: { size?: 'md' | 'lg' }) {
   const [distro, setDistro] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [notice, setNotice] = useState(false);
+  const [started, setStarted] = useState<Platform | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   // The menu is portalled to <body> so cards with overflow-hidden (used for glow effects) can't clip it.
@@ -149,10 +154,10 @@ export function DownloadButtons({ size = 'md' }: { size?: 'md' | 'lg' }) {
   return (
     <div>
       <div className="flex flex-wrap gap-2">
-        <InstallerLink installer={win} primary={primary === 'windows'} className={pad} onUnavailable={unavailable}>
+        <InstallerLink installer={win} primary={primary === 'windows'} className={pad} onUnavailable={unavailable} onStart={() => setStarted('windows')}>
           <WindowsIcon /> Windows
         </InstallerLink>
-        <InstallerLink installer={mac} primary={primary === 'macos'} className={pad} onUnavailable={unavailable}>
+        <InstallerLink installer={mac} primary={primary === 'macos'} className={pad} onUnavailable={unavailable} onStart={() => setStarted('macos')}>
           <AppleIcon /> macOS
         </InstallerLink>
 
@@ -217,6 +222,19 @@ export function DownloadButtons({ size = 'md' }: { size?: 'md' | 'lg' }) {
           )}
         </div>
       </div>
+      {/* The installers aren't code-signed yet, so the OS warns on first launch. Remove once they are. */}
+      {started === 'windows' && (
+        <p className="mt-3 text-xs text-muted">
+          If Windows shows <span className="text-fg/80">"Windows protected your PC"</span>, click{' '}
+          <span className="text-fg/80">More info</span> → <span className="text-fg/80">Run anyway</span>.
+        </p>
+      )}
+      {started === 'macos' && (
+        <p className="mt-3 text-xs text-muted">
+          If macOS says it can't verify Friday AI, open <span className="text-fg/80">System Settings → Privacy &amp; Security</span>{' '}
+          and click <span className="text-fg/80">Open Anyway</span>.
+        </p>
+      )}
       {notice && (
         <p className="mt-3 text-xs text-muted">
           Installers aren't published yet. Set <code className="text-fg/80">NEXT_PUBLIC_DOWNLOADS_URL</code> once a release is out.

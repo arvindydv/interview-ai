@@ -1,6 +1,6 @@
 [package]
 name = "parakeet"
-version = "0.1.2"
+version = "0.1.4"
 description = "Friday AI: Real-Time AI Interview Assistant"
 authors = ["Friday AI"]
 license = ""
@@ -37,6 +37,8 @@ reqwest = { version = "0.13.5", default-features = false, features = ["json", "n
 tauri-plugin-clipboard-manager = "2.5.0"
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
 base64 = "0.23.1"
+# Hashing the machine id for the once-per-computer free trial (src/machine.rs).
+sha2 = "0.10.9"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-global-shortcut = "2.4.1"
@@ -55,6 +57,10 @@ strip = true
 xcap = "0.9.8"
 # Live audio: WASAPI loopback on Windows, Core Audio taps on macOS 14.6+ (Linux records with parec).
 cpal = "0.18.2"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+# MachineGuid for the once-per-computer free trial (src/machine.rs).
+winreg = "0.56.0"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # async-io (not tokio): enabling zbus's tokio mode breaks the keyring's blocking D-Bus calls inside

@@ -32,6 +32,7 @@ export interface TurnRecord {
   question: string;
   answer: string;
   imageCount: number;
+  interviewId: string | null;
   field: string;
   company: string;
   role: string;
@@ -47,13 +48,16 @@ export interface TurnRecord {
 }
 
 export async function recordTurn(t: TurnRecord) {
+  // With history off (spec G3), only usage is stored, never the question or answer text.
+  const localOnly = sql`coalesce((select history_retention = 'off' from public.users where id = ${t.userId}), false)`;
   await sql`
     insert into public.live_turns (
-      user_id, live_session_id, turn_id, question, answer, image_count, field, company, role, has_resume,
+      user_id, live_session_id, turn_id, question, answer, image_count, interview_id, field, company, role, has_resume,
       model, tier, status, error_code, tokens_in, tokens_out, ttft_ms, duration_ms
     ) values (
-      ${t.userId}, ${t.liveSessionId}, ${t.turnId.slice(0, 128)}, ${t.question.slice(0, MAX_QUESTION_CHARS)},
-      ${t.answer.slice(0, MAX_ANSWER_CHARS)}, ${t.imageCount}, ${t.field}, ${t.company}, ${t.role}, ${t.hasResume},
+      ${t.userId}, ${t.liveSessionId}, ${t.turnId.slice(0, 128)},
+      case when ${localOnly} then '' else ${t.question.slice(0, MAX_QUESTION_CHARS)} end,
+      case when ${localOnly} then '' else ${t.answer.slice(0, MAX_ANSWER_CHARS)} end, ${t.imageCount}, ${t.interviewId}, ${t.field}, ${t.company}, ${t.role}, ${t.hasResume},
       ${t.model}, ${t.tier}, ${t.status}, ${t.errorCode}, ${t.tokensIn}, ${t.tokensOut}, ${t.ttftMs}, ${t.durationMs}
     )`;
   await sql`update public.users set last_active_at = now() where id = ${t.userId}`;

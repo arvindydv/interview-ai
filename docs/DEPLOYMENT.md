@@ -183,14 +183,21 @@ requests for up to 10 seconds instead of returning errors. Desktop apps on a liv
    ```bash
    git tag desktop-v0.1.0 && git push origin desktop-v0.1.0
    ```
-4. After about 20 minutes, **Releases** shows a draft with every installer. Click **Publish**.
+4. After about 20 minutes, **Releases** shows a draft with every installer. Click **Publish**. The same
+   installers are uploaded to the downloads CDN (`infra/downloads.tf`; needs the `DESKTOP_UPLOAD_ROLE_ARN`,
+   `DOWNLOADS_BUCKET` and `DOWNLOADS_HOST` variables from `terraform output github_variables`).
 5. If the version changed, update `NEXT_PUBLIC_DESKTOP_VERSION` and `NEXT_PUBLIC_DOWNLOADS_URL` (step 6), then
-   redeploy so the website's download buttons point at the new files.
+   redeploy so the website's download buttons point at the new files. Point `NEXT_PUBLIC_DOWNLOADS_URL` at the
+   CDN (`$DOWNLOADS_HOST/desktop/v0.1.3`), not GitHub: GitHub's release-asset CDN is throttled to a few KB/s on
+   many Indian ISPs, which turns a 2 MB installer into a many-minute download.
 
 **Code signing (needed before real users).** Unsigned apps show *"Windows protected your PC"* on Windows,
 and *"app is damaged"* on macOS.
-- **macOS:** Apple Developer Program ($99/year) → *Developer ID Application* certificate → add the `APPLE_*`
-  secrets to the repo and pass them to `tauri-action` in `desktop.yml`. Tauri notarizes automatically.
+- **macOS:** Apple Developer Program ($99/year) → *Developer ID Application* certificate → add the repo secrets
+  `APPLE_CERTIFICATE` (base64 .p12), `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`,
+  `APPLE_PASSWORD` (app-specific password) and `APPLE_TEAM_ID`. `desktop.yml` picks them up and Tauri
+  notarizes automatically. Until then builds are ad-hoc signed, so macOS asks users to allow the app under
+  *System Settings → Privacy & Security → Open Anyway* instead of calling it damaged.
 - **Windows:** Azure Trusted Signing (about $10/month) or an OV certificate.
 - **Linux:** no signing needed.
 
