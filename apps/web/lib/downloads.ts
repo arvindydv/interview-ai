@@ -1,6 +1,7 @@
 // Desktop installer links. File names match what `tauri build` produces (see .github/workflows/desktop.yml).
-// Point NEXT_PUBLIC_DOWNLOADS_URL at where installers are published, e.g. a GitHub release:
-//   https://github.com/<org>/<repo>/releases/download/desktop-v0.1.0
+// Point NEXT_PUBLIC_DOWNLOADS_URL at where installers are published: the downloads CDN (infra/downloads.tf),
+//   https://<id>.cloudfront.net/desktop/v0.1.0
+// or a GitHub release (slow from many Indian ISPs): https://github.com/<org>/<repo>/releases/download/desktop-v0.1.0
 
 export const DESKTOP_VERSION = process.env.NEXT_PUBLIC_DESKTOP_VERSION ?? '0.1.0';
 export const DOWNLOADS_URL = (process.env.NEXT_PUBLIC_DOWNLOADS_URL ?? '').replace(/\/$/, '');
@@ -18,8 +19,11 @@ export interface Installer {
 }
 
 const v = DESKTOP_VERSION;
-/** Tauri names installers after `productName` in apps/desktop/src-tauri/tauri.conf.json. */
-const name = 'Friday AI';
+/**
+ * Tauri names installers after `productName` in apps/desktop/src-tauri/tauri.conf.json ("Friday AI"); GitHub
+ * Releases and the CDN upload (desktop.yml) both replace the space with a dot.
+ */
+const name = 'Friday.AI';
 
 export const installers: Installer[] = [
   { id: 'windows', platform: 'windows', label: 'Windows', detail: 'Windows 10 & 11 · 64-bit', file: `${name}_${v}_x64-setup.exe` },
@@ -50,13 +54,9 @@ export const installers: Installer[] = [
   },
 ];
 
-/** GitHub Releases replaces spaces in asset names with dots: "Friday AI_…" is served as "Friday.AI_…". */
-const githubRelease = DOWNLOADS_URL.startsWith('https://github.com/');
-
 export function downloadUrl(i: Installer): string | null {
   if (!DOWNLOADS_URL) return null;
-  const file = githubRelease ? i.file.replaceAll(' ', '.') : i.file;
-  return `${DOWNLOADS_URL}/${encodeURIComponent(file)}`;
+  return `${DOWNLOADS_URL}/${encodeURIComponent(i.file)}`;
 }
 
 /** Best guess at the visitor's OS, used to highlight the right button. */

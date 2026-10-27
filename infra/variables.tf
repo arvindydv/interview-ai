@@ -26,6 +26,12 @@ variable "github_repo" {
   default     = "arvindydv/interview-ai"
 }
 
+variable "github_repo_with_ids" {
+  description = "The same repository in GitHub's immutable-ID OIDC subject form, owner@<owner id>/name@<repo id>."
+  type        = string
+  default     = "arvindydv@132453023/interview-ai@1421918956"
+}
+
 variable "create_github_oidc_provider" {
   description = "Set false if this AWS account already has the token.actions.githubusercontent.com OIDC provider."
   type        = bool

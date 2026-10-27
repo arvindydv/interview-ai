@@ -74,6 +74,9 @@ data "aws_iam_openid_connect_provider" "github" {
 
 locals {
   github_oidc_arn = var.create_github_oidc_provider ? aws_iam_openid_connect_provider.github[0].arn : data.aws_iam_openid_connect_provider.github[0].arn
+  # This repo's OIDC tokens use GitHub's immutable-ID subject ("repo:owner@<id>/name@<id>:…"); accept the
+  # classic "repo:owner/name:…" form too.
+  github_subjects = ["repo:${var.github_repo}", "repo:${var.github_repo_with_ids}"]
 }
 
 resource "aws_iam_role" "github_deploy" {
@@ -87,10 +90,9 @@ resource "aws_iam_role" "github_deploy" {
       Condition = {
         StringEquals = { "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com" }
         StringLike = {
-          "token.actions.githubusercontent.com:sub" = [
-            "repo:${var.github_repo}:ref:refs/heads/main",
-            "repo:${var.github_repo}:environment:production",
-          ]
+          "token.actions.githubusercontent.com:sub" = flatten([
+            for repo in local.github_subjects : ["${repo}:ref:refs/heads/main", "${repo}:environment:production"]
+          ])
         }
       }
     }]

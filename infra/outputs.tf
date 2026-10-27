@@ -28,6 +28,9 @@ output "github_variables" {
     gh variable set SERVER_INSTANCE_ID  --body '${aws_instance.server.id}'
     gh variable set WEB_URL             --body 'https://${var.domain}'
     gh variable set NEXT_PUBLIC_API_URL --body 'https://api.${var.domain}'
+    gh variable set DESKTOP_UPLOAD_ROLE_ARN --body '${aws_iam_role.github_desktop.arn}'
+    gh variable set DOWNLOADS_BUCKET        --body '${aws_s3_bucket.downloads.bucket}'
+    gh variable set DOWNLOADS_HOST          --body 'https://${aws_cloudfront_distribution.downloads.domain_name}'
   EOT
 }
 
