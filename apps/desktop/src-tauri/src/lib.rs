@@ -164,6 +164,7 @@ async fn screenshot_capture(app: AppHandle) -> CmdResult<Shot> {
     if hide {
         if let Some(w) = &overlay {
             let _ = w.show();
+            keep_overlay_on_top(w);
         }
     }
     let raw = captured.map_err(err)?;
@@ -232,7 +233,7 @@ fn main_window_show(app: AppHandle) {
 // ---- main window --------------------------------------------------------------------------------
 
 /// Why the main window is hidden: auto-hidden for the overlay (ending the interview brings it back)
-/// or closed by the user (ending the interview quits).
+/// or closed by the user (it stays hidden until SHORTCUT_OPEN or "Open Friday AI").
 #[derive(Default)]
 struct MainWindow {
     closed_by_user: AtomicBool,
@@ -282,10 +283,18 @@ fn create_overlay(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+/// GTK can drop "keep above" and "on all workspaces" when a hidden window is shown again (tao),
+/// so the overlay would slip behind the next window the user switches to. Re-apply both.
+fn keep_overlay_on_top(w: &tauri::WebviewWindow) {
+    let _ = w.set_always_on_top(true);
+    let _ = w.set_visible_on_all_workspaces(true);
+}
+
 fn show_overlay(app: &AppHandle, focus: bool) {
     if let Some(w) = app.get_webview_window("overlay") {
         if !w.is_visible().unwrap_or(false) {
             let _ = w.show();
+            keep_overlay_on_top(&w);
         }
         if focus {
             let _ = w.set_focus();
@@ -313,31 +322,22 @@ fn close_overlay(app: &AppHandle, live: &Live) {
     if let Some(w) = app.get_webview_window("overlay") {
         let _ = w.hide();
     }
-    if app.state::<MainWindow>().closed_by_user.load(Ordering::Relaxed) {
-        app.exit(0);
-    } else {
+    if !app.state::<MainWindow>().closed_by_user.load(Ordering::Relaxed) {
         show_main(app);
     }
 }
 
-/// Closing the main window during an interview only hides it, so the overlay keeps working (and
-/// "Open Friday AI" can bring the window back). With no interview running, closing it quits, so no
-/// invisible process is left behind. Closing the overlay itself (e.g. Alt+F4) ends the interview.
+/// Closing the main window only hides it: the app keeps running in the background so a window
+/// closed by mistake comes back with SHORTCUT_OPEN (or "Open Friday AI" in the overlay), and the
+/// overlay keeps working during an interview. "Quit Friday AI" exits for real. Closing the overlay
+/// itself (e.g. Alt+F4) ends the interview.
 fn on_close_requested(window: &tauri::Window, api: &tauri::CloseRequestApi) {
     let app = window.app_handle();
     match window.label() {
         "main" => {
-            let overlay_visible = app
-                .get_webview_window("overlay")
-                .is_some_and(|w| w.is_visible().unwrap_or(false));
-            let in_session = app.state::<Live>().status().state != "disconnected";
-            if overlay_visible || in_session {
-                api.prevent_close();
-                app.state::<MainWindow>().closed_by_user.store(true, Ordering::Relaxed);
-                let _ = window.hide();
-            } else {
-                app.exit(0);
-            }
+            api.prevent_close();
+            app.state::<MainWindow>().closed_by_user.store(true, Ordering::Relaxed);
+            let _ = window.hide();
         }
         "overlay" => {
             api.prevent_close();
@@ -359,8 +359,24 @@ fn toggle_overlay(app: &AppHandle) {
 
 // ---- app --------------------------------------------------------------------------------------------
 
+/// Wayland compositors (GNOME, KDE) ignore a window's request to stay above others or on every
+/// workspace, so the overlay disappears behind whatever window the user switches to. Under XWayland
+/// they honour both. Overrides an inherited GDK_BACKEND=wayland (common in desktop sessions and
+/// editor terminals). Must run before GTK starts; FRIDAY_NATIVE_WAYLAND=1 opts out.
+fn prefer_xwayland() {
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("WAYLAND_DISPLAY").is_some()
+        && std::env::var_os("DISPLAY").is_some()
+        && std::env::var_os("FRIDAY_NATIVE_WAYLAND").is_none()
+    {
+        // SAFETY: called first thing in run(), before any other thread exists.
+        unsafe { std::env::set_var("GDK_BACKEND", "x11") };
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    prefer_xwayland();
     let mut builder = tauri::Builder::default()
         // Must be first: a second launch focuses the running app instead of starting another.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_main(app)))
@@ -376,11 +392,12 @@ pub fn run() {
     {
         use tauri_plugin_global_shortcut::{Shortcut, ShortcutState};
         let parse = |s: &str| s.parse::<Shortcut>().expect("valid shortcut");
-        let (toggle, answer, screenshot, chat) = (
+        let (toggle, answer, screenshot, chat, open) = (
             parse(config::SHORTCUT_TOGGLE),
             parse(config::SHORTCUT_ANSWER),
             parse(config::SHORTCUT_SCREENSHOT),
             parse(config::SHORTCUT_CHAT),
+            parse(config::SHORTCUT_OPEN),
         );
         builder = builder.plugin(
             tauri_plugin_global_shortcut::Builder::new()
@@ -396,6 +413,8 @@ pub fn run() {
                         overlay_command(app, "screenshot");
                     } else if *shortcut == chat {
                         overlay_command(app, "chat");
+                    } else if *shortcut == open {
+                        show_main(app);
                     }
                 })
                 .build(),
@@ -437,6 +456,7 @@ pub fn run() {
                     config::SHORTCUT_ANSWER,
                     config::SHORTCUT_SCREENSHOT,
                     config::SHORTCUT_CHAT,
+                    config::SHORTCUT_OPEN,
                 ] {
                     if let Err(e) = app.global_shortcut().register(key) {
                         log::warn!("could not register {key}: {e}");

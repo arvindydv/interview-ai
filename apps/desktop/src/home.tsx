@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  AlertTriangle, Briefcase, Camera, Check, ChevronDown, ClipboardList, Copy, EyeOff, Home as HomeIcon, Keyboard, LogOut,
+  AlertTriangle, AppWindow, Briefcase, Camera, Check, ChevronDown, ClipboardList, Copy, EyeOff, Home as HomeIcon, Keyboard, LogOut,
   MessageSquare, PanelTopOpen, Pencil, Play, Power, RefreshCw, SendHorizontal, ShieldAlert, ShieldCheck, Sparkles, Square,
   Timer, Zap,
 } from 'lucide-react';
@@ -57,6 +57,7 @@ const HOTKEYS = [
   { icon: Sparkles, label: 'Answer the latest question', keys: [MOD, '↵'] },
   { icon: Camera, label: 'Screenshot and solve', keys: [MOD, '⇧', '↵'] },
   { icon: MessageSquare, label: 'Open chat', keys: [MOD, '⇧', 'Space'] },
+  { icon: AppWindow, label: 'Reopen this window after closing it', keys: [MOD, isMac ? '⌥' : 'Alt', 'F'] },
 ];
 
 function greeting() {
@@ -333,7 +334,7 @@ function SessionHero({
   const copy = live
     ? {
         title: "You're live",
-        body: `Join your call, then press ${MOD} \\ to bring up the overlay. This window hides while the overlay is open; bring it back from the overlay's ⋮ menu → Open Friday AI.`,
+        body: `Join your call, then press ${MOD} \\ to bring up the overlay. This window hides while the overlay is open; bring it back with ${MOD} ${isMac ? '⌥' : 'Alt'} F or the overlay's ⋮ menu → Open Friday AI.`,
       }
     : pending
       ? { title: 'Connecting…', body: 'Setting up a secure live session. This usually takes a second.' }

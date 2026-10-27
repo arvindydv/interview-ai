@@ -92,7 +92,7 @@ export interface ParakeetApi {
     toggle(): Promise<void>;
     /** Shows the overlay and brings it to the front. */
     show(): Promise<void>;
-    /** Ends the interview: stops the session and closes the overlay (quits if the main window was closed). */
+    /** Ends the interview: stops the session and closes the overlay (the main window stays hidden if the user closed it). */
     close(): Promise<void>;
     /** Global shortcut pressed while another app has focus. */
     onCommand(cb: (command: OverlayCommand) => void): () => void;
