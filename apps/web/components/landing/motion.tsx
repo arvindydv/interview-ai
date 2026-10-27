@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { ArrowRight, LayoutDashboard, Menu, Plus, X } from 'lucide-react';
 import { Logo } from '@/components/Logo';
+import { ThemeToggle } from '@/components/ThemeToggle';
 import { useSessionUser, type SessionUser } from '@/lib/useSession';
 
 const prefersReducedMotion = () =>
@@ -308,6 +309,7 @@ export function NavBar() {
             ))}
           </div>
           <div className="ml-auto flex items-center gap-2">
+            <ThemeToggle />
             <AccountButtons user={user} />
             <button
               type="button"
