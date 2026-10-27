@@ -352,7 +352,7 @@ export default function Home() {
             <div className="mt-10 flex justify-center">
               <DownloadButtons size="lg" />
             </div>
-            <Link href="/login" className="btn btn-ghost mt-5">
+            <Link href="/signup" className="btn btn-ghost mt-5">
               or create a free account first <ArrowRight size={15} />
             </Link>
           </div>

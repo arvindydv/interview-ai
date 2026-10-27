@@ -161,6 +161,19 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
   const [resendIn, setResendIn] = useState(0);
   const verifying = useRef(false);
 
+  // Already signed in on the website: skip the form and continue to `next` (the dashboard by
+  // default). Desktop sign-in still shows the form, because it mints its own session for the app
+  // (see handoffSupabase).
+  const [checkingSession, setCheckingSession] = useState(!desktop);
+  useEffect(() => {
+    if (desktop) return;
+    supabase()
+      .auth.getSession()
+      .then(({ data }) => (data.session ? router.replace(next) : setCheckingSession(false)));
+    // Only on arrival: signing in from this form redirects by itself.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     if (resendIn <= 0) return;
     const t = setTimeout(() => setResendIn((s) => s - 1), 1000);
@@ -314,6 +327,8 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
       <ArrowLeft size={16} /> Back
     </button>
   );
+
+  if (checkingSession) return <Spinner className="text-muted" />;
 
   const codeHeading = {
     email: 'Check your email',
