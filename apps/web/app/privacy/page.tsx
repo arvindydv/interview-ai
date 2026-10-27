@@ -1,11 +1,13 @@
 import type { Metadata } from 'next';
 import { LegalPage, LegalSection } from '@/components/landing/legal';
 import { company } from '@/lib/company';
+import { pageMetadata } from '@/lib/site';
 
-export const metadata: Metadata = {
-  title: 'Privacy Policy · Friday AI',
-  description: 'What Friday AI collects, why, who processes it, how long it is kept and how to control it.',
-};
+export const metadata: Metadata = pageMetadata({
+  title: 'Privacy Policy',
+  description: 'What Friday AI collects, why, who processes it, how long it is kept and how to control it. Audio is never recorded or stored.',
+  path: '/privacy',
+});
 
 const sections: [string, string][] = [
   ['who', 'Who we are'],

@@ -13,6 +13,7 @@ export function Eyebrow({ children }: { children: React.ReactNode }) {
 
 const productLinks = [
   ['Features', '/#features'],
+  ['Who it’s for', '/#who'],
   ['How it works', '/#how'],
   ['Pricing', '/pricing'],
   ['Privacy', '/#privacy'],
@@ -33,7 +34,8 @@ export function SiteFooter() {
         <div>
           <Logo />
           <p className="mt-4 max-w-xs text-sm text-muted">
-            The real-time AI copilot that helps you answer every interview question with clarity.
+            Friday AI is the real-time AI interview assistant that helps you answer every interview question with
+            clarity, built from your own resume.
           </p>
         </div>
         <div>
@@ -67,7 +69,8 @@ export function SiteFooter() {
         aria-hidden
         className="pointer-events-none mx-auto max-w-6xl px-4 text-center text-[22vw] leading-[0.8] font-bold tracking-[-0.06em] select-none sm:px-6 lg:text-[15rem]"
         style={{
-          background: 'linear-gradient(180deg, rgb(255 255 255 / 0.09), transparent 85%)',
+          // --color-white turns to ink in light mode (globals.css), so the wordmark stays visible there too.
+          background: 'linear-gradient(180deg, color-mix(in oklab, var(--color-white) 9%, transparent), transparent 85%)',
           WebkitBackgroundClip: 'text',
           backgroundClip: 'text',
           color: 'transparent',

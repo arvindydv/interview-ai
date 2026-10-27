@@ -2,11 +2,13 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { LegalPage, LegalSection } from '@/components/landing/legal';
 import { company } from '@/lib/company';
+import { pageMetadata } from '@/lib/site';
 
-export const metadata: Metadata = {
-  title: 'Terms & Conditions · Friday AI',
+export const metadata: Metadata = pageMetadata({
+  title: 'Terms & Conditions',
   description: 'The terms that apply when you create a Friday AI account, use the app or buy a plan.',
-};
+  path: '/terms',
+});
 
 const sections: [string, string][] = [
   ['about', 'About these terms'],

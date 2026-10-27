@@ -2,11 +2,13 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { LegalPage, LegalSection } from '@/components/landing/legal';
 import { company } from '@/lib/company';
+import { pageMetadata } from '@/lib/site';
 
-export const metadata: Metadata = {
-  title: 'Refund & Cancellation Policy · Friday AI',
+export const metadata: Metadata = pageMetadata({
+  title: 'Refund & Cancellation Policy',
   description: 'How cancellations and refunds work for Friday AI pay-per-minute, monthly and yearly plans.',
-};
+  path: '/refunds',
+});
 
 /** A plan bought within this many days, with at most REFUND_MAX_MINUTES used, is fully refundable. */
 const REFUND_DAYS = 7;
