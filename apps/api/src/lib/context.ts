@@ -64,14 +64,15 @@ export async function loadInterviewContext(userId: string): Promise<InterviewCon
       role: string | null;
       round_type: RoundType | null;
       jd_text: string | null;
+      instructions: string | null;
       resume_text: string | null;
       parsed_json: ResumeProfile | null;
     }[]
   >`
-    select i.field, i.company, i.role, i.round_type, i.jd_text, r.text as resume_text, r.parsed_json
+    select i.field, i.company, i.role, i.round_type, i.jd_text, i.instructions, r.text as resume_text, r.parsed_json
     from (select 1) one
     left join lateral (
-      select field, company, role, round_type, jd_text from public.interview_sessions
+      select field, company, role, round_type, jd_text, instructions from public.interview_sessions
       where user_id = ${userId} order by updated_at desc limit 1
     ) i on true
     left join lateral (
@@ -83,8 +84,9 @@ export async function loadInterviewContext(userId: string): Promise<InterviewCon
   const company = row?.company?.trim() ?? '';
   const role = row?.role?.trim() ?? '';
   const jd = row?.jd_text?.trim() ?? '';
+  const instructions = row?.instructions?.trim() ?? '';
   const resumeText = row?.resume_text ?? '';
-  if (!field && !company && !role && !jd && !resumeText) return null;
+  if (!field && !company && !role && !jd && !instructions && !resumeText) return null;
 
   const parts: (string | false | undefined)[] = [];
   if (field || company || role || jd) {
@@ -104,8 +106,11 @@ export async function loadInterviewContext(userId: string): Promise<InterviewCon
     parts.push('<resume_text>', resumeText.slice(0, MAX_RESUME_TEXT_IN_PROMPT), '</resume_text>');
   }
 
+  const candidate = parts.length ? `<candidate_context>\n${parts.filter(Boolean).join('\n')}\n</candidate_context>` : '';
+  // Kept outside <candidate_context>, whose embedded instructions the model is told to ignore.
+  const preferences = instructions && `<answer_preferences>\n${instructions}\n</answer_preferences>`;
   return {
-    text: `<candidate_context>\n${parts.filter(Boolean).join('\n')}\n</candidate_context>`,
+    text: [candidate, preferences].filter(Boolean).join('\n\n'),
     hasResume: Boolean(resumeText),
     hasJobDescription: Boolean(jd),
     field,

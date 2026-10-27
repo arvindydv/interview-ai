@@ -3,7 +3,7 @@ import { Suspense, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
-  ArrowLeft, CalendarDays, CalendarRange, Check, CircleCheck, CircleX, Clock, CreditCard, Info, LifeBuoy, Minus, Plus,
+  CalendarDays, CalendarRange, Check, CircleCheck, CircleX, Clock, CreditCard, Info, LifeBuoy, Minus, Plus,
   Receipt, ShieldCheck, Timer, X,
 } from 'lucide-react';
 import {
@@ -14,7 +14,8 @@ import {
 import { ApiError, api } from '@/lib/api';
 import { openCheckout } from '@/lib/razorpay';
 import { supabase } from '@/lib/supabase';
-import { Logo, LogoMark } from '@/components/Logo';
+import { AppShell } from '@/components/AppShell';
+import { LogoMark } from '@/components/Logo';
 import { Card, Pill, Spinner } from '@/components/ui';
 
 type Tone = 'ok' | 'pending' | 'info' | 'warn' | 'bad';
@@ -331,6 +332,7 @@ function Billing() {
   const params = useSearchParams();
   const wanted = productById(params.get('product'));
 
+  const [email, setEmail] = useState('');
   const [overview, setOverview] = useState<BillingOverview | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState<ProductId | null>(null);
@@ -364,6 +366,7 @@ function Billing() {
         if (!data.session) {
           return router.replace(`/login?${new URLSearchParams({ next: `/billing${location.search}` })}`);
         }
+        setEmail(data.session.user.email ?? '');
         load();
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -484,15 +487,8 @@ function Billing() {
   const yearlySaves = formatInr(PLANS.monthly.amount * 12 - PLANS.yearly.amount);
 
   return (
-    <div className="min-h-screen">
-      <div className="flex items-center justify-between border-b border-line px-4 py-3 sm:px-8">
-        <Logo href="/dashboard" />
-        <Link href="/dashboard" className="btn btn-ghost !px-2 text-sm">
-          <ArrowLeft size={16} /> Dashboard
-        </Link>
-      </div>
-
-      <main className="mx-auto max-w-5xl space-y-8 px-4 py-8 sm:px-8 sm:py-10">
+    <AppShell email={email}>
+      <div className="mx-auto max-w-5xl space-y-8 px-4 py-8 sm:px-8 sm:py-10">
         <header className="animate-fade-up">
           <h1 className="text-3xl font-semibold tracking-tight">Plans & billing</h1>
           <p className="mt-1 text-sm text-muted">
@@ -569,8 +565,8 @@ function Billing() {
             <Link href="/contact" className="text-brand hover:underline">contact support</Link> with your payment ID.
           </p>
         </Card>
-      </main>
-    </div>
+      </div>
+    </AppShell>
   );
 }
 

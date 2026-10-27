@@ -19,3 +19,5 @@ pub const SHORTCUT_TOGGLE: &str = "CommandOrControl+Backslash";
 pub const SHORTCUT_ANSWER: &str = "CommandOrControl+Enter";
 pub const SHORTCUT_SCREENSHOT: &str = "CommandOrControl+Shift+Enter";
 pub const SHORTCUT_CHAT: &str = "CommandOrControl+Shift+Space";
+/// Brings the main window back after it was closed (the app keeps running in the background).
+pub const SHORTCUT_OPEN: &str = "CommandOrControl+Alt+F";

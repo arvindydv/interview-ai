@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AlertCircle, ArrowRight, Award, Briefcase, Building2, Check, ChevronDown, FileText, FileUp, FolderGit2, GraduationCap, Info,
-  RefreshCw, Sparkles, Star, Trash2, UserRound,
+  MessageSquareText, Plus, RefreshCw, Sparkles, Star, Trash2, UserRound,
 } from 'lucide-react';
 import {
   FIELDS, PROFILE_LIMITS, ROUND_TYPES, SOFTWARE_FIELDS, type InterviewInput, type Resume, type ResumeProfile,
@@ -373,13 +373,15 @@ function ResumeCard({ ctx, style }: { ctx: InterviewContextState; style?: React.
 
 // ---- interview ------------------------------------------------------------------------------------
 
-const EMPTY: InterviewInput = { field: '', company: '', role: '', roundType: 'general', jobDescription: '' };
+const EMPTY: InterviewInput = { field: '', company: '', role: '', roundType: 'general', jobDescription: '', instructions: '' };
 const pick = (i: InterviewInput): InterviewInput => ({
   field: i.field ?? '',
   company: i.company,
   role: i.role,
   roundType: i.roundType,
   jobDescription: i.jobDescription,
+  // Interviews saved before answer instructions existed don't have the key.
+  instructions: i.instructions ?? '',
 });
 
 /** Example organisation and title per field, so the form speaks the user's language. */
@@ -588,6 +590,66 @@ function InterviewCard({ form, style }: { form: InterviewDraft; style?: React.CS
   );
 }
 
+// ---- answer instructions -------------------------------------------------------------------------
+
+/** One-tap starting points; each adds a line the user can then edit. */
+const INSTRUCTION_IDEAS = [
+  'Keep answers short, under 60 words',
+  'For "what is" questions: a short definition first, then an example',
+  'Use very simple English',
+  'Sound casual and friendly, not formal',
+  'Always link answers to my own projects',
+  'Give a little more detail and depth',
+];
+
+function InstructionsCard({ form, style }: { form: InterviewDraft; style?: React.CSSProperties }) {
+  const { draft, set } = form;
+  const value = draft.instructions;
+  const lines = value.split('\n').map((l) => l.trim());
+  const add = (idea: string) => {
+    const next = value.trim() ? `${value.trimEnd()}\n${idea}` : idea;
+    if (next.length <= PROFILE_LIMITS.maxInstructionsChars) set('instructions', next);
+  };
+  const ideas = INSTRUCTION_IDEAS.filter((idea) => !lines.includes(idea));
+
+  return (
+    <Panel title="How should Friday answer?" icon={MessageSquareText} className="rise-in" style={style}>
+      <p className="-mt-1 mb-3 text-sm text-muted">
+        Tell Friday AI how you like your answers: length, tone, structure, anything to always or never do. Used for every
+        answer.
+      </p>
+      <label className="block">
+        <span className="mb-1.5 flex items-baseline justify-between text-xs font-medium text-muted">
+          Your instructions
+          <span className="font-normal text-faint">
+            {value.length ? `${value.length} / ${PROFILE_LIMITS.maxInstructionsChars.toLocaleString()}` : 'Optional'}
+          </span>
+        </span>
+        <textarea
+          value={value}
+          maxLength={PROFILE_LIMITS.maxInstructionsChars}
+          onChange={(e) => set('instructions', e.target.value)}
+          className="input min-h-28 resize-y leading-relaxed"
+          placeholder={'e.g. Keep it short and simple.\nGive a one-line definition first, then a real example.\nDon\'t use heavy technical words.'}
+        />
+      </label>
+      {ideas.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {ideas.map((idea) => (
+            <button
+              key={idea}
+              onClick={() => add(idea)}
+              className="flex items-center gap-1 rounded-full px-2.5 py-1 text-xs text-muted ring-1 ring-line transition hover:bg-white/5 hover:text-fg"
+            >
+              <Plus size={12} /> {idea}
+            </button>
+          ))}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
 // ---- page -----------------------------------------------------------------------------------------
 
 /** Always-visible footer: what's been saved, and the button that finishes preparing. */
@@ -644,8 +706,11 @@ function PrepareForm({ ctx, onDone }: { ctx: InterviewContextState; onDone: () =
         <ContextMeter ctx={ctx} />
       </div>
       <div className="grid items-start gap-5 lg:grid-cols-2">
-        <ResumeCard ctx={ctx} style={rise(2)} />
-        <InterviewCard form={form} style={rise(3)} />
+        <div className="space-y-5">
+          <ResumeCard ctx={ctx} style={rise(2)} />
+          <InstructionsCard form={form} style={rise(3)} />
+        </div>
+        <InterviewCard form={form} style={rise(4)} />
       </div>
       <SaveBar form={form} onDone={onDone} />
     </>

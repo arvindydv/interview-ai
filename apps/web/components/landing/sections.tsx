@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { Logo } from '@/components/Logo';
+import { FooterAccountLinks } from '@/components/landing/FooterAccountLinks';
 
 export function Eyebrow({ children }: { children: React.ReactNode }) {
   return (
@@ -48,9 +49,7 @@ export function SiteFooter() {
         <div>
           <p className="eyebrow">Account</p>
           <ul className="mt-4 space-y-2.5 text-sm text-muted">
-            <li><Link href="/login" className="transition hover:text-fg">Sign in</Link></li>
-            <li><Link href="/signup" className="transition hover:text-fg">Create account</Link></li>
-            <li><Link href="/dashboard" className="transition hover:text-fg">Dashboard</Link></li>
+            <FooterAccountLinks />
           </ul>
         </div>
         <div>

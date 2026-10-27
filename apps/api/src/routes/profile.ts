@@ -38,6 +38,7 @@ interface InterviewRow {
   role: string;
   round_type: RoundType;
   jd_text: string;
+  instructions: string;
   updated_at: Date;
 }
 
@@ -48,6 +49,7 @@ const toInterview = (r: InterviewRow): Interview => ({
   role: r.role,
   roundType: r.round_type,
   jobDescription: r.jd_text,
+  instructions: r.instructions,
   updatedAt: r.updated_at.toISOString(),
 });
 
@@ -64,6 +66,8 @@ const interviewBody = z.object({
   role: z.string().max(PROFILE_LIMITS.maxRoleChars).transform((s) => s.trim()),
   roundType: z.enum(['general', 'behavioral', 'technical', 'case_study', 'presentation', 'coding', 'system_design']),
   jobDescription: z.string().max(PROFILE_LIMITS.maxJobDescriptionChars).transform((s) => s.trim()),
+  // Older desktop builds don't send instructions.
+  instructions: z.string().max(PROFILE_LIMITS.maxInstructionsChars).default('').transform((s) => s.trim()),
 });
 
 /** Profile rows reference public.users, which is normally created by GET /v1/me. */
@@ -143,7 +147,7 @@ export default async function profileRoutes(app: FastifyInstance) {
 
   app.get('/v1/interview', async (req): Promise<{ interview: Interview | null }> => {
     const [row] = await sql<InterviewRow[]>`
-      select id, field, company, role, round_type, jd_text, updated_at from public.interview_sessions
+      select id, field, company, role, round_type, jd_text, instructions, updated_at from public.interview_sessions
       where user_id = ${req.user.id} order by updated_at desc limit 1`;
     return { interview: row ? toInterview(row) : null };
   });
@@ -154,21 +158,21 @@ export default async function profileRoutes(app: FastifyInstance) {
     if (!body.success) {
       return reply.code(400).send({ error: 'bad_request', message: body.error.issues[0]?.message ?? 'Invalid interview' });
     }
-    const { field, company, role, roundType, jobDescription } = body.data;
+    const { field, company, role, roundType, jobDescription, instructions } = body.data;
     await ensureUser(req);
     const [updated] = await sql<InterviewRow[]>`
       update public.interview_sessions
       set field = ${field}, company = ${company}, role = ${role}, round_type = ${roundType},
-          jd_text = ${jobDescription}, updated_at = now()
+          jd_text = ${jobDescription}, instructions = ${instructions}, updated_at = now()
       where id = (
         select id from public.interview_sessions where user_id = ${req.user.id} order by updated_at desc limit 1
       )
-      returning id, field, company, role, round_type, jd_text, updated_at`;
+      returning id, field, company, role, round_type, jd_text, instructions, updated_at`;
     if (updated) return { interview: toInterview(updated) };
     const [created] = await sql<InterviewRow[]>`
-      insert into public.interview_sessions (user_id, field, company, role, round_type, jd_text)
-      values (${req.user.id}, ${field}, ${company}, ${role}, ${roundType}, ${jobDescription})
-      returning id, field, company, role, round_type, jd_text, updated_at`;
+      insert into public.interview_sessions (user_id, field, company, role, round_type, jd_text, instructions)
+      values (${req.user.id}, ${field}, ${company}, ${role}, ${roundType}, ${jobDescription}, ${instructions})
+      returning id, field, company, role, round_type, jd_text, instructions, updated_at`;
     return { interview: toInterview(created) };
   });
 }

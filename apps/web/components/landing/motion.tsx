@@ -1,8 +1,10 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { ArrowRight, Menu, Plus, X } from 'lucide-react';
+import { usePathname } from 'next/navigation';
+import { ArrowRight, LayoutDashboard, Menu, Plus, X } from 'lucide-react';
 import { Logo } from '@/components/Logo';
+import { useSessionUser, type SessionUser } from '@/lib/useSession';
 
 const prefersReducedMotion = () =>
   typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -233,11 +235,39 @@ const navLinks = [
   ['FAQ', '/#faq'],
 ];
 
+/** Sign in / Get started for visitors, Dashboard once signed in; nothing while the session loads. */
+function AccountButtons({ user, mobile = false }: { user: SessionUser; mobile?: boolean }) {
+  if (user === undefined) return null;
+  if (user) {
+    return (
+      <Link
+        href="/dashboard"
+        className={`btn btn-primary btn-shine ${mobile ? 'col-span-2' : 'hidden sm:inline-flex'}`}
+      >
+        <LayoutDashboard size={16} /> Dashboard
+      </Link>
+    );
+  }
+  return (
+    <>
+      <Link href="/login" className={mobile ? 'btn btn-secondary' : 'btn btn-ghost hidden sm:inline-flex'}>
+        Sign in
+      </Link>
+      <Link href="/signup" className={`btn btn-primary ${mobile ? '' : 'btn-shine hidden sm:inline-flex'}`}>
+        Get started {!mobile && <ArrowRight size={16} />}
+      </Link>
+    </>
+  );
+}
+
 /** Full-width bar at the top that condenses into a floating pill once you scroll, with a reading-progress line. */
 export function NavBar() {
   const [scrolled, setScrolled] = useState(false);
   const [open, setOpen] = useState(false);
   const barRef = useRef<HTMLDivElement>(null);
+  const user = useSessionUser();
+  const pathname = usePathname();
+  const current = (href: string) => (href === pathname ? 'page' : undefined);
   useEffect(() => {
     const onScroll = () => {
       setScrolled(window.scrollY > 24);
@@ -267,18 +297,18 @@ export function NavBar() {
           <Logo />
           <div className="hidden gap-1 text-sm text-muted md:flex">
             {navLinks.map(([label, href]) => (
-              <Link key={href} href={href} className="rounded-lg px-3 py-1.5 transition hover:bg-white/5 hover:text-fg">
+              <Link
+                key={href}
+                href={href}
+                aria-current={current(href)}
+                className="rounded-lg px-3 py-1.5 transition hover:bg-white/5 hover:text-fg aria-[current=page]:bg-white/[0.06] aria-[current=page]:text-fg"
+              >
                 {label}
               </Link>
             ))}
           </div>
           <div className="ml-auto flex items-center gap-2">
-            <Link href="/login" className="btn btn-ghost hidden sm:inline-flex">
-              Sign in
-            </Link>
-            <Link href="/signup" className="btn btn-primary btn-shine hidden sm:inline-flex">
-              Get started <ArrowRight size={16} />
-            </Link>
+            <AccountButtons user={user} />
             <button
               type="button"
               aria-label={open ? 'Close menu' : 'Open menu'}
@@ -303,18 +333,14 @@ export function NavBar() {
                 key={href}
                 href={href}
                 onClick={() => setOpen(false)}
-                className="rounded-xl px-4 py-3 text-sm text-muted hover:bg-white/5 hover:text-fg"
+                aria-current={current(href)}
+                className="rounded-xl px-4 py-3 text-sm text-muted hover:bg-white/5 hover:text-fg aria-[current=page]:text-fg"
               >
                 {label}
               </Link>
             ))}
             <div className="mt-2 grid grid-cols-2 gap-2 border-t border-line p-2 pt-3">
-              <Link href="/login" className="btn btn-secondary">
-                Sign in
-              </Link>
-              <Link href="/signup" className="btn btn-primary">
-                Get started
-              </Link>
+              <AccountButtons user={user} mobile />
             </div>
           </div>
         </div>
