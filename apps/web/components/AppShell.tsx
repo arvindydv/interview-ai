@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { Logo } from '@/components/Logo';
+import { ThemePicker } from '@/components/ThemeToggle';
 
 type NavItem = { icon: LucideIcon; label: string; href: string };
 
@@ -95,7 +96,10 @@ function SidebarContent({ email, onNavigate }: { email: string; onNavigate?: () 
             <p className="truncate text-xs text-muted">{email}</p>
           </div>
         </div>
-        <button onClick={signOut} className="btn btn-ghost mt-3 w-full !justify-start !px-2 !py-1.5">
+        <div className="mt-3">
+          <ThemePicker compact />
+        </div>
+        <button onClick={signOut} className="btn btn-ghost mt-2 w-full !justify-start !px-2 !py-1.5">
           <LogOut size={15} /> Sign out
         </button>
       </div>

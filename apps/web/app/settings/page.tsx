@@ -3,8 +3,8 @@ import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
-  Check, Copy, CreditCard, Database, Download, History, KeyRound, Laptop, LogOut, Monitor, ShieldCheck, Trash2, TriangleAlert,
-  User, UserX, type LucideIcon,
+  Check, Copy, CreditCard, Database, Download, History, KeyRound, Laptop, LogOut, Monitor, Palette, ShieldCheck, Trash2,
+  TriangleAlert, User, UserX, type LucideIcon,
 } from 'lucide-react';
 import { HISTORY_RETENTIONS, planLabel, type AccountSettings, type HistoryRetention, type Me } from '@parakeet/shared';
 import { ApiError, api } from '@/lib/api';
@@ -15,12 +15,14 @@ import { relative } from '@/lib/interviews';
 import { AppShell } from '@/components/AppShell';
 import { LogoMark } from '@/components/Logo';
 import { Spinner } from '@/components/ui';
+import { ThemePicker } from '@/components/ThemeToggle';
 import { ConfirmDialog, Toaster, toast } from '@/components/overlay';
 
 const errorText = (e: unknown) => (e instanceof ApiError ? e.message : 'Something went wrong. Try again.');
 
 const SECTIONS: { id: string; label: string; icon: LucideIcon }[] = [
   { id: 'account', label: 'Account', icon: User },
+  { id: 'appearance', label: 'Appearance', icon: Palette },
   { id: 'privacy', label: 'Privacy & history', icon: ShieldCheck },
   { id: 'devices', label: 'Devices', icon: Laptop },
   { id: 'data', label: 'Your data', icon: Database },
@@ -195,6 +197,13 @@ export default function SettingsPage() {
                 >
                   <LogOut size={15} /> Sign out
                 </button>
+              </Section>
+
+              {/* appearance */}
+              <Section id="appearance" icon={Palette} title="Appearance" text="Dark is the default. System follows your computer's setting.">
+                <div className="max-w-sm">
+                  <ThemePicker />
+                </div>
               </Section>
 
               {/* privacy */}
