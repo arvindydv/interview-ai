@@ -8,7 +8,7 @@ import { requireAuth } from '../lib/auth.js';
 import { loadInterviewContext, type InterviewContext } from '../lib/context.js';
 import { Conversation, Listener, type AnswerHandle } from '../lib/listen.js';
 import { trackConnection } from '../lib/liveRegistry.js';
-import { LlmError, llmConfigured, streamAnswer } from '../lib/llm.js';
+import { LlmError, llmConfigured, streamAnswer, warmAnswerCache } from '../lib/llm.js';
 import { getSettings } from '../lib/settings.js';
 import { sttConfigured } from '../lib/stt.js';
 import { SessionMeter, TRIAL_ENDED_MESSAGE } from '../lib/trial.js';
@@ -72,6 +72,10 @@ async function streamStubAnswer(
 }
 
 /** Returns an error message, or null if the attachments are acceptable. */
+// The prompt cache lives 5 minutes. Re-warm a little before that, but only while no question has
+// been answered in the meantime (every answer refreshes the cache by itself).
+const CACHE_REWARM_MS = 4.5 * 60_000;
+
 function validateImages(images: unknown): string | null {
   if (images === undefined) return null;
   if (!Array.isArray(images)) return 'images must be an array';
@@ -236,6 +240,20 @@ export default async function liveRoutes(app: FastifyInstance) {
       });
       const conversation = new Conversation();
 
+      // Pre-warm the fast tier's prompt cache with this user's context, so the first question of
+      // the interview starts from a cache hit and an open connection.
+      let lastAnswerAt = 0;
+      const warm = () => {
+        lastAnswerAt = Date.now();
+        void Promise.all([loadInterviewContext(req.user.id), getSettings()])
+          .then(([ctx, settings]) => warmAnswerCache(ctx?.text, { fast: settings.fastModel, vision: settings.visionModel }))
+          .catch((err) => req.log.info({ err: (err as Error).message }, 'prompt cache warm-up failed'));
+      };
+      if (llmConfigured()) warm();
+      const rewarm = setInterval(() => {
+        if (llmConfigured() && !meter.hasEnded && Date.now() - lastAnswerAt >= CACHE_REWARM_MS) warm();
+      }, 30_000);
+
       /**
        * Starts answering a question. Heard questions are `announce`d to the client (it didn't ask
        * them); a `hold` answer streams into a buffer until release(), and is dropped (never shown or
@@ -243,6 +261,7 @@ export default async function liveRoutes(app: FastifyInstance) {
        */
       const startAnswer = (msg: AskMessage, opts: { announce?: boolean; hold?: boolean } = {}): AnswerHandle => {
         turns.get(msg.turnId)?.abort();
+        lastAnswerAt = Date.now();
         const ctrl = new AbortController();
         turns.set(msg.turnId, ctrl);
         let held: ServerMessage[] | null = opts.hold ? [] : null;
@@ -337,6 +356,7 @@ export default async function liveRoutes(app: FastifyInstance) {
       });
 
       socket.on('close', () => {
+        clearInterval(rewarm);
         listener.close();
         void meter.stop();
         for (const ctrl of turns.values()) ctrl.abort();

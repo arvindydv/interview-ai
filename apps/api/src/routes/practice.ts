@@ -1,3 +1,4 @@
+import { Readable } from 'node:stream';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import {
@@ -6,6 +7,7 @@ import {
   type PracticeDifficulty, type PracticeQuestion, type PracticeResult, type PracticeSession, type PracticeStatus,
   type PracticeSummary, type RoundType,
 } from '@parakeet/shared';
+import { env } from '../env.js';
 import { requireAuth } from '../lib/auth.js';
 import { sql } from '../lib/db.js';
 import { practiceQueue } from '../lib/queues.js';
@@ -217,6 +219,42 @@ export default async function practiceRoutes(app: FastifyInstance) {
       return { session: toSession(row), trial };
     },
   );
+
+  // The interviewer's voice: one question read aloud by Deepgram Aura. Browser text-to-speech has no
+  // voices at all on many Linux setups and sounds robotic elsewhere, so the site plays this instead
+  // (and falls back to the browser only when this returns 503).
+  app.get<{ Params: { id: string; index: string } }>('/v1/practice/:id/questions/:index/speech', async (req, reply) => {
+    if (!uuid.safeParse(req.params.id).success) return notFound(reply);
+    const index = Number(req.params.index);
+    if (!Number.isInteger(index) || index < 0 || index >= 10) return reply.code(400).send({ error: 'bad_request', message: 'Invalid question' });
+    if (!env.DEEPGRAM_API_KEY) return reply.code(503).send({ error: 'tts_unavailable', message: 'Voice is not set up on the server.' });
+    const [row] = await sql<{ question: string | null }[]>`
+      select questions -> ${index}::int ->> 'question' as question
+      from public.practice_sessions where id = ${req.params.id} and user_id = ${req.user.id}`;
+    if (!row) return notFound(reply);
+    if (!row.question) return reply.code(404).send({ error: 'not_found', message: 'No such question' });
+
+    const url = `https://api.deepgram.com/v1/speak?${new URLSearchParams({ model: env.DEEPGRAM_TTS_MODEL })}`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { authorization: `Token ${env.DEEPGRAM_API_KEY}`, 'content-type': 'application/json' },
+      // Aura reads at most 2000 characters per request; questions are far shorter.
+      body: JSON.stringify({ text: row.question.slice(0, 2000) }),
+      signal: AbortSignal.timeout(15_000),
+    }).catch((err: Error) => {
+      req.log.warn({ err: err.message }, 'text-to-speech unreachable');
+      return null;
+    });
+    if (!res?.ok || !res.body) {
+      if (res) req.log.warn({ status: res.status, body: (await res.text().catch(() => '')).slice(0, 200) }, 'text-to-speech failed');
+      return reply.code(502).send({ error: 'tts_failed', message: 'Could not read the question aloud.' });
+    }
+    // Streamed through as it is synthesised. A question never changes, so the browser may keep it.
+    return reply
+      .header('content-type', res.headers.get('content-type') ?? 'audio/mpeg')
+      .header('cache-control', 'private, max-age=86400')
+      .send(Readable.fromWeb(res.body as import('node:stream/web').ReadableStream));
+  });
 
   // Ends the session (unanswered questions count as skipped) and starts the debrief.
   app.post<{ Params: { id: string } }>('/v1/practice/:id/finish', async (req, reply): Promise<{ session: PracticeSession } | void> => {

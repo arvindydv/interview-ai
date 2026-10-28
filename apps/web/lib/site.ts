@@ -79,7 +79,7 @@ export function siteJsonLd() {
     description: DEFAULT_DESCRIPTION,
     applicationCategory: 'BusinessApplication',
     applicationSubCategory: 'AI interview assistant',
-    operatingSystem: 'Windows, macOS, Linux',
+    operatingSystem: 'Windows, macOS',
     publisher: { '@id': `${SITE_URL}/#organization` },
     featureList: [
       'Real-time answers to interview questions',

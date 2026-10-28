@@ -2,7 +2,12 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <!-- Merged into the app bundle's Info.plist by Tauri. macOS asks the user for each on first use. -->
+  <!-- Merged into the app bundle's Info.plist by Tauri. -->
+  <!-- Agent app: no Dock icon (not even while launching) and no app menu, so nothing of Friday AI
+       shows up when the whole screen is shared. -->
+  <key>LSUIElement</key>
+  <true/>
+  <!-- macOS asks the user for each of these on first use. -->
   <key>NSMicrophoneUsageDescription</key>
   <string>Friday AI transcribes what you say during an interview so answers can follow the conversation.</string>
   <key>NSAudioCaptureUsageDescription</key>

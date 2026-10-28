@@ -2,5 +2,8 @@
 *.tfstate
 *.tfstate.*
 terraform.tfvars
-secrets/*.env
+secrets/*
+!secrets/*.example
+# Editor save files (nano writes *.save)
+*.save
 crash.log

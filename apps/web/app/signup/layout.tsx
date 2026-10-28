@@ -3,7 +3,7 @@ import { pageMetadata } from '@/lib/site';
 
 export const metadata = pageMetadata({
   title: 'Sign up free: try the AI interview assistant',
-  description: `Create your free Friday AI account and get ${FREE_MINUTES} free minutes of real-time interview help. No card needed. Windows, macOS and Linux.`,
+  description: `Create your free Friday AI account and get ${FREE_MINUTES} free minutes of real-time interview help. No card needed. Windows and macOS.`,
   path: '/signup',
 });
 

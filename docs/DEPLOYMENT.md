@@ -1,15 +1,16 @@
 # Deploying to production
 
-How the server apps (web, admin, api, worker) go live on AWS, and how the desktop installers get published.
+How the server apps (web, admin, jobs, api, worker) go live on AWS, and how the desktop installers get published.
 Do the first deploy once, top to bottom (about 1–2 hours). After that, **every push to `main` deploys itself.**
 
 ```
-                 DNS: example.com, www., api., admin.  →  Elastic IP
+                 DNS: example.com, www., api., admin., jobs.  →  Elastic IP
                                      │
  ┌───────────────────────── EC2 (Ubuntu 24.04, Docker) ─────────────────────────┐
  │  Caddy :443 (automatic HTTPS)                                                │
  │    ├── example.com        → web    (Next.js)                                 │
  │    ├── admin.example.com  → admin  (Next.js)                                 │
+ │    ├── jobs.example.com   → jobs   (Next.js)                                 │
  │    └── api.example.com    → api    (Fastify + WebSockets) ──┐                │
  │                              worker (BullMQ) ───────────────┼── redis        │
  └─────────────────────────────────────────────────────────────┼────────────────┘
@@ -21,10 +22,10 @@ Do the first deploy once, top to bottom (about 1–2 hours). After that, **every
 
 | What | Where |
 |---|---|
-| `Dockerfile` | One multi-stage file; `--target api / worker / web / admin` builds each image |
+| `Dockerfile` | One multi-stage file; `--target api / worker / web / admin / jobs` builds each image |
 | `deploy/` | What runs on the server: `compose.yml`, `Caddyfile`, `deploy.sh` |
 | `infra/` | Terraform for all AWS resources, plus `scripts/push-secrets.sh` and secret templates |
-| `.github/workflows/deploy.yml` | Push to `main` → build 4 images → deploy → smoke test |
+| `.github/workflows/deploy.yml` | Push to `main` → build 5 images → deploy → smoke test |
 | `.github/workflows/ci.yml` | Pull requests: typecheck + build every image |
 | `.github/workflows/uptime.yml` | Hourly health check; also keeps a free Supabase project from pausing |
 | `.github/workflows/desktop.yml` | `desktop-v*` tag → installers for Windows, macOS, Linux → draft GitHub Release |
@@ -104,12 +105,13 @@ Run `terraform output` any time to see them again.
 
 ## 5. DNS
 
-At your domain registrar (or Route 53), create the four **A records** from `dns_records`, all pointing at
+At your domain registrar (or Route 53), create the five **A records** from `dns_records`, all pointing at
 `server_ip`:
 - `example.com`
 - `www`
 - `api`
 - `admin`
+- `jobs`
 
 Do this **before the first deploy**: Caddy requests HTTPS certificates as soon as it starts.
 Check that they resolve with `dig +short api.example.com`.

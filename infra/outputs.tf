@@ -1,5 +1,5 @@
 output "server_ip" {
-  description = "Point A records for DOMAIN, www, api and admin here."
+  description = "Point A records for DOMAIN, www, api, admin and jobs here."
   value       = aws_eip.server.public_ip
 }
 
@@ -14,7 +14,7 @@ output "registry" {
 output "dns_records" {
   description = "Create these at your DNS provider before the first deploy."
   value = {
-    for host in [var.domain, "www.${var.domain}", "api.${var.domain}", "admin.${var.domain}"] :
+    for host in [var.domain, "www.${var.domain}", "api.${var.domain}", "admin.${var.domain}", "jobs.${var.domain}"] :
     host => "A ${aws_eip.server.public_ip}"
   }
 }
@@ -28,6 +28,7 @@ output "github_variables" {
     gh variable set SERVER_INSTANCE_ID  --body '${aws_instance.server.id}'
     gh variable set WEB_URL             --body 'https://${var.domain}'
     gh variable set NEXT_PUBLIC_API_URL --body 'https://api.${var.domain}'
+    gh variable set JOBS_URL            --body 'https://jobs.${var.domain}'
     gh variable set DESKTOP_UPLOAD_ROLE_ARN --body '${aws_iam_role.github_desktop.arn}'
     gh variable set DOWNLOADS_BUCKET        --body '${aws_s3_bucket.downloads.bucket}'
     gh variable set DOWNLOADS_HOST          --body 'https://${aws_cloudfront_distribution.downloads.domain_name}'

@@ -134,6 +134,61 @@ export async function streamAnswer(req: AnswerRequest): Promise<Usage & { model:
 
 type ProviderRequest = AnswerRequest & { model: string; tier: 'fast' | 'deep' };
 
+/**
+ * Thinking for the fast tier. Heard questions must start streaming at once, and any thinking happens
+ * before the first visible token, so it adds directly to time-to-first-token. Claude Haiku 5.5
+ * thinks by default unless told not to (allowed at effort `high` or below); Claude Sonnet 5.5
+ * rejects `disabled` and turns thinking off with `between_tools`. Other models (e.g. an Opus picked
+ * in the admin console) can't turn it off, so they run at the low effort set below.
+ */
+function fastThinking(model: string): BetaMessageStreamParams['thinking'] {
+  if (model.startsWith('claude-haiku-5')) return { type: 'disabled' };
+  if (model.startsWith('claude-sonnet-5-5')) return { type: 'between_tools' };
+  return undefined;
+}
+
+/**
+ * Everything in a request except the messages. Shared by real answers and the cache pre-warm,
+ * which must match byte for byte (thinking and effort are part of the cached prefix).
+ */
+function claudeParams(model: string, vision: boolean, context: string | undefined) {
+  const thinking = vision ? { type: 'adaptive' as const } : fastThinking(model);
+  const params: Omit<BetaMessageStreamParams, 'messages' | 'max_tokens'> = {
+    model,
+    // Two cache breakpoints: the shared prompt (reused across all users) and the user's context
+    // (reused across every turn of their session).
+    system: [
+      { type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } },
+      ...(context ? [{ type: 'text' as const, text: context, cache_control: { type: 'ephemeral' as const } }] : []),
+    ],
+    // Screenshots are coding problems: let the model think, at a latency-friendly effort.
+    ...(thinking ? { thinking } : {}),
+    output_config: { effort: vision ? 'medium' : 'low' },
+  };
+  // Server-side refusal fallback is available for the Sonnet tier on the Claude API (not for Haiku).
+  if (model.startsWith('claude-sonnet')) {
+    params.betas = ['server-side-fallback-2026-07-01'];
+    params.fallbacks = 'default';
+  }
+  return params;
+}
+
+/**
+ * Writes the fast tier's prompt cache (system prompt + the candidate's context) before the first
+ * question, so that question starts from a cache hit instead of a cold prefill. Also opens the
+ * HTTPS connection the answer will reuse. A `max_tokens: 0` request runs prefill only and bills no
+ * output. Best effort: a failure here only means the first answer is a little slower.
+ */
+export async function warmAnswerCache(context: string | undefined, overrides?: { fast?: string; vision?: string }) {
+  const model = resolveModels(overrides).fast;
+  if (viaOpenRouter(model) || !anthropicConfigured()) return;
+  await anthropic().beta.messages.create({
+    ...claudeParams(model, false, context),
+    max_tokens: 0,
+    messages: [{ role: 'user', content: 'warmup' }],
+  });
+}
+
 async function streamClaude({ text, images = [], context, signal, onDelta, model, tier }: ProviderRequest): Promise<Usage & { model: string }> {
   const vision = tier === 'deep';
   const content: Anthropic.Beta.BetaContentBlockParam[] = [
@@ -147,26 +202,10 @@ async function streamClaude({ text, images = [], context, signal, onDelta, model
   ];
 
   const params: BetaMessageStreamParams = {
-    model,
+    ...claudeParams(model, vision, context),
     max_tokens: vision ? 16000 : 4000,
-    // Two cache breakpoints: the shared prompt (reused across all users) and the user's context
-    // (reused across every turn of their session).
-    system: [
-      { type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } },
-      ...(context ? [{ type: 'text' as const, text: context, cache_control: { type: 'ephemeral' as const } }] : []),
-    ],
     messages: [{ role: 'user', content }],
-    // Screenshots are coding problems: let the model think, at a latency-friendly effort.
-    // Heard questions must start streaming at once, so the fast tier doesn't think at all: any
-    // thinking happens before the first visible token and adds directly to time-to-first-token.
-    ...(vision ? { thinking: { type: 'adaptive' as const } } : {}),
-    output_config: { effort: vision ? 'medium' : 'low' },
   };
-  // Server-side refusal fallback is available for the Sonnet tier on the Claude API (not for Haiku).
-  if (model.startsWith('claude-sonnet')) {
-    params.betas = ['server-side-fallback-2026-07-01'];
-    params.fallbacks = 'default';
-  }
 
   try {
     const stream = anthropic().beta.messages.stream(params, { signal });

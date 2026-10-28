@@ -35,11 +35,18 @@ const CUES = new Set(
     'what whats what\'s why how when where who whom whose which can could would will should shall do does did ' +
     'is are was were have has had tell describe explain walk give share talk discuss design write implement ' +
     'solve compare define imagine suppose say list name calculate estimate show convince sell pitch plan ' +
-    'outline elaborate clarify expand ask let\'s lets any anything'
+    'outline elaborate clarify expand ask any anything take help introduce please kindly'
   ).split(' '),
 );
-// Lead-ins skipped before looking for a cue ("okay so now tell me…").
-const LEAD_INS = new Set('so okay ok and now alright all right well um uh great next then just maybe also but let me'.split(' '));
+// Lead-ins skipped before looking for a cue ("okay so now tell me…", "let's talk about…"). "Let's"
+// is a lead-in rather than a cue so that "let's move on" isn't taken for a question.
+const LEAD_INS = new Set(
+  "so okay ok and now alright all right well um uh great next then just maybe also but let me let's lets".split(' '),
+);
+// Requests that don't open with a cue word: "I'd like to know…", "I'm curious how…", "in your
+// opinion, …", "the next question is…".
+const REQUEST_PHRASES =
+  /\b(?:i'?d|i would)\s+(?:like|love)\b|\bi (?:want|wanted) to (?:know|hear|understand|see|learn)\b|\b(?:i'm|i am) (?:curious|interested)\b|\bin your (?:opinion|view|experience)\b|\b(?:next|first|last|final|another|my) question\b/;
 
 /**
  * Whether an interviewer turn is worth answering: a question or a request, not "thanks, that's great".
@@ -49,6 +56,7 @@ export function isQuestion(text: string) {
   const words = text.trim().split(/\s+/).filter(Boolean);
   if (words.length < 3) return false;
   if (text.includes('?')) return true;
+  if (REQUEST_PHRASES.test(text.toLowerCase().replace(/[’‘]/g, "'"))) return true;
   return text.split(/[.!;:,]+/).some((clause) => {
     const w = clause.toLowerCase().replace(/[^a-z' ]/g, ' ').split(/\s+/).filter(Boolean);
     let i = 0;

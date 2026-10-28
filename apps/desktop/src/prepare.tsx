@@ -17,36 +17,33 @@ const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 export function ContextMeter({ ctx }: { ctx: InterviewContextState }) {
   const items = [
-    { label: 'Resume', done: ctx.hasResume },
-    { label: 'Role & organisation', done: ctx.hasTarget },
-    { label: 'Job description', done: ctx.hasJobDescription },
+    { label: 'Resume', short: 'resume', done: ctx.hasResume },
+    { label: 'Role & organisation', short: 'role', done: ctx.hasTarget },
+    { label: 'Job description', short: 'job description', done: ctx.hasJobDescription },
   ];
   const label: Record<ContextStrength, string> = {
     none: 'No context yet',
     basic: 'Basic context',
     strong: 'Strong context',
   };
+  const done = items.filter((it) => it.done).length;
   return (
-    <div className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-2xl border border-line bg-surface/60 px-4 py-3">
-      <div className="flex items-center gap-2.5">
-        <div className="flex gap-1">
-          {items.map((it) => (
-            <span
-              key={it.label}
-              className={`h-1.5 w-6 rounded-full transition-colors duration-500 ${it.done ? 'bg-brand-gradient' : 'bg-white/10'}`}
-            />
-          ))}
-        </div>
-        <span className="text-sm font-medium">{label[ctx.strength]}</span>
+    <div className="w-56 shrink-0" title={items.map((it) => `${it.done ? '✓' : '·'} ${it.label}`).join('\n')}>
+      <div className="flex items-baseline justify-between text-xs">
+        <span className="font-medium">{label[ctx.strength]}</span>
+        <span className="text-muted tabular-nums">{done} of 3</span>
       </div>
-      <ul className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+      <div className="mt-2 flex gap-1">
         {items.map((it) => (
-          <li key={it.label} className={`flex items-center gap-1.5 ${it.done ? 'text-fg' : 'text-faint'}`}>
-            {it.done ? <Check size={13} className="text-brand" strokeWidth={3} /> : <span className="size-1.5 rounded-full bg-faint" />}
-            {it.label}
-          </li>
+          <span
+            key={it.label}
+            className={`h-1 flex-1 rounded-full transition-colors duration-500 ${it.done ? 'bg-brand-gradient' : 'bg-white/10'}`}
+          />
         ))}
-      </ul>
+      </div>
+      <p className="mt-1.5 truncate text-[11px] text-faint">
+        {done === 3 ? 'Answers use all of it' : `Missing: ${items.filter((it) => !it.done).map((it) => it.short).join(', ')}`}
+      </p>
     </div>
   );
 }
@@ -72,16 +69,16 @@ function Dropzone({ onFile, busy }: { onFile: (f: File) => void; busy: boolean }
         const f = e.dataTransfer.files[0];
         if (f) onFile(f);
       }}
-      className={`group flex w-full flex-col items-center justify-center rounded-2xl border-2 border-dashed px-6 py-12 text-center transition ${
-        over ? 'border-brand bg-brand/[0.06]' : 'border-line-strong hover:border-brand/50 hover:bg-white/[0.02]'
+      className={`group flex w-full flex-col items-center justify-center rounded-xl border border-dashed px-6 py-10 text-center transition ${
+        over ? 'border-brand bg-brand/[0.05]' : 'border-line-strong hover:border-brand/40 hover:bg-white/[0.02]'
       }`}
     >
       <span
-        className={`grid size-14 place-items-center rounded-2xl bg-gradient-to-br from-brand/20 to-accent/15 text-brand ring-1 ring-brand/25 transition ${
-          over ? 'scale-110' : 'group-hover:-translate-y-0.5'
+        className={`grid size-11 place-items-center rounded-xl bg-white/[0.04] text-muted ring-1 ring-line transition group-hover:text-brand ${
+          over ? 'scale-110 text-brand' : ''
         }`}
       >
-        {busy ? <Spinner /> : <FileUp size={24} />}
+        {busy ? <Spinner /> : <FileUp size={20} />}
       </span>
       <span className="mt-4 text-sm font-semibold">{busy ? 'Reading your resume…' : 'Drop your resume here'}</span>
       <span className="mt-1 text-xs text-muted">
@@ -505,7 +502,7 @@ function InterviewCard({ form, style }: { form: InterviewDraft; style?: React.CS
 
       <FieldPicker value={draft.field} onChange={(v) => set('field', v)} />
 
-      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+      <div className="mt-4 grid gap-3 @2xl:grid-cols-2">
         <label className="block">
           <span className="mb-1.5 block text-xs font-medium text-muted">Organisation</span>
           <input
@@ -675,10 +672,7 @@ function PrepareForm({ ctx, onDone }: { ctx: InterviewContextState; onDone: () =
   const form = useInterviewDraft(ctx);
   return (
     <>
-      <div className="rise-in" style={rise(1)}>
-        <ContextMeter ctx={ctx} />
-      </div>
-      <div className="grid items-start gap-5 lg:grid-cols-2">
+      <div className="grid items-start gap-5 @4xl:grid-cols-2">
         <div className="space-y-5">
           <ResumeCard ctx={ctx} style={rise(2)} />
           <InstructionsCard form={form} style={rise(3)} />
@@ -705,13 +699,14 @@ export function Prepare({ ctx, onDone }: { ctx: InterviewContextState; onDone: (
   }
   return (
     <div className="space-y-5">
-      <div className="rise-in" style={rise(0)}>
-        <h1 className="text-2xl font-semibold tracking-[-0.03em]">
-          Prepare for your <span className="text-gradient">interview</span>
-        </h1>
-        <p className="mt-1.5 text-sm text-muted">
-          The more Friday AI knows, the more your answers sound like you. Everything here is private to your account.
-        </p>
+      <div className="rise-in flex flex-wrap items-end justify-between gap-x-8 gap-y-4 border-b border-line pb-5" style={rise(0)}>
+        <div className="min-w-0 max-w-xl">
+          <h2 className="text-2xl font-semibold tracking-[-0.025em]">Interview setup</h2>
+          <p className="mt-1.5 text-sm leading-relaxed text-muted">
+            The more Friday AI knows, the more your answers sound like you. Everything here is private to your account.
+          </p>
+        </div>
+        {!ctx.loadError && <ContextMeter ctx={ctx} />}
       </div>
       {ctx.loadError && (
         <div className="flex items-center gap-3 rounded-lg border border-danger/25 bg-danger/10 px-3 py-2 text-sm text-danger">

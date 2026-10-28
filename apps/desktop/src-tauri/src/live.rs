@@ -367,7 +367,9 @@ impl Live {
             header::AUTHORIZATION,
             format!("Bearer {token}").parse().map_err(|_| "bad token".to_string())?,
         );
-        let (ws, _) = tokio_tungstenite::connect_async(req).await.map_err(|e| e.to_string())?;
+        // TCP_NODELAY: audio frames, pings and questions are small, latency-critical writes that
+        // Nagle's algorithm would otherwise hold back waiting for the previous segment's ACK.
+        let (ws, _) = tokio_tungstenite::connect_async_with_config(req, None, true).await.map_err(|e| e.to_string())?;
         let (mut write, mut read) = ws.split();
         *attempts = 0;
         // Audio queued before the connection dropped is stale by now; keep anything else.

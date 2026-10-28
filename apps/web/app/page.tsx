@@ -7,6 +7,7 @@ import {
 import { FREE_MINUTES, PLANS, PRICE_PER_MINUTE, formatInr } from '@parakeet/shared';
 import { HeroDemo } from '@/components/HeroDemo';
 import { DownloadButtons } from '@/components/DownloadButtons';
+import { MacInstallGuide } from '@/components/MacInstallGuide';
 import {
   CountUp, Faq, Magnetic, NavBar, Reveal, SpotlightGroup, TiltStage, WordRotator,
 } from '@/components/landing/motion';
@@ -85,7 +86,7 @@ const audiences = [
 const faqs = [
   {
     q: 'What is Friday AI?',
-    a: 'Friday AI is a real-time AI interview assistant, also called an interview copilot, for Windows, macOS and Linux. During a live video interview it listens to the interviewer, detects each question and shows a short, personalised answer on a private overlay. It also solves coding problems from a screenshot and runs AI mock interviews so you can practise beforehand.',
+    a: 'Friday AI is a real-time AI interview assistant, also called an interview copilot, for Windows and macOS. During a live video interview it listens to the interviewer, detects each question and shows a short, personalised answer on a private overlay. It also solves coding problems from a screenshot and runs AI mock interviews so you can practise beforehand.',
   },
   {
     q: 'Is Friday AI free?',
@@ -105,7 +106,7 @@ const faqs = [
   },
   {
     q: 'Can the interviewer see the overlay when I share my screen?',
-    a: 'On Windows 10 (2004) and later, and on macOS 14 and earlier, the overlay is excluded from screen capture. macOS 15+ and Linux don’t let apps guarantee this, so we tell you honestly when it isn’t protected.',
+    a: 'On Windows 10 (2004) and later, and on macOS 14 and earlier, the overlay is excluded from screen capture. macOS 15+ doesn’t let apps guarantee this, so we tell you honestly when it isn’t protected.',
   },
   {
     q: 'Is my audio recorded or stored?',
@@ -113,7 +114,7 @@ const faqs = [
   },
   {
     q: 'Which platforms and meeting apps are supported?',
-    a: 'The desktop app runs on Windows, macOS and Linux (Ubuntu, Debian, Arch, Fedora), and works with Zoom, Google Meet, Microsoft Teams and Webex.',
+    a: 'The desktop app runs on Windows 10 and 11 and on macOS 11 or later, and works with Zoom, Google Meet, Microsoft Teams and Webex.',
   },
   {
     q: 'How fast do answers appear?',
@@ -421,7 +422,7 @@ export default function Home() {
                 Walk into your next interview <span className="text-gradient">prepared</span>
               </h2>
               <p className="mx-auto mt-5 max-w-xl text-muted">
-                Download the AI interview assistant for Windows, macOS and Linux (Ubuntu, Debian, Arch, Fedora). Set up
+                Download the AI interview assistant for Windows and macOS. Set up
                 in minutes, with your first {FREE_MINUTES} minutes free.
               </p>
               <div className="mt-10 flex justify-center">
@@ -430,6 +431,7 @@ export default function Home() {
               <Link href="/signup" className="btn btn-ghost mt-5">
                 or create a free account first <ArrowRight size={15} />
               </Link>
+              <MacInstallGuide />
             </div>
           </Reveal>
         </section>

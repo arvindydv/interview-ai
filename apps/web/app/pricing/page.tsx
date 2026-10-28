@@ -25,7 +25,7 @@ const included = [
   'Screenshot Solve for coding problems',
   'Practice Mode with scored mock interviews',
   'Answers built from your resume and job description',
-  'Windows, macOS and Linux desktop app',
+  'Windows and macOS desktop app',
 ];
 
 const plans = [

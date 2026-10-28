@@ -9,7 +9,8 @@ export const WINDOWS_STORE_URL =
 
 export const DOWNLOADS_URL = (process.env.NEXT_PUBLIC_DOWNLOADS_URL ?? '').replace(/\/$/, '');
 
-export type Platform = 'windows' | 'macos' | 'linux';
+// The website offers Windows and macOS only (the desktop workflow still builds Linux packages).
+export type Platform = 'windows' | 'macos';
 
 export interface Installer {
   id: string;
@@ -17,8 +18,6 @@ export interface Installer {
   label: string;
   detail: string;
   file: string;
-  /** Shown under Linux options: how to run it after downloading. */
-  hint?: string;
 }
 
 const v = DESKTOP_VERSION;
@@ -31,30 +30,6 @@ const name = 'Friday.AI';
 export const installers: Installer[] = [
   { id: 'windows', platform: 'windows', label: 'Windows', detail: 'Windows 10 & 11 · 64-bit', file: `${name}_${v}_x64-setup.exe` },
   { id: 'macos', platform: 'macos', label: 'macOS', detail: 'Apple Silicon & Intel · macOS 11+', file: `${name}_${v}_universal.dmg` },
-  {
-    id: 'ubuntu',
-    platform: 'linux',
-    label: 'Ubuntu / Debian',
-    detail: '.deb · Ubuntu 22.04+, Debian 12+, Mint, Pop!_OS',
-    file: `${name}_${v}_amd64.deb`,
-    hint: `sudo apt install "./${name}_${v}_amd64.deb"`,
-  },
-  {
-    id: 'arch',
-    platform: 'linux',
-    label: 'Arch / Manjaro',
-    detail: '.AppImage · runs on any distro',
-    file: `${name}_${v}_amd64.AppImage`,
-    hint: `chmod +x "${name}_${v}_amd64.AppImage" && "./${name}_${v}_amd64.AppImage"`,
-  },
-  {
-    id: 'fedora',
-    platform: 'linux',
-    label: 'Fedora / openSUSE',
-    detail: '.rpm · Fedora 38+, RHEL 9+',
-    file: `${name}-${v}-1.x86_64.rpm`,
-    hint: `sudo dnf install "./${name}-${v}-1.x86_64.rpm"`,
-  },
 ];
 
 export function downloadUrl(i: Installer): string | null {
@@ -72,16 +47,5 @@ export function detectPlatform(): Platform | null {
   const ua = navigator.userAgent;
   if (/Windows/i.test(ua)) return 'windows';
   if (/Mac OS X|Macintosh/i.test(ua) && !/iPhone|iPad/i.test(ua)) return 'macos';
-  if (/Linux|X11/i.test(ua) && !/Android/i.test(ua)) return 'linux';
-  return null;
-}
-
-/** Narrow a Linux visitor to a distro when the browser reveals it (rare; falls back to none). */
-export function detectLinuxDistro(): string | null {
-  if (typeof navigator === 'undefined') return null;
-  const ua = navigator.userAgent;
-  if (/Ubuntu|Debian|Mint/i.test(ua)) return 'ubuntu';
-  if (/Fedora|Red Hat|openSUSE/i.test(ua)) return 'fedora';
-  if (/Arch|Manjaro/i.test(ua)) return 'arch';
   return null;
 }

@@ -11,7 +11,7 @@ variable "project" {
 }
 
 variable "domain" {
-  description = "Apex domain, e.g. example.com. The site is served at DOMAIN, api.DOMAIN and admin.DOMAIN."
+  description = "Apex domain, e.g. example.com. The site is served at DOMAIN, api.DOMAIN, admin.DOMAIN and jobs.DOMAIN."
   type        = string
 }
 

@@ -213,11 +213,13 @@ async fn wait_for_callback(listener: &TcpListener, state: &str) -> Result<HashMa
             continue;
         }
         let params: HashMap<String, String> = url.query_pairs().into_owned().collect();
+        // Either way the browser is sent on to a page on the website, so the address bar never
+        // ends on a 127.0.0.1 URL (and the tokens in it never stay in the tab or its history).
         if params.get("state").map(String::as_str) != Some(state) {
-            respond(&mut stream, 400, "This sign-in link has expired. Start again from the Friday AI app.").await;
+            redirect(&mut stream, &format!("{}/desktop-auth/done?error=expired", config::WEB_URL)).await;
             continue;
         }
-        respond(&mut stream, 200, "Signed in. You can close this tab and return to Friday AI.").await;
+        redirect(&mut stream, &format!("{}/desktop-auth/done", config::WEB_URL)).await;
         return Ok(params);
     }
 }
@@ -238,6 +240,16 @@ async fn read_request_target(stream: &mut TcpStream) -> Option<String> {
     let head = String::from_utf8_lossy(&buf[..len]);
     let mut parts = head.lines().next()?.split_whitespace();
     (parts.next()? == "GET").then(|| parts.next().map(str::to_owned))?
+}
+
+/// 303 so the browser loads `location` with a GET and the callback URL is replaced in history.
+async fn redirect(stream: &mut TcpStream, location: &str) {
+    let res = format!(
+        "HTTP/1.1 303 See Other\r\nlocation: {location}\r\ncache-control: no-store\r\nreferrer-policy: no-referrer\r\n\
+         content-length: 0\r\nconnection: close\r\n\r\n"
+    );
+    let _ = stream.write_all(res.as_bytes()).await;
+    let _ = stream.shutdown().await;
 }
 
 async fn respond(stream: &mut TcpStream, status: u16, message: &str) {

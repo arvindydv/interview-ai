@@ -1,4 +1,4 @@
-# AWS for Parakeet's server apps (web, admin, api, worker + Redis) on one EC2 instance running Docker
+# AWS for Parakeet's server apps (web, admin, jobs, api, worker + Redis) on one EC2 instance running Docker
 # Compose behind Caddy. Postgres and Auth stay on Supabase. See docs/DEPLOYMENT.md.
 #
 #   cd infra && cp terraform.tfvars.example terraform.tfvars   # fill it in
@@ -33,5 +33,5 @@ locals {
   account_id = data.aws_caller_identity.current.account_id
   registry   = "${local.account_id}.dkr.ecr.${var.region}.amazonaws.com"
   ssm_prefix = "/${var.project}/prod"
-  apps       = ["api", "worker", "web", "admin"]
+  apps       = ["api", "worker", "web", "admin", "jobs"]
 }

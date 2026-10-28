@@ -6,8 +6,9 @@
 #   docker build --target worker -t parakeet-worker .
 #   docker build --target web    -t parakeet-web   --build-arg NEXT_PUBLIC_API_URL=… --build-arg NEXT_PUBLIC_SUPABASE_URL=… …
 #   docker build --target admin  -t parakeet-admin --build-arg NEXT_PUBLIC_API_URL=…
+#   docker build --target jobs   -t parakeet-jobs  --build-arg NEXT_PUBLIC_JOBS_SITE_URL=…
 #
-# NEXT_PUBLIC_* values are compiled into the web/admin bundles, so they are build args, not runtime
+# NEXT_PUBLIC_* values are compiled into the web/admin/jobs bundles, so they are build args, not runtime
 # env. Runtime secrets (DATABASE_URL, API keys…) are never baked in; they come from the environment.
 # deploy/compose.yml and .github/workflows/deploy.yml pass all of this for you.
 
@@ -33,6 +34,7 @@ COPY apps/api/package.json      apps/api/
 COPY apps/worker/package.json   apps/worker/
 COPY apps/web/package.json      apps/web/
 COPY apps/admin/package.json    apps/admin/
+COPY apps/jobs/package.json     apps/jobs/
 COPY apps/desktop/package.json  apps/desktop/
 COPY packages/shared/package.json packages/shared/
 COPY packages/emails/package.json packages/emails/
@@ -45,7 +47,7 @@ COPY . .
 
 # ---------------------------------------------------------------------------------------------------
 # Node services (api, worker): compile in `source`, and install production deps separately, straight
-# from the lockfile, with only the manifests this service needs, so nothing from web/admin leaks in.
+# from the lockfile, with only the manifests this service needs, so nothing from web/admin/jobs leaks in.
 FROM source AS build-node
 RUN pnpm --filter @parakeet/shared --filter @parakeet/emails --filter @parakeet/api --filter @parakeet/worker \
       exec tsc -p tsconfig.json
@@ -101,6 +103,12 @@ RUN : "${NEXT_PUBLIC_API_URL:?build arg required}" \
  && pnpm --filter @parakeet/shared exec tsc -p tsconfig.json \
  && pnpm --filter @parakeet/admin run build
 
+FROM source AS build-jobs
+ARG NEXT_PUBLIC_JOBS_SITE_URL
+ENV NEXT_PUBLIC_SITE_URL=$NEXT_PUBLIC_JOBS_SITE_URL
+RUN pnpm --filter @parakeet/shared exec tsc -p tsconfig.json \
+ && pnpm --filter @parakeet/jobs run build
+
 # ---------------------------------------------------------------------------------------------------
 # runtime: slim image, no pnpm or compilers, non-root. Code is root-owned so the app can't modify it.
 FROM ${NODE_IMAGE} AS runtime
@@ -155,3 +163,14 @@ EXPOSE 3200
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD ["node", "-e", "fetch('http://127.0.0.1:3200/login').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
 CMD ["node", "apps/admin/server.js"]
+
+FROM runtime AS jobs
+COPY --from=build-jobs /repo/apps/jobs/.next/standalone ./
+COPY --from=build-jobs /repo/apps/jobs/.next/static ./apps/jobs/.next/static
+RUN mkdir -p apps/jobs/.next/cache && chown node:node apps/jobs/.next/cache
+USER node
+ENV PORT=3300 HOSTNAME=0.0.0.0
+EXPOSE 3300
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD ["node", "-e", "fetch('http://127.0.0.1:3300/').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+CMD ["node", "apps/jobs/server.js"]

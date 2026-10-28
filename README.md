@@ -10,6 +10,7 @@ apps/
   worker/     BullMQ background worker (resume parsing, pack builds, summaries… go here)
   web/        Next.js website: email-OTP + Google sign-in, dashboard, desktop sign-in handoff :3100
   admin/      Next.js admin console: analytics, users, live activity, settings, audit log      :3200
+  jobs/       Next.js Friday Jobs site, a separate web app (jobs.DOMAIN in production)        :3300
   desktop/    Tauri 2 desktop app: React UI (src/) + Rust backend (src-tauri/), main window + overlay
 packages/
   shared/     Types shared by every app (live WS protocol, REST shapes)
