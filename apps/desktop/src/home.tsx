@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  AppWindow, Briefcase, Camera, Check, ChevronDown, ClipboardList, Copy, EyeOff, Flag, Home as HomeIcon, Keyboard, LogOut,
-  MessageSquare, PanelTopOpen, Pencil, Play, Power, RefreshCw, SendHorizontal, Sparkles, Square,
-  Timer, Zap,
+  AppWindow, Briefcase, Camera, Check, ChevronsUpDown, ClipboardList, Copy, EyeOff, Flag, Home as HomeIcon, Keyboard, LogOut,
+  MessageSquare, PanelTopOpen, Pencil, Play, Plus, Power, RefreshCw, SendHorizontal, Sparkles, Square,
+  Zap,
 } from 'lucide-react';
-import { ROUND_TYPES, freeTrialMessage, trialLeft, type FreeTrialStatus, type HealthReport, type Interview, type Me } from '@parakeet/shared';
-import type { LiveStatus } from './types';
+import { ROUND_TYPES, freeTrialMessage, type FreeTrialStatus, type HealthReport, type Interview, type Me } from '@parakeet/shared';
+import type { AudioStatus, LiveStatus, SourceStatus } from './types';
 import { parakeet as p } from './bridge';
 import { useLiveAnswer } from './useLiveAnswer';
 import { renderMarkdown } from './overlay/markdown';
@@ -94,33 +94,10 @@ function Keys({ keys }: { keys: string[] }) {
   );
 }
 
-// ---- top bar --------------------------------------------------------------------------------------
+// ---- sidebar --------------------------------------------------------------------------------------
 
-function SessionPill({ status, elapsed }: { status: LiveStatus; elapsed: string | null }) {
-  const label = {
-    connected: 'Live',
-    connecting: 'Connecting…',
-    reconnecting: 'Reconnecting…',
-    disconnected: 'Not in a session',
-  }[status.state];
-  return (
-    <span
-      className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium ring-1 transition ${
-        status.state === 'connected'
-          ? 'bg-brand/10 text-brand ring-brand/25'
-          : status.state === 'disconnected'
-            ? 'bg-white/[0.03] text-muted ring-line'
-            : 'bg-warn/10 text-warn ring-warn/25'
-      }`}
-    >
-      <StatusDot state={status.state} />
-      {label}
-      {elapsed && <span className="font-mono tabular-nums opacity-80">{elapsed}</span>}
-    </span>
-  );
-}
-
-function ProfileMenu({ email, me }: { email: string; me: Me | null }) {
+/** The signed-in account at the foot of the sidebar; opens upwards. */
+function AccountMenu({ email, me }: { email: string; me: Me | null }) {
   const [open, setOpen] = useState(false);
   const ref = useDismiss<HTMLDivElement>(open, () => setOpen(false));
   return (
@@ -128,15 +105,19 @@ function ProfileMenu({ email, me }: { email: string; me: Me | null }) {
       <button
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
-        className="flex items-center gap-2 rounded-full py-1 pr-2 pl-1 ring-1 ring-line transition hover:bg-white/5"
+        className="flex w-full items-center gap-2.5 rounded-lg p-2 text-left transition hover:bg-white/[0.04]"
       >
-        <span className="bg-brand-gradient grid size-7 place-items-center rounded-full text-xs font-semibold text-bg uppercase">
+        <span className="bg-brand-gradient grid size-7 shrink-0 place-items-center rounded-full text-xs font-semibold text-bg uppercase">
           {email[0]}
         </span>
-        <ChevronDown size={14} className={`text-muted transition ${open ? 'rotate-180' : ''}`} />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[13px] font-medium">{email.split('@')[0]}</span>
+          <span className="block truncate text-[11px] text-faint capitalize">{me ? `${me.plan} plan` : email}</span>
+        </span>
+        <ChevronsUpDown size={14} className="shrink-0 text-faint" />
       </button>
       {open && (
-        <div className="pop-in absolute top-full right-0 z-50 mt-2 w-64 rounded-xl border border-line-strong bg-surface p-1.5 shadow-2xl shadow-black/60">
+        <div className="pop-in absolute bottom-full left-0 z-50 mb-2 w-64 rounded-xl border border-line-strong bg-surface p-1.5 shadow-2xl shadow-black/60 [transform-origin:bottom_left]">
           <div className="px-3 py-2.5">
             <p className="truncate text-sm font-medium">{email}</p>
             <p className="mt-1 flex items-center gap-2 text-xs text-muted">
@@ -145,7 +126,6 @@ function ProfileMenu({ email, me }: { email: string; me: Me | null }) {
                   <span className="rounded-full bg-brand/10 px-2 py-0.5 font-medium text-brand capitalize ring-1 ring-brand/25">
                     {me.plan} plan
                   </span>
-                  {me.trial && <span>{trialLeft(me.trial)}</span>}
                   <span className="capitalize">via {me.authProvider}</span>
                 </>
               ) : (
@@ -172,167 +152,124 @@ function ProfileMenu({ email, me }: { email: string; me: Me | null }) {
   );
 }
 
-// ---- session hero ---------------------------------------------------------------------------------
-
-function Step({ n, title, state }: { n: number; title: string; state: 'done' | 'current' | 'todo' }) {
+/** Session minutes in the sidebar: what's left, or why no free minutes were granted. */
+function MinutesMeter({ trial, status }: { trial: TrialState | null; status?: FreeTrialStatus }) {
+  if (!trial) return null;
+  const { totalSeconds, leftSeconds } = trial;
+  // No free minutes were granted to this account (one trial per computer and email): say why.
+  const refused = totalSeconds === 0 && status && status !== 'granted' ? freeTrialMessage(status) : null;
+  const pct = totalSeconds ? (leftSeconds / totalSeconds) * 100 : 0;
+  const low = leftSeconds > 0 && pct <= 20;
   return (
-    <li className="flex items-center gap-3">
-      <span
-        className={`grid size-7 shrink-0 place-items-center rounded-full text-xs font-semibold ring-1 transition-all duration-500 ${
-          state === 'done'
-            ? 'bg-brand text-bg ring-brand'
-            : state === 'current'
-              ? 'bg-brand/15 text-brand ring-brand/50 shadow-[0_0_16px_-2px] shadow-brand/60'
-              : 'bg-white/[0.03] text-faint ring-line'
+    <div className="rounded-xl border border-line bg-white/[0.02] p-3">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-[11px] font-medium tracking-wide text-faint uppercase">Minutes</span>
+        {!refused && (
+          <span className={`text-xs tabular-nums ${leftSeconds === 0 ? 'text-danger' : low ? 'text-warn' : 'text-muted'}`}>
+            <span className="font-semibold text-fg">{Math.ceil(leftSeconds / 60)}</span> / {Math.round(totalSeconds / 60)} left
+          </span>
+        )}
+      </div>
+      {refused ? (
+        <p className="mt-1.5 text-[11px] leading-relaxed text-muted">{refused}</p>
+      ) : (
+        <>
+          <div className="mt-2 h-1 overflow-hidden rounded-full bg-white/[0.06]">
+            <div
+              className={`h-full rounded-full transition-[width] duration-1000 ${low ? 'bg-warn' : 'bg-brand-gradient'}`}
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+          <p className="mt-2 text-[11px] leading-relaxed text-faint">
+            {leftSeconds === 0 ? 'Used up. Get more minutes on the website.' : 'Counted only while a session runs.'}
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---- session ----------------------------------------------------------------------------------------
+
+/** Which audio sources are being transcribed, while a session runs. */
+function useAudioStatus(live: boolean) {
+  const [audio, setAudio] = useState<AudioStatus | null>(null);
+  useEffect(() => {
+    if (!live) return setAudio(null);
+    p.audio.status().then(setAudio, () => {});
+    return p.audio.onStatus(setAudio);
+  }, [live]);
+  return audio;
+}
+
+function Stat({ label, value, hint, tone }: { label: string; value: React.ReactNode; hint?: React.ReactNode; tone?: 'warn' | 'danger' }) {
+  return (
+    <div className="min-w-0 px-5 py-4">
+      <p className="text-[11px] font-medium tracking-wide text-faint uppercase">{label}</p>
+      <p
+        className={`mt-1 truncate text-xl font-semibold tracking-tight tabular-nums ${
+          tone === 'danger' ? 'text-danger' : tone === 'warn' ? 'text-warn' : ''
         }`}
       >
-        {state === 'done' ? <Check size={14} strokeWidth={3} /> : n}
+        {value}
+      </p>
+      {hint && <p className="mt-0.5 truncate text-xs text-muted">{hint}</p>}
+    </div>
+  );
+}
+
+const sourceLabel: Record<SourceStatus['state'], string> = { off: 'Off', starting: 'Starting…', on: 'On', error: 'Error' };
+
+function SourceChip({ name, source }: { name: string; source?: SourceStatus }) {
+  const state = source?.enabled ? source.state : 'off';
+  const dot = { on: 'bg-brand', starting: 'bg-warn', error: 'bg-danger', off: 'bg-faint' }[state];
+  return (
+    <span className="flex items-center gap-1.5" title={source?.error ?? undefined}>
+      <span className={`size-1.5 rounded-full ${dot}`} />
+      <span className="text-fg">{name}</span>
+      <span className="text-muted">{sourceLabel[state]}</span>
+    </span>
+  );
+}
+
+/** One item of the interview context: done, or a button to add it. */
+function ReadinessItem({ done, label, detail, onAdd }: { done: boolean; label: string; detail: string; onAdd: () => void }) {
+  return (
+    <li className="flex min-w-0 items-start gap-3 px-5 py-4">
+      <span
+        className={`mt-0.5 grid size-5 shrink-0 place-items-center rounded-full ring-1 ${
+          done ? 'bg-brand/15 text-brand ring-brand/30' : 'text-faint ring-line-strong'
+        }`}
+      >
+        {done ? <Check size={11} strokeWidth={3} /> : <Plus size={11} strokeWidth={2.5} />}
       </span>
-      <span className={`text-sm transition ${state === 'todo' ? 'text-faint' : 'text-fg'}`}>{title}</span>
+      <span className="min-w-0">
+        <span className="block text-sm font-medium">{label}</span>
+        {done ? (
+          <span className="block truncate text-xs text-muted">{detail}</span>
+        ) : (
+          <button onClick={onAdd} className="text-xs text-brand hover:underline">
+            Add
+          </button>
+        )}
+      </span>
     </li>
   );
 }
 
-/** Visual on the right of the hero: a calm standby orb, or a live waveform once connected. */
-function SessionVisual({ live }: { live: boolean }) {
-  if (live) {
-    const bars = Array.from({ length: 28 }, (_, i) => 0.35 + Math.abs(Math.sin(i * 1.7)) * 0.65);
-    return (
-      <div className="flex h-28 w-56 items-center gap-[3px]" aria-hidden>
-        {bars.map((h, i) => (
-          <span
-            key={i}
-            className="wave-bar w-full rounded-full bg-gradient-to-t from-brand to-brand-2"
-            style={{ '--i': i, height: `${h * 100}%` } as React.CSSProperties}
-          />
-        ))}
-      </div>
-    );
-  }
-  return (
-    <div className="relative grid size-40 place-items-center" aria-hidden>
-      {[0, 1.2, 2.4].map((d) => (
-        <span
-          key={d}
-          className="ripple absolute inset-6 rounded-full border border-brand/30"
-          style={{ '--d': `${d}s` } as React.CSSProperties}
-        />
-      ))}
-      <span className="absolute inset-0 rounded-full border border-dashed border-line-strong" />
-      <div className="animate-float">
-        <LogoMark size={56} />
-      </div>
-    </div>
-  );
-}
+const latencyLabel = (ms: number) => (ms < 100 ? 'Excellent connection' : ms < 250 ? 'Good connection' : 'Slow connection');
 
-/** One line summarising the interview the answers are tailored to, with a shortcut to edit it. */
-function InterviewSummary({ ctx, onPrepare }: { ctx: InterviewContextState; onPrepare: () => void }) {
-  const i = ctx.interview;
-  const target = [i?.role, i?.company].filter(Boolean).join(' at ') || i?.field;
-  const round = ROUND_TYPES.find((r) => r.id === i?.roundType && r.id !== 'general')?.label;
-  if (!ctx.loaded || ctx.strength === 'none') return null;
-  return (
-    <button
-      onClick={onPrepare}
-      className="group mt-4 flex max-w-full flex-wrap items-center gap-x-3 gap-y-1.5 rounded-xl bg-white/[0.04] px-3 py-2 text-left text-xs ring-1 ring-line transition hover:ring-brand/40"
-    >
-      {target ? (
-        <span className="flex min-w-0 items-center gap-1.5 font-medium text-fg">
-          <Briefcase size={13} className="shrink-0 text-brand" />
-          <span className="truncate">{target}</span>
-          {round && <span className="text-muted">· {round}</span>}
-        </span>
-      ) : (
-        <span className="text-muted">No role set yet</span>
-      )}
-      <span className="flex items-center gap-2.5 text-muted">
-        <span className={`flex items-center gap-1 ${ctx.hasResume ? '' : 'text-faint line-through'}`}>
-          {ctx.hasResume && <Check size={11} className="text-brand" strokeWidth={3} />} Resume
-        </span>
-        <span className={`flex items-center gap-1 ${ctx.hasJobDescription ? '' : 'text-faint line-through'}`}>
-          {ctx.hasJobDescription && <Check size={11} className="text-brand" strokeWidth={3} />} Job description
-        </span>
-      </span>
-      <span className="flex items-center gap-1 text-brand opacity-70 transition group-hover:opacity-100">
-        <Pencil size={11} /> Edit
-      </span>
-    </button>
-  );
-}
-
-/** Big session timer, with the free-trial countdown beside it while it's metered. */
-function SessionClock({ elapsed, trial }: { elapsed: string; trial: TrialState | null }) {
-  const low = trial !== null && trial.leftSeconds <= 120;
-  return (
-    <div className="rise-in mt-5 flex flex-wrap items-stretch gap-3">
-      <div className="rounded-xl bg-white/[0.04] px-4 py-2.5 ring-1 ring-line">
-        <p className="text-[11px] tracking-wide text-muted uppercase">Session time</p>
-        <p className="font-mono text-2xl font-semibold tabular-nums">{elapsed}</p>
-      </div>
-      {trial && (
-        <div
-          className={`rounded-xl px-4 py-2.5 ring-1 ${
-            trial.leftSeconds === 0 ? 'bg-danger/10 ring-danger/25' : low ? 'bg-warn/10 ring-warn/25' : 'bg-white/[0.04] ring-line'
-          }`}
-        >
-          <p className="text-[11px] tracking-wide text-muted uppercase">Free minutes left</p>
-          <p
-            className={`font-mono text-2xl font-semibold tabular-nums ${
-              trial.leftSeconds === 0 ? 'text-danger' : low ? 'text-warn' : ''
-            }`}
-          >
-            {clock(trial.leftSeconds)}
-          </p>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function FreeTrial({ trial, status, style }: { trial: TrialState; status?: FreeTrialStatus; style?: React.CSSProperties }) {
-  const { totalSeconds, leftSeconds } = trial;
-  // No free minutes were granted to this account (one trial per computer and email): say why.
-  const refused = totalSeconds === 0 && status && status !== 'granted' ? freeTrialMessage(status) : null;
-  if (refused) {
-    return (
-      <Panel title="Session minutes" icon={Timer} className="rise-in" style={style}>
-        <p className="text-sm leading-relaxed text-muted">{refused}</p>
-        <p className="mt-3 text-xs text-faint">Minutes and plans are on the website, under Plans &amp; billing.</p>
-      </Panel>
-    );
-  }
-  const pct = totalSeconds ? (leftSeconds / totalSeconds) * 100 : 0;
-  return (
-    <Panel title="Free trial" icon={Timer} className="rise-in" style={style}>
-      <p className="flex items-baseline gap-2">
-        <span className="text-3xl font-semibold tracking-tight tabular-nums">{Math.ceil(leftSeconds / 60)}</span>
-        <span className="text-sm text-muted">of {Math.round(totalSeconds / 60)} minutes left</span>
-      </p>
-      <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/[0.06]">
-        <div
-          className={`h-full rounded-full transition-[width] duration-1000 ${leftSeconds === 0 ? '' : pct <= 20 ? 'bg-warn' : 'bg-brand-gradient'}`}
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-      <p className="mt-3 text-xs leading-relaxed text-faint">
-        {leftSeconds === 0
-          ? 'Your free minutes are used up. Upgrade your plan to keep using live sessions.'
-          : 'Minutes count only while a session is running, including warm-up questions. Preparing your interview is always free.'}
-      </p>
-    </Panel>
-  );
-}
-
-function SessionHero({
-  name,
+/**
+ * The one place to run an interview: what it's for, its state, the main action and, while live,
+ * the numbers that matter (time, minutes, latency, what's being heard).
+ */
+function SessionCard({
   status,
   elapsed,
   trial,
   ctx,
   onPrepare,
 }: {
-  name: string;
   status: LiveStatus;
   elapsed: string | null;
   trial: TrialState | null;
@@ -342,103 +279,142 @@ function SessionHero({
   const live = status.state === 'connected';
   const pending = status.state === 'connecting' || status.state === 'reconnecting';
   const prepared = ctx.strength !== 'none';
+  const audio = useAudioStatus(live);
+  const outOfMinutes = trial?.leftSeconds === 0;
 
-  const copy = live
-    ? {
-        title: "You're live",
-        body: `Join your call, then press ${MOD} \\ to bring up the overlay. This window hides while the overlay is open; bring it back with ${MOD} ${isMac ? '⌥' : 'Alt'} F or the overlay's ⋮ menu → Open Friday AI.`,
-      }
+  const i = ctx.interview;
+  const target = [i?.role, i?.company].filter(Boolean).join(' · ') || i?.field || '';
+  const round = ROUND_TYPES.find((r) => r.id === i?.roundType && r.id !== 'general')?.label;
+
+  const title = live ? 'Session is live' : pending ? (status.state === 'reconnecting' ? 'Reconnecting…' : 'Connecting…') : 'Ready when you are';
+  const body = live
+    ? `Join your call and press ${MOD} \\ to show the overlay. This window steps aside while it's open.`
     : pending
-      ? { title: 'Connecting…', body: 'Setting up a secure live session. This usually takes a second.' }
-      : prepared || !ctx.loaded
-        ? {
-            title: 'Ready for your interview?',
-            body: 'Start a session a few minutes before your call. Friday AI will listen for questions and answer on a private overlay.',
-          }
-        : {
-            title: "Let's get you prepared",
-            body: "Add your resume and the job you're interviewing for, so answers sound like you and use real examples from your experience.",
-          };
+      ? 'Setting up a secure live session. This usually takes a second.'
+      : 'Start a few minutes before your call. Friday AI listens for questions and answers on a private overlay.';
+
+  const lowMinutes = trial !== null && trial.leftSeconds <= 120;
+  const rtt = status.rttMs;
 
   return (
     <section
-      className={`rise-in relative isolate overflow-hidden rounded-[1.5rem] border p-7 transition-colors duration-700 ${
-        live ? 'conic-border border-transparent' : 'border-line'
+      className={`rise-in relative overflow-hidden rounded-2xl border bg-surface/70 transition-colors duration-500 ${
+        live ? 'border-brand/30' : 'border-line'
       }`}
       style={rise(0)}
     >
-      <div className="absolute inset-0 -z-20 bg-surface" />
-      <div className={`aurora -z-10 transition-opacity duration-1000 ${live ? 'opacity-100' : 'opacity-50'}`} aria-hidden>
-        <span />
-        <span />
-        <span />
-      </div>
-      <div className="bg-grid absolute inset-0 -z-10" aria-hidden />
-
-      <div className="flex items-center gap-8">
-        <div className="min-w-0 flex-1">
-          <p className="text-sm text-muted">
-            {greeting()}, <span className="text-fg capitalize">{name}</span>
-          </p>
-          <h1 key={copy.title} className="rise-in mt-1.5 text-3xl font-semibold tracking-[-0.03em]">
-            {live ? <span className="text-gradient">{copy.title}</span> : copy.title}
-          </h1>
-          <p className="mt-2 max-w-lg text-sm leading-relaxed text-muted">{copy.body}</p>
-          {status.error && !live && <p className="mt-2 text-sm text-danger">{status.error}</p>}
-          <InterviewSummary ctx={ctx} onPrepare={onPrepare} />
-
-          <div className="mt-6 flex flex-wrap items-center gap-2.5">
-            {status.state === 'disconnected' && !prepared && ctx.loaded ? (
-              <>
-                <button onClick={onPrepare} className="btn btn-primary btn-shine px-6 py-3 text-[15px]">
-                  <ClipboardList size={17} /> Prepare interview
-                </button>
-                <button onClick={() => p.live.connect()} className="btn btn-secondary px-5 py-3">
-                  <Play size={14} fill="currentColor" /> Start without it
-                </button>
-              </>
-            ) : status.state === 'disconnected' ? (
-              <button onClick={() => p.live.connect()} className="btn btn-primary btn-shine px-6 py-3 text-[15px]">
-                <Play size={16} fill="currentColor" /> Start session
-              </button>
-            ) : (
-              <>
-                <button
-                  onClick={() => p.overlay.toggle()}
-                  disabled={!live}
-                  className="btn btn-primary btn-shine px-6 py-3 text-[15px]"
-                >
-                  {pending ? <Spinner /> : <PanelTopOpen size={17} />} Show overlay
-                </button>
-                <button onClick={() => p.live.disconnect()} className="btn btn-secondary px-5 py-3">
-                  <Square size={14} fill="currentColor" /> End session
-                </button>
-              </>
-            )}
-            {live && status.rttMs !== null && (
-              <span className="ml-1 flex items-center gap-1 font-mono text-xs text-muted">
-                <Zap size={11} className="text-brand" /> {status.rttMs} ms
+      {/* A thin brand line along the top edge while live. */}
+      <div
+        className={`bg-brand-gradient absolute inset-x-0 top-0 h-px transition-opacity duration-500 ${live ? 'opacity-100' : 'opacity-0'}`}
+        aria-hidden
+      />
+      <div className="flex flex-wrap items-start gap-x-6 gap-y-5 p-6">
+        <div className="min-w-0 flex-1 basis-80">
+          <p className="flex items-center gap-2 text-xs font-medium text-muted">
+            <StatusDot state={status.state} />
+            {live ? (
+              <span className="text-brand">
+                Live <span className="font-mono tabular-nums">{elapsed}</span>
               </span>
+            ) : pending ? (
+              <span className="text-warn">Connecting</span>
+            ) : (
+              'Not in a session'
             )}
-          </div>
-          {elapsed && <SessionClock elapsed={elapsed} trial={trial} />}
-          {!elapsed && trial?.leftSeconds === 0 && (
-            <p className="mt-3 text-sm text-warn">
-              Your free trial minutes are used up. Upgrade your plan to keep using live sessions.
-            </p>
+          </p>
+          <h2 key={title} className="rise-in mt-2 text-2xl font-semibold tracking-[-0.025em]">
+            {title}
+          </h2>
+          <p className="mt-1.5 max-w-xl text-sm leading-relaxed text-muted">{body}</p>
+          {target && (
+            <button
+              onClick={onPrepare}
+              className="group mt-3 inline-flex max-w-full items-center gap-2 text-sm text-fg transition hover:text-brand"
+              title="Edit interview"
+            >
+              <Briefcase size={14} className="shrink-0 text-muted group-hover:text-brand" />
+              <span className="truncate font-medium">{target}</span>
+              {round && <span className="shrink-0 text-muted">· {round}</span>}
+              <Pencil size={12} className="shrink-0 text-faint opacity-0 transition group-hover:opacity-100" />
+            </button>
           )}
-
-          <ol className="mt-7 flex flex-wrap gap-x-6 gap-y-3 border-t border-line pt-5">
-            <Step n={1} title="Signed in" state="done" />
-            <Step n={2} title="Prepare interview" state={prepared ? 'done' : live ? 'todo' : 'current'} />
-            <Step n={3} title="Start session" state={live ? 'done' : prepared ? 'current' : 'todo'} />
-            <Step n={4} title="Open overlay in your call" state={live ? 'current' : 'todo'} />
-          </ol>
+          {status.error && !live && <p className="mt-3 text-sm text-danger">{status.error}</p>}
+          {!live && outOfMinutes && (
+            <p className="mt-3 text-sm text-warn">Your minutes are used up. Get more on the website to start a session.</p>
+          )}
         </div>
-        <div className="hidden shrink-0 md:block">
-          <SessionVisual live={live} />
+
+        <div className="flex shrink-0 items-center gap-2">
+          {status.state === 'disconnected' ? (
+            <>
+              {!prepared && ctx.loaded && (
+                <button onClick={onPrepare} className="btn btn-secondary px-4 py-2.5">
+                  <ClipboardList size={15} /> Prepare first
+                </button>
+              )}
+              <button onClick={() => p.live.connect()} className="btn btn-primary btn-shine px-5 py-2.5">
+                <Play size={14} fill="currentColor" /> Start session
+              </button>
+            </>
+          ) : (
+            <>
+              <button onClick={() => p.live.disconnect()} className="btn btn-secondary px-4 py-2.5">
+                <Square size={12} fill="currentColor" /> End
+              </button>
+              <button onClick={() => p.overlay.show()} disabled={!live} className="btn btn-primary btn-shine px-5 py-2.5">
+                {pending ? <Spinner /> : <PanelTopOpen size={16} />} Show overlay
+              </button>
+            </>
+          )}
         </div>
       </div>
+
+      {live || pending ? (
+        <div className="grid grid-cols-2 divide-line border-t border-line @2xl:grid-cols-4 @2xl:divide-x">
+          <Stat label="Session time" value={elapsed ?? '00:00'} hint={pending ? 'Reconnecting keeps the clock' : 'Since you started'} />
+          <Stat
+            label="Minutes left"
+            value={trial ? clock(trial.leftSeconds) : 'Unlimited'}
+            hint={trial ? 'Counting down while live' : 'On your plan'}
+            tone={trial ? (trial.leftSeconds === 0 ? 'danger' : lowMinutes ? 'warn' : undefined) : undefined}
+          />
+          <Stat
+            label="Latency"
+            value={rtt !== null ? `${rtt} ms` : '—'}
+            hint={rtt !== null ? latencyLabel(rtt) : 'Measuring…'}
+            tone={rtt !== null && rtt >= 250 ? 'warn' : undefined}
+          />
+          <div className="min-w-0 px-5 py-4">
+            <p className="text-[11px] font-medium tracking-wide text-faint uppercase">Listening</p>
+            <div className="mt-2 space-y-1 text-xs">
+              <SourceChip name="Interviewer" source={audio?.interviewer} />
+              <SourceChip name="Your mic" source={audio?.you} />
+            </div>
+            <p className="mt-1 truncate text-xs text-muted">{audio?.autoAnswer === false ? 'Auto-answer off' : 'Auto-answer on'}</p>
+          </div>
+        </div>
+      ) : (
+        ctx.loaded && (
+          <div className="border-t border-line">
+            <div className="flex items-center justify-between px-5 pt-4">
+              <p className="text-[11px] font-medium tracking-wide text-faint uppercase">Interview context</p>
+              <button onClick={onPrepare} className="text-xs text-muted transition hover:text-fg">
+                {ctx.strength === 'strong' ? 'Edit' : 'Complete setup'} →
+              </button>
+            </div>
+            <ul className="grid @2xl:grid-cols-3">
+              <ReadinessItem done={ctx.hasResume} label="Resume" detail={ctx.resume?.fileName ?? ''} onAdd={onPrepare} />
+              <ReadinessItem done={ctx.hasTarget} label="Role & company" detail={target} onAdd={onPrepare} />
+              <ReadinessItem
+                done={ctx.hasJobDescription}
+                label="Job description"
+                detail="Answers use its must-haves"
+                onAdd={onPrepare}
+              />
+            </ul>
+          </div>
+        )
+      )}
     </section>
   );
 }
@@ -483,6 +459,11 @@ function WarmUp({ live, ctx, style }: { live: boolean; ctx: InterviewContextStat
     <Panel
       title="Warm up"
       icon={Sparkles}
+      description={
+        ctx.hasResume
+          ? 'Ask a practice question and see how Friday AI answers with your own experience.'
+          : 'Ask a practice question and see how answers will look in your interview.'
+      }
       className="rise-in flex flex-col"
       style={style}
       action={
@@ -493,18 +474,12 @@ function WarmUp({ live, ctx, style }: { live: boolean; ctx: InterviewContextStat
         )
       }
     >
-      <p className="-mt-1 mb-4 text-sm text-muted">
-        {ctx.hasResume
-          ? 'Try a practice question to hear how Friday AI answers with your own experience.'
-          : 'Try a practice question to see how answers will look during your interview.'}
-      </p>
-
       <div className="flex flex-wrap gap-2">
         {sampleQuestions(ctx.interview).map((q) => (
           <button
             key={q}
             onClick={() => ask(q)}
-            className="rounded-full bg-white/[0.04] px-3 py-1.5 text-left text-xs text-muted ring-1 ring-line transition hover:bg-brand/10 hover:text-brand hover:ring-brand/30"
+            className="rounded-lg bg-white/[0.03] px-3 py-1.5 text-left text-xs text-muted ring-1 ring-line transition hover:bg-white/[0.06] hover:text-fg"
           >
             {q}
           </button>
@@ -583,8 +558,13 @@ function WarmUp({ live, ctx, style }: { live: boolean; ctx: InterviewContextStat
           </div>
         </div>
       ) : (
-        <div className="mt-4 grid flex-1 place-items-center rounded-xl border border-dashed border-line py-8 text-center text-xs text-faint">
-          {live ? 'Pick a question above to see an answer stream in.' : 'Answers appear here once a session is running.'}
+        <div className="mt-4 grid flex-1 place-items-center rounded-xl border border-dashed border-line py-10 text-center">
+          <div>
+            <MessageSquare size={18} className="mx-auto text-faint" />
+            <p className="mt-2 text-xs text-muted">
+              {live ? 'Pick a question above to see an answer stream in.' : 'Answers appear here once a session is running.'}
+            </p>
+          </div>
         </div>
       )}
     </Panel>
@@ -595,20 +575,19 @@ function WarmUp({ live, ctx, style }: { live: boolean; ctx: InterviewContextStat
 
 function Hotkeys({ style }: { style?: React.CSSProperties }) {
   return (
-    <Panel title="Hotkeys" icon={Keyboard} className="rise-in" style={style}>
-      <ul className="space-y-1">
+    <Panel title="Hotkeys" icon={Keyboard} description="Work from any app, even with your meeting in focus." className="rise-in" style={style}>
+      <ul className="-mx-2 divide-y divide-line">
         {HOTKEYS.map(({ icon: Icon, label, keys }) => (
-          <li key={label} className="-mx-2 flex items-center gap-3 rounded-lg px-2 py-2 transition hover:bg-white/[0.03]">
-            <Icon size={15} className="shrink-0 text-muted" />
-            <span className="flex-1 text-sm">{label}</span>
+          <li key={label} className="flex items-center gap-3 px-2 py-2.5">
+            <Icon size={14} className="shrink-0 text-faint" />
+            <span className="flex-1 text-[13px]">{label}</span>
             <Keys keys={keys} />
           </li>
         ))}
       </ul>
-      <p className="mt-3 text-xs leading-relaxed text-faint">
-        They work from any app, even while your meeting is in focus.
-        {p.platform === 'linux' && ' On Wayland, global hotkeys may be blocked; use the buttons instead.'}
-      </p>
+      {p.platform === 'linux' && (
+        <p className="mt-3 text-xs leading-relaxed text-faint">On Wayland, global hotkeys may be blocked; use the buttons instead.</p>
+      )}
     </Panel>
   );
 }
@@ -631,7 +610,7 @@ function SystemStatus() {
     <div ref={ref} className="relative">
       <button
         onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-2 rounded-full px-2.5 py-1 text-xs text-muted transition hover:bg-white/5 hover:text-fg"
+        className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-muted transition hover:bg-white/[0.04] hover:text-fg"
       >
         <span className={`size-1.5 rounded-full ${!health && !error ? 'bg-faint' : ok ? 'bg-brand' : 'bg-danger'}`} />
         {label}
@@ -685,7 +664,8 @@ export function Home({ email }: { email: string }) {
   useEffect(() => {
     mainRef.current?.scrollTo({ top: 0 });
   }, [view]);
-  const name = email.split('@')[0].split(/[._+-]/)[0];
+  const first = email.split('@')[0].split(/[._+-]/)[0];
+  const name = first.charAt(0).toUpperCase() + first.slice(1);
 
   useEffect(() => {
     p.live.status().then(setStatus);
@@ -693,71 +673,84 @@ export function Home({ email }: { email: string }) {
   }, []);
 
   const tabs = [
-    { id: 'home' as const, label: 'Home', icon: HomeIcon },
-    { id: 'prepare' as const, label: 'Prepare', icon: ClipboardList },
+    { id: 'home' as const, label: 'Home', icon: HomeIcon, hint: null },
+    { id: 'prepare' as const, label: 'Prepare', icon: ClipboardList, hint: ctx.loaded && ctx.strength !== 'strong' ? 'Add more context' : null },
   ];
 
   return (
-    <div className="relative flex h-full flex-col">
-      <div className="grain" aria-hidden />
+    <div className="flex h-full">
+      <aside className="flex w-56 shrink-0 flex-col border-r border-line bg-surface/40">
+        <div className="flex h-14 items-center gap-2.5 px-4">
+          <LogoMark size={24} />
+          <span className="font-semibold tracking-tight">Friday AI</span>
+        </div>
 
-      <header className="flex h-14 shrink-0 items-center gap-3 border-b border-line bg-bg/70 px-5 backdrop-blur-xl">
-        <LogoMark size={26} />
-        <span className="font-semibold tracking-tight">Friday AI</span>
-        <nav className="ml-4 flex items-center gap-1 rounded-xl bg-white/[0.03] p-1 ring-1 ring-line">
-          {tabs.map(({ id, label, icon: Icon }) => (
+        <nav className="space-y-0.5 px-2.5 pt-2">
+          {tabs.map(({ id, label, icon: Icon, hint }) => (
             <button
               key={id}
               onClick={() => setView(id)}
               aria-current={view === id ? 'page' : undefined}
-              className={`relative flex items-center gap-1.5 rounded-lg px-3 py-1 text-sm transition ${
-                view === id ? 'bg-white/[0.08] text-fg shadow-sm' : 'text-muted hover:text-fg'
+              className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition ${
+                view === id ? 'bg-white/[0.07] font-medium text-fg' : 'text-muted hover:bg-white/[0.03] hover:text-fg'
               }`}
             >
-              <Icon size={14} /> {label}
-              {id === 'prepare' && ctx.loaded && ctx.strength !== 'strong' && (
-                <span className="size-1.5 rounded-full bg-brand shadow-[0_0_6px_1px] shadow-brand/60" title="Add more context" />
-              )}
+              <Icon size={15} className={view === id ? 'text-brand' : ''} /> {label}
+              {hint && <span className="ml-auto size-1.5 rounded-full bg-brand" title={hint} />}
             </button>
           ))}
         </nav>
-        <div className="ml-2">
-          <SessionPill status={status} elapsed={elapsed} />
-        </div>
-        <div className="ml-auto flex items-center gap-2">
-          <button onClick={() => p.overlay.toggle()} className="btn btn-ghost !py-1.5" title={`Show or hide the overlay (${MOD} \\)`}>
-            <PanelTopOpen size={15} /> Overlay <Kbd>{`${MOD} \\`}</Kbd>
-          </button>
-          <ProfileMenu email={email} me={me} />
-        </div>
-      </header>
 
-      <main ref={mainRef} className="flex-1 overflow-y-auto">
-        {view === 'prepare' ? (
-          <div key="prepare" className="mx-auto max-w-5xl px-6 pt-6">
-            <Prepare ctx={ctx} onDone={startInterview} />
+        <div className="mx-2.5 mt-4 border-t border-line pt-4">
+          <p className="px-2.5 text-[11px] font-medium tracking-wide text-faint uppercase">Session</p>
+          <button
+            onClick={() => (live ? p.overlay.toggle() : setView('home'))}
+            className="mt-1.5 flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm text-muted transition hover:bg-white/[0.03] hover:text-fg"
+            title={live ? `Show or hide the overlay (${MOD} \\)` : undefined}
+          >
+            <StatusDot state={status.state} />
+            <span className="min-w-0 flex-1 truncate">
+              {live ? 'Live' : status.state === 'disconnected' ? 'Not started' : 'Connecting…'}
+            </span>
+            {elapsed && <span className="font-mono text-xs tabular-nums">{elapsed}</span>}
+          </button>
+        </div>
+
+        <div className="mt-auto space-y-2 p-2.5">
+          <MinutesMeter trial={trial} status={me?.trialStatus} />
+          <SystemStatus />
+          <div className="border-t border-line pt-2">
+            <AccountMenu email={email} me={me} />
           </div>
-        ) : (
-          <div key="home" className="mx-auto max-w-5xl space-y-5 p-6">
-            <SessionHero name={name} status={status} elapsed={elapsed} trial={trial} ctx={ctx} onPrepare={() => setView('prepare')} />
-            <div className="grid gap-5 lg:grid-cols-[1.45fr_1fr]">
-              <WarmUp live={live} ctx={ctx} style={rise(2)} />
-              <div className="space-y-5">
-                {trial && <FreeTrial trial={trial} status={me?.trialStatus} style={rise(3)} />}
-                <Hotkeys style={rise(3)} />
+        </div>
+      </aside>
+
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="flex h-14 shrink-0 items-center gap-3 border-b border-line px-6">
+          <h1 className="text-sm font-semibold">{view === 'home' ? `${greeting()}, ${name}` : 'Prepare'}</h1>
+          <div className="ml-auto flex items-center gap-2">
+            <button onClick={() => p.overlay.toggle()} className="btn btn-ghost !py-1.5 text-sm" title={`Show or hide the overlay (${MOD} \\)`}>
+              <PanelTopOpen size={15} /> Overlay <Kbd>{`${MOD} \\`}</Kbd>
+            </button>
+          </div>
+        </header>
+
+        <main ref={mainRef} className="@container flex-1 overflow-y-auto">
+          {view === 'prepare' ? (
+            <div key="prepare" className="mx-auto max-w-5xl px-6 pt-6">
+              <Prepare ctx={ctx} onDone={startInterview} />
+            </div>
+          ) : (
+            <div key="home" className="mx-auto max-w-6xl space-y-5 p-6">
+              <SessionCard status={status} elapsed={elapsed} trial={trial} ctx={ctx} onPrepare={() => setView('prepare')} />
+              <div className="grid items-start gap-5 @4xl:grid-cols-[minmax(0,1fr)_20rem]">
+                <WarmUp live={live} ctx={ctx} style={rise(1)} />
+                <Hotkeys style={rise(2)} />
               </div>
             </div>
-          </div>
-        )}
-      </main>
-
-      <footer className="flex h-10 shrink-0 items-center gap-3 border-t border-line px-4 text-xs text-faint">
-        <SystemStatus />
-        <span className="ml-auto">
-          {me && <span className="capitalize">{me.plan} plan</span>}
-          {trial && <span> · {Math.ceil(trial.leftSeconds / 60)} of {Math.round(trial.totalSeconds / 60)} free min left</span>}
-        </span>
-      </footer>
+          )}
+        </main>
+      </div>
     </div>
   );
 }

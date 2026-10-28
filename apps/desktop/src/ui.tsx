@@ -31,10 +31,11 @@ export function LogoMark({ size = 28 }: { size?: number }) {
   );
 }
 
-/** Glass card with an icon header, used by every main-window section. */
+/** Card with an icon header, used by every main-window section. */
 export function Panel({
   title,
   icon: Icon,
+  description,
   action,
   children,
   className = '',
@@ -42,19 +43,24 @@ export function Panel({
 }: {
   title: string;
   icon: LucideIcon;
+  /** One line under the title saying what the section is for. */
+  description?: React.ReactNode;
   action?: React.ReactNode;
   children: React.ReactNode;
   className?: string;
   style?: React.CSSProperties;
 }) {
   return (
-    <section style={style} className={`glass rounded-[var(--radius-card)] p-5 ${className}`}>
-      <header className="mb-4 flex items-center gap-2.5">
-        <span className="grid size-8 place-items-center rounded-lg bg-gradient-to-br from-brand/20 to-accent/10 text-brand ring-1 ring-brand/20">
-          <Icon size={16} />
+    <section style={style} className={`rounded-2xl border border-line bg-surface/70 p-5 ${className}`}>
+      <header className="mb-4 flex items-start gap-3">
+        <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-white/[0.04] text-muted ring-1 ring-line">
+          <Icon size={14} />
         </span>
-        <h2 className="text-sm font-semibold">{title}</h2>
-        <div className="ml-auto">{action}</div>
+        <div className="min-w-0 flex-1">
+          <h2 className="text-sm leading-7 font-semibold">{title}</h2>
+          {description && <p className="text-xs leading-relaxed text-muted">{description}</p>}
+        </div>
+        {action && <div className="shrink-0">{action}</div>}
       </header>
       {children}
     </section>
