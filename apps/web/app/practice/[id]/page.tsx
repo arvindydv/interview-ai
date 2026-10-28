@@ -170,7 +170,7 @@ function Room({ session, onChange }: { session: PracticeSession; onChange: (s: P
   const q = session.questions[index];
   const isLast = index === session.questions.length - 1;
 
-  const voice = useInterviewerVoice();
+  const voice = useInterviewerVoice(session.id, session.questions);
   const dictation = useDictation();
   const [voiceOn, setVoiceOn] = useState(true);
   const [text, setText] = useState('');
@@ -242,18 +242,22 @@ function Room({ session, onChange }: { session: PracticeSession; onChange: (s: P
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [live]);
 
-  // Ask each new question out loud.
+  // A new question starts with an empty answer.
   useEffect(() => {
     setText('');
     setStartedAt(null);
     setMode('text');
     base.current = '';
-    if (q && voiceOn && voice.supported) {
-      const t = setTimeout(() => voice.speak(q.question), 350);
-      return () => clearTimeout(t);
-    }
+  }, [index]);
+
+  // Ask each new question out loud (and the current one when voice is switched back on).
+  useEffect(() => {
+    if (!q || !voiceOn) return;
+    // A beat after the question card animates in.
+    const t = setTimeout(() => voice.speak(index), 250);
+    return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [index, voice.supported]);
+  }, [index, voiceOn]);
 
   // Live transcript goes after whatever was already in the box.
   useEffect(() => {
@@ -403,10 +407,17 @@ function Room({ session, onChange }: { session: PracticeSession; onChange: (s: P
             </p>
             <h1 className="mt-2 text-xl leading-snug font-medium tracking-tight text-balance sm:text-2xl">{q.question}</h1>
           </div>
-          {voice.supported && (
-            <button onClick={() => voice.speak(q.question)} className="btn btn-ghost shrink-0 !px-2.5 !py-1.5 text-xs" aria-label="Hear the question again">
-              <Volume2 size={15} /> Replay
+          {voice.supported && voiceOn && voice.blocked ? (
+            // The browser won't play sound until the page is clicked (e.g. after a reload).
+            <button onClick={() => voice.speak(index)} className="btn btn-primary shrink-0 !py-2 text-sm animate-fade-up">
+              <Volume2 size={16} /> Play question
             </button>
+          ) : (
+            voice.supported && (
+              <button onClick={() => voice.speak(index)} className="btn btn-ghost shrink-0 !px-2.5 !py-1.5 text-xs" aria-label="Hear the question again">
+                <Volume2 size={15} /> Replay
+              </button>
+            )
           )}
         </div>
       </section>

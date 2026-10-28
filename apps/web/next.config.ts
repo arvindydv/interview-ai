@@ -31,6 +31,8 @@ const csp = [
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob:",
   "font-src 'self' data:",
+  // Practice questions are read aloud from audio fetched with the user's token and played as a blob.
+  "media-src 'self' blob:",
   `connect-src ${connectSources()} ${RAZORPAY_CONNECT}`,
   `frame-src ${RAZORPAY_FRAMES} ${TURNSTILE}`,
   "frame-ancestors 'none'",

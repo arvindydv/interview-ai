@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
-  Check, Copy, CreditCard, Database, Download, History, KeyRound, Laptop, LogOut, Monitor, Palette, ShieldCheck, Trash2,
+  Check, CreditCard, Database, Download, History, KeyRound, Laptop, LogOut, Monitor, Palette, ShieldCheck, Trash2,
   TriangleAlert, User, UserX, type LucideIcon,
 } from 'lucide-react';
 import { HISTORY_RETENTIONS, planLabel, type AccountSettings, type HistoryRetention, type Me } from '@parakeet/shared';
@@ -128,7 +128,7 @@ export default function SettingsPage() {
 
   const deleteAccountHref = `mailto:${company.email}?${new URLSearchParams({
     subject: 'Delete my Friday AI account',
-    body: `Please delete my Friday AI account and all data linked to it.\n\nAccount email: ${email}\nUser ID: ${me?.id ?? ''}`,
+    body: `Please delete my Friday AI account and all data linked to it.\n\nAccount email: ${email}`,
   })
     .toString()
     .replace(/\+/g, '%20')}`;
@@ -187,9 +187,6 @@ export default function SettingsPage() {
                     </span>
                   </Row>
                   <Row label="Member since">{new Date(me.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}</Row>
-                  <Row label="User ID">
-                    <CopyText text={me.id} />
-                  </Row>
                 </dl>
                 <button
                   onClick={() => supabase().auth.signOut().then(() => router.replace('/'))}
@@ -419,25 +416,6 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
       <dt className="text-muted">{label}</dt>
       <dd className="min-w-0">{children}</dd>
     </div>
-  );
-}
-
-function CopyText({ text }: { text: string }) {
-  const [done, setDone] = useState(false);
-  return (
-    <button
-      onClick={() =>
-        navigator.clipboard.writeText(text).then(() => {
-          setDone(true);
-          setTimeout(() => setDone(false), 1500);
-        })
-      }
-      className="inline-flex max-w-full items-center gap-1.5 truncate font-mono text-xs text-muted hover:text-fg"
-      title="Copy"
-    >
-      <span className="truncate">{text}</span>
-      {done ? <Check size={12} className="shrink-0 text-brand" /> : <Copy size={12} className="shrink-0" />}
-    </button>
   );
 }
 

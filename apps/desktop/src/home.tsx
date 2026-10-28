@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  AlertTriangle, AppWindow, Briefcase, Camera, Check, ChevronDown, ClipboardList, Copy, EyeOff, Flag, Home as HomeIcon, Keyboard, LogOut,
-  MessageSquare, PanelTopOpen, Pencil, Play, Power, RefreshCw, SendHorizontal, ShieldAlert, ShieldCheck, Sparkles, Square,
+  AppWindow, Briefcase, Camera, Check, ChevronDown, ClipboardList, Copy, EyeOff, Flag, Home as HomeIcon, Keyboard, LogOut,
+  MessageSquare, PanelTopOpen, Pencil, Play, Power, RefreshCw, SendHorizontal, Sparkles, Square,
   Timer, Zap,
 } from 'lucide-react';
 import { ROUND_TYPES, freeTrialMessage, trialLeft, type FreeTrialStatus, type HealthReport, type Interview, type Me } from '@parakeet/shared';
-import type { LiveStatus, Protection } from './types';
+import type { LiveStatus } from './types';
 import { parakeet as p } from './bridge';
 import { useLiveAnswer } from './useLiveAnswer';
 import { renderMarkdown } from './overlay/markdown';
@@ -613,39 +613,6 @@ function Hotkeys({ style }: { style?: React.CSSProperties }) {
   );
 }
 
-function Privacy({ style }: { style?: React.CSSProperties }) {
-  const [protection, setProtection] = useState<Protection | null>(null);
-  useEffect(() => {
-    p.app.protection().then(setProtection, () => {});
-  }, []);
-  const tone = !protection
-    ? null
-    : protection.level === 'hidden'
-      ? { icon: ShieldCheck, title: 'Hidden from screen share', cls: 'text-brand bg-brand/10 ring-brand/25' }
-      : protection.level === 'not_guaranteed'
-        ? { icon: ShieldAlert, title: 'Not guaranteed on this system', cls: 'text-warn bg-warn/10 ring-warn/25' }
-        : { icon: AlertTriangle, title: 'Visible when you share your screen', cls: 'text-danger bg-danger/10 ring-danger/25' };
-  return (
-    <Panel title="Screen-share privacy" icon={ShieldCheck} className="rise-in" style={style}>
-      {!tone || !protection ? (
-        <Spinner className="text-muted" />
-      ) : (
-        <>
-          <div className={`flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm font-medium ring-1 ${tone.cls}`}>
-            <tone.icon size={16} className="shrink-0" /> {tone.title}
-          </div>
-          <p className="mt-3 text-xs leading-relaxed text-muted">{protection.detail}</p>
-          {protection.level !== 'hidden' && (
-            <p className="mt-2 text-xs leading-relaxed text-faint">
-              Tip: share a single window instead of your whole screen.
-            </p>
-          )}
-        </>
-      )}
-    </Panel>
-  );
-}
-
 function SystemStatus() {
   const [health, setHealth] = useState<HealthReport | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -778,7 +745,6 @@ export function Home({ email }: { email: string }) {
               <div className="space-y-5">
                 {trial && <FreeTrial trial={trial} status={me?.trialStatus} style={rise(3)} />}
                 <Hotkeys style={rise(3)} />
-                <Privacy style={rise(4)} />
               </div>
             </div>
           </div>

@@ -1,6 +1,7 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { PracticeQuestionKind, TrialBalance } from '@parakeet/shared';
+import { ApiError, apiBlob } from './api';
 
 /** Seconds of session minutes left, or null when the plan isn't metered (unlimited). */
 export const secondsLeft = (trial: TrialBalance | null | undefined) =>
@@ -140,33 +141,127 @@ function pickVoice() {
   return voices.find((v) => v.lang.toLowerCase() === lang) ?? voices.find((v) => /natural|neural|google/i.test(v.name)) ?? voices[0];
 }
 
-/** Reads questions aloud with the browser's own text-to-speech. */
-export function useInterviewerVoice() {
-  const [supported, setSupported] = useState(false);
+/** Chrome loads its voice list after the page; asking before that finds none. */
+function voicesReady(): Promise<void> {
+  if (speechSynthesis.getVoices().length) return Promise.resolve();
+  return new Promise((resolve) => {
+    const done = () => resolve();
+    speechSynthesis.addEventListener('voiceschanged', done, { once: true });
+    setTimeout(done, 1000);
+  });
+}
+
+/**
+ * Reads each question aloud. Uses the API's voice (Deepgram Aura), which sounds natural and works
+ * in every browser, fetching the next question's clip ahead so it starts the moment it's needed.
+ * Falls back to the browser's own text-to-speech when the server has no voice set up.
+ *
+ * Browsers refuse to play sound before the visitor has clicked something on the page (e.g. after a
+ * reload): `blocked` is then true, and calling `speak` again from a click plays it.
+ */
+export function useInterviewerVoice(sessionId: string, questions: { question: string }[]) {
   const [speaking, setSpeaking] = useState(false);
+  const [blocked, setBlocked] = useState(false);
+  const [supported, setSupported] = useState(true);
+  const audio = useRef<HTMLAudioElement | null>(null);
+  const clips = useRef(new Map<number, Promise<string | null>>());
+  const server = useRef(true);
+  // The question that should be playing; a clip that arrives after the candidate moved on is dropped.
+  const wanted = useRef<number | null>(null);
+
   useEffect(() => {
-    setSupported(typeof window !== 'undefined' && 'speechSynthesis' in window);
+    const a = new Audio();
+    a.preload = 'auto';
+    a.onplaying = () => setSpeaking(true);
+    a.onended = a.onpause = a.onerror = () => setSpeaking(false);
+    audio.current = a;
     return () => {
-      if (typeof window !== 'undefined' && 'speechSynthesis' in window) speechSynthesis.cancel();
+      a.pause();
+      // Forget the clips as well as freeing them, so nothing plays a revoked URL if this remounts.
+      const owned = clips.current;
+      clips.current = new Map();
+      for (const clip of owned.values()) clip.then((url) => url && URL.revokeObjectURL(url));
+      if ('speechSynthesis' in window) speechSynthesis.cancel();
     };
   }, []);
 
-  const speak = useCallback((text: string) => {
+  const clip = useCallback(
+    (i: number): Promise<string | null> => {
+      if (!server.current || i < 0 || i >= questions.length) return Promise.resolve(null);
+      let pending = clips.current.get(i);
+      if (!pending) {
+        pending = apiBlob(`/v1/practice/${sessionId}/questions/${i}/speech`).then(
+          (blob) => URL.createObjectURL(blob),
+          (e) => {
+            // 503: no voice on this server, stop asking. Anything else: try again next time.
+            if (e instanceof ApiError && e.status === 503) server.current = false;
+            clips.current.delete(i);
+            if (!server.current && !('speechSynthesis' in window)) setSupported(false);
+            return null;
+          },
+        );
+        clips.current.set(i, pending);
+      }
+      return pending;
+    },
+    [sessionId, questions.length],
+  );
+
+  const browserSpeak = useCallback(async (i: number, text: string) => {
     if (!('speechSynthesis' in window)) return;
+    await voicesReady();
+    if (wanted.current !== i) return;
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
     const voice = pickVoice();
     if (voice) u.voice = voice;
-    u.rate = 1;
     u.onstart = () => setSpeaking(true);
-    u.onend = u.onerror = () => setSpeaking(false);
+    u.onend = () => setSpeaking(false);
+    u.onerror = (e) => {
+      setSpeaking(false);
+      if (e.error === 'not-allowed') setBlocked(true);
+    };
     speechSynthesis.speak(u);
   }, []);
 
-  const cancel = useCallback(() => {
+  const stop = () => {
+    audio.current?.pause();
     if ('speechSynthesis' in window) speechSynthesis.cancel();
     setSpeaking(false);
+  };
+
+  /** Reads question `i` aloud (and fetches the next one ahead). */
+  const speak = useCallback(
+    async (i: number) => {
+      wanted.current = i;
+      stop();
+      setBlocked(false);
+      const url = await clip(i);
+      if (wanted.current !== i) return;
+      void clip(i + 1);
+      const a = audio.current;
+      if (url && a) {
+        a.src = url;
+        try {
+          await a.play();
+          return;
+        } catch (e) {
+          if (wanted.current !== i) return;
+          if ((e as DOMException).name === 'NotAllowedError') return setBlocked(true);
+          // The browser can't play the clip (no MP3 decoder): read it with the browser's voice.
+        }
+      }
+      const text = questions[i]?.question;
+      if (text) await browserSpeak(i, text);
+    },
+    [clip, browserSpeak, questions],
+  );
+
+  const cancel = useCallback(() => {
+    wanted.current = null;
+    setBlocked(false);
+    stop();
   }, []);
 
-  return { supported, speaking, speak, cancel };
+  return { supported, speaking, blocked, speak, cancel };
 }

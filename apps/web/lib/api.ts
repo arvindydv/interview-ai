@@ -30,3 +30,19 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (!res.ok) throw new ApiError(body.message ?? `HTTP ${res.status}`, res.status);
   return body as T;
 }
+
+/** Like `api`, for binary replies (e.g. audio). */
+export async function apiBlob(path: string, init: RequestInit = {}): Promise<Blob> {
+  const { data } = await supabase().auth.getSession();
+  const res = await fetch(`${API_URL}${path}`, {
+    ...init,
+    headers: { ...(data.session ? { authorization: `Bearer ${data.session.access_token}` } : {}), ...init.headers },
+  }).catch((e: Error) => {
+    throw new ApiError(e.message, 0);
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new ApiError(body.message ?? `HTTP ${res.status}`, res.status);
+  }
+  return res.blob();
+}

@@ -59,7 +59,7 @@ export default function OpengraphImage() {
         </div>
 
         <div style={{ display: 'flex', gap: 14, fontSize: 24, color: '#c3cad8' }}>
-          {['Live answers', 'Coding solutions', 'AI mock interviews', 'Windows · macOS · Linux'].map((t) => (
+          {['Live answers', 'Coding solutions', 'AI mock interviews', 'Windows · macOS'].map((t) => (
             <div key={t} style={{ display: 'flex', padding: '10px 20px', borderRadius: 999, border: '1px solid rgba(255,255,255,0.14)', background: 'rgba(255,255,255,0.04)' }}>
               {t}
             </div>

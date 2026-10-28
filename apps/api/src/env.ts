@@ -27,6 +27,8 @@ const schema = z.object({
   DEEPGRAM_API_KEY: z.string().optional(),
   /** flux-general-en (English) or flux-general-multi (multilingual). */
   DEEPGRAM_MODEL: z.string().default('flux-general-en'),
+  // Voice that reads practice questions aloud (Deepgram Aura text-to-speech).
+  DEEPGRAM_TTS_MODEL: z.string().default('aura-2-thalia-en'),
   /** Confidence needed to end a turn (0.5–0.9). Higher waits longer before answering. */
   DEEPGRAM_EOT_THRESHOLD: z.coerce.number().min(0.5).max(0.9).default(0.7),
   /**
