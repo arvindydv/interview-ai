@@ -4,6 +4,9 @@
 // or a GitHub release (slow from many Indian ISPs): https://github.com/<org>/<repo>/releases/download/desktop-v0.1.0
 
 export const DESKTOP_VERSION = process.env.NEXT_PUBLIC_DESKTOP_VERSION ?? '0.1.0';
+export const WINDOWS_STORE_URL =
+  'https://apps.microsoft.com/detail/9MZJTLR4MJRP';
+
 export const DOWNLOADS_URL = (process.env.NEXT_PUBLIC_DOWNLOADS_URL ?? '').replace(/\/$/, '');
 
 export type Platform = 'windows' | 'macos' | 'linux';
@@ -55,6 +58,10 @@ export const installers: Installer[] = [
 ];
 
 export function downloadUrl(i: Installer): string | null {
+  if (i.platform === 'windows') {
+    return WINDOWS_STORE_URL;
+  }
+
   if (!DOWNLOADS_URL) return null;
   return `${DOWNLOADS_URL}/${encodeURIComponent(i.file)}`;
 }
