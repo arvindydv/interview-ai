@@ -263,6 +263,7 @@ fn show_main(app: &AppHandle) {
     if let Some(main) = app.get_webview_window("main") {
         let _ = main.unminimize();
         let _ = main.show();
+        stay_hidden_from_capture(&main);
         let _ = main.set_focus();
     }
 }
@@ -302,11 +303,21 @@ fn create_overlay(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Showing a hidden window again can bring back what was set when it was created: Windows gives an
+/// unowned window its taskbar button back on every show, and GTK drops the skip-taskbar hint. A
+/// taskbar button is exactly what shows up when the whole screen is shared, so re-apply both
+/// settings after every show.
+fn stay_hidden_from_capture(w: &tauri::WebviewWindow) {
+    let _ = w.set_skip_taskbar(true);
+    let _ = w.set_content_protected(true);
+}
+
 /// GTK can drop "keep above" and "on all workspaces" when a hidden window is shown again (tao),
 /// so the overlay would slip behind the next window the user switches to. Re-apply both.
 fn keep_overlay_on_top(w: &tauri::WebviewWindow) {
     let _ = w.set_always_on_top(true);
     let _ = w.set_visible_on_all_workspaces(true);
+    stay_hidden_from_capture(w);
 }
 
 fn show_overlay(app: &AppHandle, focus: bool) {
@@ -448,6 +459,8 @@ pub fn run() {
         })
         .setup(|app| {
             // No Dock icon or menu bar on macOS: the app lives only in its windows and hotkeys.
+            // LSUIElement in Info.plist already keeps the icon out of the Dock from launch; this
+            // covers `tauri dev`, which runs the bare binary without that plist.
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 

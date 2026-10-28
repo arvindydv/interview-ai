@@ -231,8 +231,10 @@ export function DownloadButtons({ size = 'md' }: { size?: 'md' | 'lg' }) {
       )}
       {started === 'macos' && (
         <p className="mt-3 text-xs text-muted">
-          If macOS says it can't verify Friday AI, open <span className="text-fg/80">System Settings → Privacy &amp; Security</span>{' '}
-          and click <span className="text-fg/80">Open Anyway</span>.
+          If macOS shows <span className="text-fg/80">"Friday AI Not Opened"</span>, click <span className="text-fg/80">Done</span>, then
+          open <span className="text-fg/80">System Settings → Privacy &amp; Security</span> and click{' '}
+          <span className="text-fg/80">Open Anyway</span>.{' '}
+          <a href="#install-macos" className="text-brand hover:underline">All steps</a>
         </p>
       )}
       {notice && (

@@ -7,6 +7,7 @@ import {
 import { FREE_MINUTES, PLANS, PRICE_PER_MINUTE, formatInr } from '@parakeet/shared';
 import { HeroDemo } from '@/components/HeroDemo';
 import { DownloadButtons } from '@/components/DownloadButtons';
+import { MacInstallGuide } from '@/components/MacInstallGuide';
 import {
   CountUp, Faq, Magnetic, NavBar, Reveal, SpotlightGroup, TiltStage, WordRotator,
 } from '@/components/landing/motion';
@@ -430,6 +431,7 @@ export default function Home() {
               <Link href="/signup" className="btn btn-ghost mt-5">
                 or create a free account first <ArrowRight size={15} />
               </Link>
+              <MacInstallGuide />
             </div>
           </Reveal>
         </section>

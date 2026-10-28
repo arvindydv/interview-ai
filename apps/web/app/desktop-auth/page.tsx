@@ -1,16 +1,16 @@
 'use client';
 import { Suspense, useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { CheckCircle2, ExternalLink, XCircle } from 'lucide-react';
+import { CheckCircle2, XCircle } from 'lucide-react';
 import { HANDOFF_STORAGE_KEY, handoffSupabase, isAllowedDesktopRedirect } from '@/lib/supabase';
 import { LogoMark } from '@/components/Logo';
 
 // Final step of desktop sign-in (spec A1): send the freshly minted session to the desktop app via
-// its parakeet:// deep link (or loopback port in dev), then drop it from this browser.
+// one-shot 127.0.0.1 loopback listener, then drop it from this browser. The app answers with a
+// redirect to /desktop-auth/done, so the tab ends on this site, not on the loopback URL.
 function Handoff() {
   const router = useRouter();
   const params = useSearchParams();
-  const [target, setTarget] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const started = useRef(false);
 
@@ -38,8 +38,8 @@ function Handoff() {
         url.searchParams.set('state', state);
         // Forget the session locally without revoking it: it now belongs to the desktop app.
         sessionStorage.removeItem(HANDOFF_STORAGE_KEY);
-        setTarget(url.toString());
-        window.location.href = url.toString();
+        // replace(): the token-bearing URL must not become a history entry.
+        window.location.replace(url.toString());
       });
   }, [params, router]);
 
@@ -60,13 +60,8 @@ function Handoff() {
           <h1 className="mt-6 text-xl font-semibold">Returning to Friday AI…</h1>
           <p className="mt-2 text-sm text-muted">
             <CheckCircle2 size={14} className="mr-1 inline text-brand" />
-            You're signed in. Close this tab once the app confirms.
+            You're signed in. Handing your session to the app…
           </p>
-          {target && (
-            <a href={target} className="btn btn-secondary mt-6">
-              Open Friday AI manually <ExternalLink size={14} />
-            </a>
-          )}
         </>
       )}
     </div>

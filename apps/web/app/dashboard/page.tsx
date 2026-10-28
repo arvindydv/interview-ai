@@ -17,6 +17,7 @@ import { AppShell } from '@/components/AppShell';
 import { LogoMark } from '@/components/Logo';
 import { Card, Pill } from '@/components/ui';
 import { DownloadButtons } from '@/components/DownloadButtons';
+import { MacInstallGuide } from '@/components/MacInstallGuide';
 import { ActiveBadge, Monogram, ReadinessBar } from '@/components/interviews/parts';
 
 interface Overview {
@@ -190,7 +191,10 @@ function Setup({ data }: { data: Overview }) {
               <p className="max-w-md text-sm text-muted">
                 The desktop app listens to your call and shows answers on an overlay only you can see. Sign in once with this account.
               </p>
-              <DownloadButtons />
+              <div className="flex flex-col gap-3">
+                <DownloadButtons />
+                <MacInstallGuide compact />
+              </div>
             </>
           )}
           {current.key === 'resume' && (
