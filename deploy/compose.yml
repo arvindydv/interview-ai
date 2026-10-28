@@ -1,4 +1,4 @@
-# Production stack for one server: Caddy (HTTPS) → web, admin, api; worker and Redis behind them.
+# Production stack for one server: Caddy (HTTPS) → web, admin, jobs, api; worker and Redis behind them.
 # Run by deploy/deploy.sh, which sets TAG, reads DOMAIN / ACME_EMAIL / REGISTRY from
 # /opt/parakeet/config.env, and writes /opt/parakeet/env/{api,worker}.env from SSM Parameter Store.
 # Postgres + Auth are Supabase, not part of this stack.
@@ -23,7 +23,7 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data # TLS certificates; keep across deploys or Let's Encrypt rate-limits you
       - caddy-config:/config
-    depends_on: [web, admin, api]
+    depends_on: [web, admin, jobs, api]
     mem_limit: 128m
 
   web:
@@ -36,6 +36,13 @@ services:
   admin:
     <<: *service
     image: ${REGISTRY:?}/parakeet-admin:${TAG:?}
+    environment:
+      NODE_OPTIONS: --max-old-space-size=160
+    mem_limit: 256m
+
+  jobs:
+    <<: *service
+    image: ${REGISTRY:?}/parakeet-jobs:${TAG:?}
     environment:
       NODE_OPTIONS: --max-old-space-size=160
     mem_limit: 256m

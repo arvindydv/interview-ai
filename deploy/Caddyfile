@@ -1,5 +1,5 @@
 # Reverse proxy with automatic HTTPS (Let's Encrypt). DOMAIN and ACME_EMAIL come from deploy/compose.yml.
-# DNS A records for DOMAIN, www.DOMAIN, api.DOMAIN and admin.DOMAIN must point at this server first.
+# DNS A records for DOMAIN, www.DOMAIN, api.DOMAIN, admin.DOMAIN and jobs.DOMAIN must point at this server first.
 {
 	email {$ACME_EMAIL}
 }
@@ -34,6 +34,13 @@ api.{$DOMAIN} {
 admin.{$DOMAIN} {
 	import proxy_defaults
 	reverse_proxy admin:3200 {
+		lb_try_duration 10s
+	}
+}
+
+jobs.{$DOMAIN} {
+	import proxy_defaults
+	reverse_proxy jobs:3300 {
 		lb_try_duration 10s
 	}
 }
