@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - feat/windows-store-msix
+      - release/store-0.1.4
       - feat/ai-content-reporting
 
 permissions:
@@ -19,7 +20,7 @@ jobs:
       MSIX_PACKAGE_NAME: FridayAI.FridayAIDesktopAssistant
       MSIX_PUBLISHER: CN=68B4F28C-1583-4F8B-B95E-109DB1059BC5
       # Bump for every Store submission (the fourth part must stay 0).
-      MSIX_VERSION: 0.1.3.0
+      MSIX_VERSION: 0.1.4.0
       PARAKEET_WEB_URL: ${{ vars.PARAKEET_WEB_URL }}
       PARAKEET_API_URL: ${{ vars.PARAKEET_API_URL }}
       PARAKEET_SUPABASE_URL: ${{ vars.PARAKEET_SUPABASE_URL }}
