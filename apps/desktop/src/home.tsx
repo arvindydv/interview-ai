@@ -691,12 +691,13 @@ export function Home({ email }: { email: string }) {
               key={id}
               onClick={() => setView(id)}
               aria-current={view === id ? 'page' : undefined}
+              title={hint ?? undefined}
               className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition ${
                 view === id ? 'bg-white/[0.07] font-medium text-fg' : 'text-muted hover:bg-white/[0.03] hover:text-fg'
               }`}
             >
               <Icon size={15} className={view === id ? 'text-brand' : ''} /> {label}
-              {hint && <span className="ml-auto size-1.5 rounded-full bg-brand" title={hint} />}
+              {hint && <span className="ml-auto size-1.5 rounded-full bg-brand" aria-hidden />}
             </button>
           ))}
         </nav>
