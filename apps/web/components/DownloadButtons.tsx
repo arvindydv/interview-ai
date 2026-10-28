@@ -50,7 +50,7 @@ function InstallerLink({
   return (
     <a
       href={href ?? '#'}
-      download={href ? installer.file : undefined}
+      download={href && installer.platform !== 'windows' ? installer.file : undefined}
       onClick={(e) => {
         if (!href) {
           e.preventDefault();
@@ -154,7 +154,7 @@ export function DownloadButtons({ size = 'md' }: { size?: 'md' | 'lg' }) {
   return (
     <div>
       <div className="flex flex-wrap gap-2">
-        <InstallerLink installer={win} primary={primary === 'windows'} className={pad} onUnavailable={unavailable} onStart={() => setStarted('windows')}>
+        <InstallerLink installer={win} primary={primary === 'windows'} className={pad} onUnavailable={unavailable} >
           <WindowsIcon /> Windows
         </InstallerLink>
         <InstallerLink installer={mac} primary={primary === 'macos'} className={pad} onUnavailable={unavailable} onStart={() => setStarted('macos')}>
@@ -222,13 +222,6 @@ export function DownloadButtons({ size = 'md' }: { size?: 'md' | 'lg' }) {
           )}
         </div>
       </div>
-      {/* The installers aren't code-signed yet, so the OS warns on first launch. Remove once they are. */}
-      {started === 'windows' && (
-        <p className="mt-3 text-xs text-muted">
-          If Windows shows <span className="text-fg/80">"Windows protected your PC"</span>, click{' '}
-          <span className="text-fg/80">More info</span> → <span className="text-fg/80">Run anyway</span>.
-        </p>
-      )}
       {started === 'macos' && (
         <p className="mt-3 text-xs text-muted">
           If macOS says it can't verify Friday AI, open <span className="text-fg/80">System Settings → Privacy &amp; Security</span>{' '}
