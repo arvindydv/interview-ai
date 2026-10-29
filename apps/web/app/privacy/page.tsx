@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { CookieSettingsButton } from '@/components/ConsentBanner';
 import { LegalPage, LegalSection } from '@/components/landing/legal';
 import { company } from '@/lib/company';
 import { pageMetadata } from '@/lib/site';
@@ -28,6 +29,7 @@ const processors = [
   ['Deepgram', 'Speech-to-text: turns the call audio into text in real time'],
   ['Anthropic and OpenRouter', 'AI models that write answers from your question, profile and screenshots'],
   ['Razorpay', 'Payment processing for paid plans'],
+  ['Meta Platforms', 'Measuring our ads, only if you accept advertising cookies (see Cookies)'],
   ['Our email provider', 'Sign-in codes and account emails'],
 ];
 
@@ -170,8 +172,20 @@ export default function PrivacyPage() {
 
       <LegalSection id="cookies" title="8. Cookies and local storage">
         <p>
-          We use only the cookies and browser storage needed to keep you signed in and remember your settings. We do not
-          use advertising or third-party tracking cookies. Razorpay&rsquo;s checkout may set its own cookies when you pay.
+          We use the cookies and browser storage needed to keep you signed in and remember your settings. Razorpay&rsquo;s
+          checkout may set its own cookies when you pay.
+        </p>
+        <p>
+          With your permission, and only then, our website also uses the Meta Pixel to measure which of our ads bring
+          people to {company.brand}. It tells Meta which of our pages you open, and when you sign up, open checkout or
+          complete a purchase (the amount and the plan). For purchases, our server also confirms the purchase to Meta
+          with your IP address, browser and a scrambled (hashed) form of your account ID. Meta never receives your
+          interviews, answers, transcripts, resume, email address or name, and nothing is reported from the pages that
+          show your interviews, practice, history, resume or settings. If your browser sends a Global Privacy Control
+          signal, we treat that as a no.
+        </p>
+        <p>
+          <CookieSettingsButton />
         </p>
       </LegalSection>
 

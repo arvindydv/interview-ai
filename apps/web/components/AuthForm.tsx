@@ -13,6 +13,7 @@ import { OtpInput } from '@/components/OtpInput';
 import { Spinner } from '@/components/ui';
 import { useCaptcha } from '@/lib/captcha';
 import { API_URL } from '@/lib/api';
+import { noteSignIn } from '@/lib/meta';
 
 // Matches `max_frequency` in supabase/config.toml; resending sooner is rejected by Supabase.
 const RESEND_COOLDOWN_S = 60;
@@ -331,12 +332,14 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
     verifying.current = true;
     return run(async () => {
       try {
-        const { error } = await client.auth.verifyOtp({ email, token: token.trim(), type: codeType });
+        const { data, error } = await client.auth.verifyOtp({ email, token: token.trim(), type: codeType });
         if (error) {
           setCode('');
           setAttempt((a) => a + 1);
           throw error;
         }
+        // A sign-up code, or a sign-in code that created the account, counts as a registration.
+        if (data.user) noteSignIn(data.user);
         if (codeType === 'recovery') {
           setPassword('');
           setStep('reset');

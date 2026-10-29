@@ -8,10 +8,11 @@ import {
 } from 'lucide-react';
 import {
   MAX_MINUTES, MINUTE_PRESETS, MIN_MINUTES, PLANS, PRICE_PER_MINUTE, formatInr, isValidMinutes, minutesProduct,
-  planLabel, productById, type BillingOverview, type CheckoutOrder, type Payment, type PaymentStatus, type Product,
-  type ProductId, type VerifyPaymentInput,
+  planLabel, productById, type BillingOverview, type CheckoutOrder, type CreateOrderInput, type Payment,
+  type PaymentStatus, type Product, type ProductId, type VerifyPaymentInput,
 } from '@parakeet/shared';
 import { ApiError, api } from '@/lib/api';
+import { checkoutTracking, trackInitiateCheckout, trackPurchase } from '@/lib/meta';
 import { openCheckout } from '@/lib/razorpay';
 import { supabase } from '@/lib/supabase';
 import { AppShell } from '@/components/AppShell';
@@ -385,7 +386,7 @@ function Billing() {
   }, [notice]);
 
   /** Re-reads the account until `paymentId` shows up as paid (the webhook applied it), or gives up. */
-  async function waitForPayment(paymentId: string, product: Product) {
+  async function waitForPayment(paymentId: string, product: Product, order: CheckoutOrder) {
     for (const until = Date.now() + POLL_FOR_MS; Date.now() < until; ) {
       await sleep(POLL_EVERY_MS);
       if (!mounted.current) return;
@@ -393,7 +394,10 @@ function Billing() {
       if (!o) continue;
       setOverview(o);
       const p = o.payments.find((x) => x.paymentId === paymentId);
-      if (p?.status === 'paid') return setNotice(successNotice(product, o));
+      if (p?.status === 'paid') {
+        trackPurchase(order);
+        return setNotice(successNotice(product, o));
+      }
       if (p?.status === 'failed') {
         return setNotice({ tone: 'bad', title: 'Payment failed', text: `Your bank declined payment ${paymentId}. ${BANK_RETURN}` });
       }
@@ -413,12 +417,12 @@ function Billing() {
     setBusy(product.id);
     setNotice(null);
     let paymentId: string | null = null;
+    let order: CheckoutOrder | null = null;
     try {
-      const order = await api<CheckoutOrder>('/v1/billing/orders', {
-        method: 'POST',
-        body: JSON.stringify({ productId: product.id }),
-      });
-      const outcome = await openCheckout(order);
+      const input: CreateOrderInput = { productId: product.id, tracking: checkoutTracking() };
+      order = await api<CheckoutOrder>('/v1/billing/orders', { method: 'POST', body: JSON.stringify(input) });
+      const opened = order;
+      const outcome = await openCheckout(order, () => trackInitiateCheckout(opened));
       if (outcome.status === 'dismissed') {
         setNotice({ tone: 'info', title: 'Payment cancelled', text: 'You closed the payment window. You have not been charged.' });
         return;
@@ -432,22 +436,24 @@ function Billing() {
       const result = await confirmPayment(outcome.response);
       if ('error' in result) {
         setNotice({ tone: 'pending', title: 'Payment processing', text: `${result.message} You can keep using the app meanwhile.` });
-        await waitForPayment(paymentId, product);
+        await waitForPayment(paymentId, product, order);
         return;
       }
       setOverview(result);
       setNotice(successNotice(product, result));
+      // Only a payment the API has applied counts (a refunded one also comes back as a 200).
+      if (result.payments.some((p) => p.paymentId === paymentId && p.status === 'paid')) trackPurchase(order);
     } catch (e) {
       const message = (e as Error).message;
       const unreachable = e instanceof ApiError && (e.status === 0 || e.status >= 500);
-      if (paymentId && unreachable) {
+      if (paymentId && order && unreachable) {
         // Paid, but we couldn't confirm it from here: the webhook applies it.
         setNotice({
           tone: 'pending',
           title: 'Payment received, confirming',
           text: `We couldn't confirm payment ${paymentId} yet. It is applied automatically within a few minutes.`,
         });
-        await waitForPayment(paymentId, product);
+        await waitForPayment(paymentId, product, order);
       } else {
         setNotice({
           tone: 'bad',

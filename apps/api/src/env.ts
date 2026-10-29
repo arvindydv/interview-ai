@@ -61,6 +61,13 @@ const schema = z.object({
   RAZORPAY_KEY_SECRET: z.string().optional(),
   /** Secret entered when creating the webhook (Dashboard → Webhooks). Without it, /v1/billing/webhook is off. */
   RAZORPAY_WEBHOOK_SECRET: z.string().optional(),
+
+  // Meta Conversions API (lib/metaCapi.ts): server-side Purchase events for the website's Meta Pixel.
+  // Off until both are set. The token comes from Events Manager → the pixel → Settings → Conversions API.
+  META_PIXEL_ID: z.string().regex(/^\d{5,20}$/).optional(),
+  META_CAPI_ACCESS_TOKEN: z.string().optional(),
+  /** Events Manager → Test events code (TEST…), to see server events there while verifying. Unset in production. */
+  META_CAPI_TEST_EVENT_CODE: z.string().optional(),
 });
 
 // Empty values in .env mean "not set".

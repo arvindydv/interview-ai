@@ -58,7 +58,18 @@ export const planLabel = (plan: string) => plan.charAt(0).toUpperCase() + plan.s
 /** POST /v1/billing/orders */
 export interface CreateOrderInput {
   productId: ProductId;
+  /**
+   * Sent only when the visitor allowed marketing cookies: lets the API report the purchase to Meta's
+   * Conversions API once it is paid. `fbp`/`fbc` are the Meta Pixel's _fbp/_fbc cookies.
+   */
+  tracking?: { consent: true; fbp?: string; fbc?: string };
 }
+
+/**
+ * Meta event id of the Purchase for an order. The browser pixel and the API's Conversions API event
+ * both use it, so Meta counts the purchase once.
+ */
+export const purchaseEventId = (orderId: string) => `purchase.${orderId}`;
 
 /** Everything the browser needs to open Razorpay Checkout for an order. */
 export interface CheckoutOrder {

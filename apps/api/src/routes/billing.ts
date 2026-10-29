@@ -7,6 +7,7 @@ import {
   MAX_ORDERS_PER_HOUR, fulfilOrder, listPayments, markOrderFailed, reusableOrder, revokeRefunded, type FulfilResult,
 } from '../lib/billing.js';
 import { sql } from '../lib/db.js';
+import { reportPurchase } from '../lib/metaCapi.js';
 import {
   RazorpayError, capturePayment, checkoutSignatureValid, createOrder, fetchPayment, razorpayConfigured,
   webhookSignatureValid, type RazorpayPayment,
@@ -25,6 +26,16 @@ const DISABLED = { error: 'payments_disabled', message: 'Payments are not availa
 
 const orderBody = z.object({
   productId: z.string().refine(isProductId, `Choose between ${MIN_MINUTES} and ${MAX_MINUTES} minutes, or a plan`),
+  // Marketing consent and Meta cookies (lib/metaCapi.ts). Anything malformed counts as no consent
+  // rather than failing the checkout.
+  tracking: z
+    .object({
+      consent: z.literal(true),
+      fbp: z.string().regex(/^fb\.\d\.\d{10,16}\.\d{1,24}$/).optional().catch(undefined),
+      fbc: z.string().regex(/^fb\.\d\.\d{10,16}\.[\w-]{1,500}$/).optional().catch(undefined),
+    })
+    .optional()
+    .catch(undefined),
 });
 const verifyBody = z.object({
   razorpay_order_id: z.string().regex(/^order_\w{1,40}$/),
@@ -116,6 +127,18 @@ export default async function billingRoutes(app: FastifyInstance) {
         values (${id}, ${userId}, ${product.id}, ${order.amount}, ${order.currency}, ${order.orderId})`;
     }
 
+    // The latest choice wins, also for a reused order: someone who withdrew consent isn't reported.
+    const tracking = body.data.tracking;
+    const userAgent = req.headers['user-agent']?.slice(0, 512) ?? null;
+    await sql`
+      update public.payments set
+        meta_consent = ${Boolean(tracking)},
+        meta_fbp = ${tracking?.fbp ?? null},
+        meta_fbc = ${tracking?.fbc ?? null},
+        meta_client_ip = ${tracking ? req.ip : null},
+        meta_user_agent = ${tracking ? userAgent : null}
+      where razorpay_order_id = ${order.orderId} and status in ('created', 'failed')`;
+
     const result: CheckoutOrder = {
       orderId: order.orderId,
       keyId: env.RAZORPAY_KEY_ID!,
@@ -176,6 +199,7 @@ export default async function billingRoutes(app: FastifyInstance) {
     }
     const result = await fulfilOrder(orderId, payment.id, payment.amount, payment.currency);
     logFulfil(req.log, result, payment);
+    if (result === 'granted' || result === 'already_applied') void reportPurchase(orderId, req.log);
     if (result === 'mismatch' || result === 'duplicate_payment' || result === 'unknown_order') {
       return reply.code(409).send({
         error: 'payment_not_applied',
@@ -225,7 +249,9 @@ export async function billingWebhookRoutes(app: FastifyInstance) {
       case 'payment.captured':
       case 'order.paid':
         if (payment.status === 'captured') {
-          logFulfil(log, await fulfilOrder(payment.order_id, payment.id, payment.amount, payment.currency), payment);
+          const result = await fulfilOrder(payment.order_id, payment.id, payment.amount, payment.currency);
+          logFulfil(log, result, payment);
+          if (result === 'granted' || result === 'already_applied') void reportPurchase(payment.order_id, log);
         }
         break;
       case 'payment.failed':
