@@ -22,18 +22,29 @@ const RAZORPAY_FRAMES = 'https://api.razorpay.com https://checkout.razorpay.com'
 const RAZORPAY_CONNECT = 'https://lumberjack.razorpay.com';
 // Cloudflare Turnstile on the sign-in forms (lib/captcha.tsx): its script and challenge iframe.
 const TURNSTILE = 'https://challenges.cloudflare.com';
+// Meta Pixel (components/MetaPixel.tsx): its library, and the endpoints it reports events to.
+const META_SCRIPT = 'https://connect.facebook.net';
+// The last two are the pixel's Conversions API Gateway (the "openbridge" endpoint and its fallback),
+// set in Events Manager; update them if the gateway is redeployed.
+const META_CONNECT = [
+  'https://connect.facebook.net',
+  'https://www.facebook.com',
+  'https://c0-6fa785b9720f4f63a070b585fe6b7723.ecs.us-east-2.on.aws',
+  'https://snofje0za8n8.cloud.run',
+].join(' ');
+const META_IMG = 'https://www.facebook.com';
 
 // Next's inline bootstrap scripts need 'unsafe-inline' unless every page is rendered with a nonce;
 // the rest of the policy (no framing, no plugins, no other foreign scripts/forms) still applies.
 const csp = [
   "default-src 'self'",
-  `script-src 'self' 'unsafe-inline'${dev ? " 'unsafe-eval'" : ''} ${RAZORPAY_SCRIPT} ${TURNSTILE}`,
+  `script-src 'self' 'unsafe-inline'${dev ? " 'unsafe-eval'" : ''} ${RAZORPAY_SCRIPT} ${TURNSTILE} ${META_SCRIPT}`,
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob:",
+  `img-src 'self' data: blob: ${META_IMG}`,
   "font-src 'self' data:",
   // Practice questions are read aloud from audio fetched with the user's token and played as a blob.
   "media-src 'self' blob:",
-  `connect-src ${connectSources()} ${RAZORPAY_CONNECT}`,
+  `connect-src ${connectSources()} ${RAZORPAY_CONNECT} ${META_CONNECT}`,
   `frame-src ${RAZORPAY_FRAMES} ${TURNSTILE}`,
   "frame-ancestors 'none'",
   "base-uri 'self'",
