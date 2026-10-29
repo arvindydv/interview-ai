@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from 'next';
+import { Suspense } from 'react';
 import '@fontsource-variable/inter';
 import './globals.css';
+import MetaPixel from '@/components/MetaPixel';
 import { themeBootScript } from '@/lib/themeScript';
 import { DEFAULT_DESCRIPTION, DEFAULT_TITLE, SITE_NAME, SITE_URL } from '@/lib/site';
 
@@ -46,7 +48,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeBootScript }} />
       </head>
-      <body className="min-h-screen">{children}</body>
+      <body className="min-h-screen">
+        {children}
+        <Suspense fallback={null}>
+          <MetaPixel />
+        </Suspense>
+      </body>
     </html>
   );
 }
