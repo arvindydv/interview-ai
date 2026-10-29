@@ -44,9 +44,9 @@ export type CheckoutOutcome =
 /**
  * Opens Checkout for an order and resolves once the user pays or closes it. A failed attempt is
  * reported but leaves the window open so they can retry with another method; closing it afterwards
- * resolves with that failure.
+ * resolves with that failure. `onOpen` runs once the window is actually open.
  */
-export async function openCheckout(order: CheckoutOrder): Promise<CheckoutOutcome> {
+export async function openCheckout(order: CheckoutOrder, onOpen?: () => void): Promise<CheckoutOutcome> {
   await loadScript();
   const Razorpay = window.Razorpay;
   if (!Razorpay) throw new Error('The payment window is blocked by a browser extension. Allow checkout.razorpay.com and try again.');
@@ -71,5 +71,6 @@ export async function openCheckout(order: CheckoutOrder): Promise<CheckoutOutcom
       lastError = r.error.description ?? 'The payment failed.';
     });
     rzp.open();
+    onOpen?.();
   });
 }

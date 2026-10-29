@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next';
 import { Suspense } from 'react';
 import '@fontsource-variable/inter';
 import './globals.css';
+import { ConsentBanner } from '@/components/ConsentBanner';
 import MetaPixel from '@/components/MetaPixel';
 import { themeBootScript } from '@/lib/themeScript';
 import { DEFAULT_DESCRIPTION, DEFAULT_TITLE, SITE_NAME, SITE_URL } from '@/lib/site';
@@ -53,6 +54,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <Suspense fallback={null}>
           <MetaPixel />
         </Suspense>
+        <ConsentBanner />
       </body>
     </html>
   );

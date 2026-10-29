@@ -1,5 +1,5 @@
-# Checks every pull request: typecheck the whole workspace and build each server image, so a broken
-# Dockerfile or build never reaches main (where Deploy ships it).
+# Checks every pull request: typecheck the whole workspace, run the unit tests and build each server
+# image, so a broken Dockerfile or build never reaches main (where Deploy ships it).
 name: CI
 
 on:
@@ -27,6 +27,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @parakeet/shared --filter @parakeet/emails exec tsc -p tsconfig.json
       - run: pnpm -r typecheck
+      # Unit tests; the integration tests skip themselves without a local Supabase.
+      - run: pnpm --filter @parakeet/api --filter @parakeet/web test
 
   docker:
     name: Docker ${{ matrix.app }}

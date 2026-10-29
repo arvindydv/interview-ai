@@ -2,6 +2,7 @@
 import { Suspense, useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { safeNext } from '@/lib/safeNext';
+import { noteSignIn } from '@/lib/meta';
 import { handoffSupabase, supabase } from '@/lib/supabase';
 
 // Shown instead of the provider's `error_description`, which anyone can put in a link.
@@ -21,9 +22,11 @@ function Callback() {
     const next = safeNext(params.get('next'));
     if (!code) return;
     const client = params.get('handoff') === '1' ? handoffSupabase() : supabase();
-    client.auth.exchangeCodeForSession(code).then(({ error }) => {
-      if (error) setError(SIGN_IN_FAILED);
-      else router.replace(next);
+    client.auth.exchangeCodeForSession(code).then(({ data, error }) => {
+      if (error) return setError(SIGN_IN_FAILED);
+      // Reported from the next page: this one's URL carries the one-time code.
+      if (data.user) noteSignIn(data.user);
+      router.replace(next);
     });
   }, [params, router]);
 
