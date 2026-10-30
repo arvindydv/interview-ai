@@ -36,10 +36,11 @@ COPY apps/web/package.json      apps/web/
 COPY apps/admin/package.json    apps/admin/
 COPY apps/jobs/package.json     apps/jobs/
 COPY apps/desktop/package.json  apps/desktop/
+COPY apps/extension/package.json apps/extension/
 COPY packages/shared/package.json packages/shared/
 COPY packages/emails/package.json packages/emails/
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
-    pnpm install --frozen-lockfile --filter '!@parakeet/desktop'
+    pnpm install --frozen-lockfile --filter '!@parakeet/desktop' --filter '!@parakeet/extension'
 
 # source: deps + the code (shared by every build stage below)
 FROM deps AS source

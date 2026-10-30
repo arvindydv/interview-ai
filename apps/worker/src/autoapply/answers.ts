@@ -24,6 +24,7 @@ function standardAnswer(q: FormQuestion, p: ApplicationProfile, resume: ResumePr
     _systemfield_email: p.email,
     phone: p.phone,
     _systemfield_phone: p.phone,
+    country: p.country,
     location: [p.city, p.country].filter(Boolean).join(', '),
     _systemfield_location: [p.city, p.country].filter(Boolean).join(', '),
     org: currentJob?.company ?? '',
@@ -87,6 +88,7 @@ Truth comes first:
 - Consent questions (AI notetakers, recordings, background checks, sharing data with third parties): null, unless the candidate's earlier answers already say what they want. Exception: a required acknowledgement that they have read the employer's privacy notice or that the information is accurate: answer yes.
 - Marketing or messaging opt-ins (WhatsApp, newsletters, job alerts): choose the "no" option.
 - "How did you hear about us": the candidate found the job on an online job board; choose the closest option ("Job board", "Online", "Company website", "Other").
+- Education (school, degree, discipline, start and end month and year): from the resume's most recent degree. Degree: the closest listed option (B.Tech or B.E. is "Bachelor's Degree"). Dates only when the resume gives them.
 
 Formats:
 - Select questions: answer with one option exactly as written. Multi-select: a list of options exactly as written. Never write an option that isn't listed.
@@ -148,7 +150,7 @@ export async function answerForm(form: FormQuestion[], ctx: AnswerContext): Prom
       key: q.key,
       question: q.label,
       ...(q.description ? { details: q.description } : {}),
-      type: q.type === 'file' ? 'textarea' : q.type,
+      type: q.type === 'file' ? 'textarea' : (q.type === 'select' || q.type === 'multiselect') && !q.options.length ? 'text' : q.type,
       required: q.required,
       ...(q.options.length ? { options: shortlist(q, hints) } : {}),
     }));
@@ -199,6 +201,11 @@ export async function answerForm(form: FormQuestion[], ctx: AnswerContext): Prom
 export function validate(q: FormQuestion, value: string | string[] | null): string | string[] | null {
   if (value === null) return null;
   const pick = (v: string) => q.options.find((o) => norm(o) === norm(v)) ?? null;
+  // Searchable dropdowns (schools, cities) have no fixed list: the text is typed and matched on the page.
+  if (!q.options.length && (q.type === 'select' || q.type === 'multiselect')) {
+    const text = (Array.isArray(value) ? value[0] : value)?.trim();
+    return text ? text.slice(0, 300) : null;
+  }
   if (q.type === 'select' || (q.options.length && q.type !== 'multiselect')) {
     const v = Array.isArray(value) ? value[0] : value;
     return v ? pick(v) : null;

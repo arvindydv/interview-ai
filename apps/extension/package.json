@@ -1,0 +1,14 @@
+{
+  "name": "@parakeet/extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Friday Jobs Auto Apply: submits prepared applications from the user's own browser",
+  "scripts": {
+    "build": "node build.mjs",
+    "test:fill": "node test/fill.mjs"
+  },
+  "devDependencies": {
+    "playwright-core": "1.56.1"
+  }
+}

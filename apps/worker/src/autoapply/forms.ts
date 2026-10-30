@@ -63,6 +63,11 @@ const GH_TYPES: Record<string, FormFieldType> = {
   input_hidden: 'hidden',
 };
 const GH_STANDARD = new Set(['first_name', 'last_name', 'email', 'phone', 'location', 'preferred_name']);
+/** The degree list on Greenhouse's education section. */
+const GH_DEGREES = [
+  'High School', "Associate's Degree", "Bachelor's Degree", "Master's Degree", 'Master of Business Administration (M.B.A.)',
+  'Juris Doctor (J.D.)', 'Doctor of Medicine (M.D.)', 'Doctor of Philosophy (Ph.D.)', "Engineer's Degree", 'Other',
+];
 
 function ghQuestions(list: GhQuestion[] | null | undefined, kind?: FormQuestion['kind']): FormQuestion[] {
   const out: FormQuestion[] = [];
@@ -88,16 +93,36 @@ function ghQuestions(list: GhQuestion[] | null | undefined, kind?: FormQuestion[
 async function greenhouse(board: string, id: string): Promise<FormQuestion[]> {
   const res = await get(`https://boards-api.greenhouse.io/v1/boards/${encodeURIComponent(board)}/jobs/${encodeURIComponent(id)}?questions=true`);
   const d = (await res.json()) as {
+    education?: 'education_required' | 'education_optional' | null;
     questions?: GhQuestion[];
     location_questions?: GhQuestion[];
     compliance?: { questions: GhQuestion[] }[] | null;
     demographic_questions?: { questions?: { label: string; required: boolean; id: number; answer_options: { label: string }[]; type: string }[] } | null;
   };
   const form = [...ghQuestions(d.questions), ...ghQuestions(d.location_questions)];
+  // Greenhouse's form adds a country picker for the phone number.
+  if (form.some((q) => q.key === 'phone')) {
+    form.splice(form.findIndex((q) => q.key === 'phone'), 0, { key: 'country', label: 'Country', type: 'select', required: true, options: [], kind: 'standard' });
+  }
+  // The education section the form shows when the job asks for it (not listed as questions by the API).
+  if (d.education) {
+    const required = d.education === 'education_required';
+    const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    form.push(
+      { key: 'school--0', label: 'School', type: 'select', required, options: [], kind: 'custom', description: 'The candidate’s most recent school or university, as named on the resume' },
+      { key: 'degree--0', label: 'Degree', type: 'select', required, options: GH_DEGREES, kind: 'custom' },
+      { key: 'discipline--0', label: 'Discipline', type: 'select', required, options: [], kind: 'custom', description: 'Field of study, e.g. Computer Science' },
+      { key: 'start-month--0', label: 'Start date month', type: 'select', required, options: months, kind: 'custom' },
+      { key: 'start-year--0', label: 'Start date year', type: 'number', required, options: [], kind: 'custom' },
+      { key: 'end-month--0', label: 'End date month', type: 'select', required, options: months, kind: 'custom' },
+      { key: 'end-year--0', label: 'End date year', type: 'number', required, options: [], kind: 'custom' },
+    );
+  }
   for (const c of d.compliance ?? []) form.push(...ghQuestions(c.questions, 'eeo'));
   for (const q of d.demographic_questions?.questions ?? []) {
     form.push({
-      key: `demographic_${q.id}`,
+      // The form's field id is the bare question id.
+      key: String(q.id),
       label: decode(q.label),
       type: q.type === 'multi_value_multi_select' ? 'multiselect' : 'select',
       required: q.required,
@@ -142,11 +167,13 @@ const LEVER_TYPES: Record<string, FormFieldType> = {
 async function lever(board: string, id: string): Promise<FormQuestion[]> {
   const html = await (await get(submitUrl('lever', board, id))).text();
   const form: FormQuestion[] = [{ key: 'resume', label: 'Resume/CV', type: 'file', required: true, options: [], kind: 'resume' }];
+  // Each field sits in an <li class="application-question">; a required one is marked in that block.
+  const blocks = html.split(/<li class="application-question/).slice(1);
   for (const [key, label] of Object.entries(LEVER_STANDARD)) {
-    const m = new RegExp(`name="${key.replace(/[[\]]/g, '\\$&')}"[^>]*?(required)?`, 'i').exec(html);
-    if (!m) continue;
-    const block = html.slice(Math.max(0, m.index - 600), m.index + 200);
-    form.push({ key, label, type: 'text', required: /required/.test(block) && ['name', 'email', 'phone'].includes(key), options: [], kind: 'standard' });
+    const block = blocks.find((b) => b.includes(`name="${key}"`));
+    if (!block) continue;
+    const required = /class="required"|required-field|\brequired(=| |>)/.test(block.slice(0, block.indexOf('</li>') + 1 || undefined));
+    form.push({ key, label, type: 'text', required, options: [], kind: 'standard' });
   }
   // Custom questions: each card carries its own definition as JSON.
   for (const m of html.matchAll(/value="(\{[^"]*?)"\s+name="cards\[([^\]]+)\]\[baseTemplate\]"/g)) {

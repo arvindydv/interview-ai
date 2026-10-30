@@ -12,6 +12,7 @@ import { api } from '@/lib/api';
 const CONSENT = [
   'Friday may send job applications in my name to jobs that match my settings, with my tailored resume and the answers it prepares from my resume and application profile.',
   'Friday never makes up qualifications or personal details. Questions it can’t answer truthfully wait for me.',
+  'Where a form requires it, Friday confirms I’ve read the employer’s privacy notice and that my details are accurate.',
   'Applications are submitted from my own browser through the Friday extension. Friday doesn’t get past CAPTCHAs or other checks for me; when a job board asks for one, the application waits for me.',
   'I can turn Auto Apply off at any time.',
 ];

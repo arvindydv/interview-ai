@@ -511,10 +511,20 @@ export default async function autoApplyRoutes(app: FastifyInstance) {
       return { status: 'pending' };
     }
     if (outcome === 'needs_answers') {
-      // Questions on the live form that the prepared answers didn't cover.
-      const labels = new Set((unanswered ?? []).map(norm));
-      const keys = (app.form ?? []).filter((q) => labels.has(norm(q.label))).map((q) => q.key);
-      await set('pending', 'needs_answers', `Needs your answer: ${(unanswered ?? []).slice(0, 3).join('; ') || 'a question on the form'}`, sql`, missing = ${keys}`);
+      // Questions on the live form that the prepared answers didn't cover. Ones the form we read didn't
+      // list are added to it, so the user can answer them and the extension fills them by label.
+      const form = [...(app.form ?? [])];
+      const keys: string[] = [];
+      for (const label of (unanswered ?? []).map((l) => l.replace(/[*✱]\s*$/, '').trim()).filter(Boolean)) {
+        const known = form.find((q) => norm(q.label) === norm(label));
+        if (known) keys.push(known.key);
+        else {
+          const q: FormQuestion = { key: `extra:${norm(label).slice(0, 80)}`, label, type: 'text', required: true, options: [], kind: 'custom' };
+          form.push(q);
+          keys.push(q.key);
+        }
+      }
+      await set('pending', 'needs_answers', `Needs your answer: ${(unanswered ?? []).slice(0, 3).join('; ') || 'a question on the form'}`, sql`, missing = ${keys}, form = ${sql.json(form as never)}`);
       await event(app.id, userId, 'needs_answers', 'The form had questions we couldn’t answer', { unanswered });
       await queueAutoApply('autoapply.notify', { userId }, req.log);
       return { status: 'pending' };

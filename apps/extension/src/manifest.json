@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "Friday Jobs Auto Apply",
+  "version": "0.1.0",
+  "description": "Submits the job applications Friday prepared for you, from your own browser. Stops for you when a job board asks for a check.",
+  "permissions": ["storage", "alarms", "tabs", "scripting", "notifications"],
+  "host_permissions": [
+    "https://boards.greenhouse.io/*",
+    "https://job-boards.greenhouse.io/*",
+    "https://jobs.lever.co/*",
+    "https://jobs.eu.lever.co/*",
+    "https://jobs.ashbyhq.com/*"
+  ],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_popup": "popup.html", "default_title": "Friday Auto Apply" },
+  "content_scripts": [{ "matches": [], "js": ["session.js"], "run_at": "document_idle" }],
+  "icons": { "128": "icon.png" }
+}
