@@ -11,7 +11,7 @@ export const metadata: Metadata = {
   applicationName: 'Friday Jobs',
 };
 
-export const viewport: Viewport = { themeColor: '#05070c' };
+export const viewport: Viewport = { themeColor: '#f6f7f9' };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (

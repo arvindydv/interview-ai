@@ -6,7 +6,7 @@
 #   docker build --target worker -t parakeet-worker .
 #   docker build --target web    -t parakeet-web   --build-arg NEXT_PUBLIC_API_URL=… --build-arg NEXT_PUBLIC_SUPABASE_URL=… …
 #   docker build --target admin  -t parakeet-admin --build-arg NEXT_PUBLIC_API_URL=…
-#   docker build --target jobs   -t parakeet-jobs  --build-arg NEXT_PUBLIC_JOBS_SITE_URL=…
+#   docker build --target jobs   -t parakeet-jobs  --build-arg NEXT_PUBLIC_JOBS_SITE_URL=… (+ the API and Supabase args, as for web)
 #
 # NEXT_PUBLIC_* values are compiled into the web/admin/jobs bundles, so they are build args, not runtime
 # env. Runtime secrets (DATABASE_URL, API keys…) are never baked in; they come from the environment.
@@ -106,9 +106,23 @@ RUN : "${NEXT_PUBLIC_API_URL:?build arg required}" \
  && pnpm --filter @parakeet/admin run build
 
 FROM source AS build-jobs
-ARG NEXT_PUBLIC_JOBS_SITE_URL
-ENV NEXT_PUBLIC_SITE_URL=$NEXT_PUBLIC_JOBS_SITE_URL
-RUN pnpm --filter @parakeet/shared exec tsc -p tsconfig.json \
+ARG NEXT_PUBLIC_JOBS_SITE_URL \
+    NEXT_PUBLIC_API_URL \
+    NEXT_PUBLIC_SUPABASE_URL \
+    NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY \
+    NEXT_PUBLIC_TURNSTILE_SITE_KEY \
+    NEXT_PUBLIC_WEB_URL
+ENV NEXT_PUBLIC_SITE_URL=$NEXT_PUBLIC_JOBS_SITE_URL \
+    NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL \
+    NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL \
+    NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=$NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY \
+    NEXT_PUBLIC_TURNSTILE_SITE_KEY=$NEXT_PUBLIC_TURNSTILE_SITE_KEY \
+    NEXT_PUBLIC_WEB_URL=$NEXT_PUBLIC_WEB_URL
+# Signed-in pages call the API and Supabase from the browser.
+RUN : "${NEXT_PUBLIC_API_URL:?build arg required}" \
+      "${NEXT_PUBLIC_SUPABASE_URL:?build arg required}" \
+      "${NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:?build arg required}" \
+ && pnpm --filter @parakeet/shared exec tsc -p tsconfig.json \
  && pnpm --filter @parakeet/jobs run build
 
 # ---------------------------------------------------------------------------------------------------

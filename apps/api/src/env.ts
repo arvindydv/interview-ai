@@ -68,6 +68,11 @@ const schema = z.object({
   META_CAPI_ACCESS_TOKEN: z.string().optional(),
   /** Events Manager → Test events code (TEST…), to see server events there while verifying. Unset in production. */
   META_CAPI_TEST_EVENT_CODE: z.string().optional(),
+  // Friday Jobs: live search results from Careerjet (publisher key from careerjet.com/partners), shown
+  // under a search on the jobs site. Off until set.
+  CAREERJET_API_KEY: z.string().optional(),
+  /** Careerjet's country site, e.g. en_IN. */
+  CAREERJET_LOCALE: z.string().default('en_IN'),
 });
 
 // Empty values in .env mean "not set".

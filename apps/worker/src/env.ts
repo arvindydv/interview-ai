@@ -28,6 +28,18 @@ const schema = z.object({
   BREVO_SMTP_KEY: z.string().optional(),
   EMAIL_FROM: z.string().default('Friday AI <no-reply@localhost>'),
   EMAIL_REPLY_TO: z.string().optional(),
+
+  // Friday Jobs: job search engines, searched for the roles users want. Each is skipped until its key
+  // is set. Adzuna: developer.adzuna.com (the free plan allows 250 calls a day, 2,500 a month; a
+  // commercial product needs their licence). Jooble: jooble.org/api/about.
+  ADZUNA_APP_ID: z.string().optional(),
+  ADZUNA_APP_KEY: z.string().optional(),
+  /** Searches per sync (four a day): 20 keeps within the free plan's 2,500 a month. */
+  ADZUNA_CALLS_PER_SYNC: z.coerce.number().int().min(1).max(200).default(20),
+  JOOBLE_API_KEY: z.string().optional(),
+  /** Jooble keys are issued for one country's site. */
+  JOOBLE_HOST: z.string().default('jooble.org'),
+  JOOBLE_CALLS_PER_SYNC: z.coerce.number().int().min(1).max(200).default(20),
 });
 
 // Empty values in .env mean "not set".

@@ -1,3 +1,156 @@
 @import "tailwindcss";
 @import "@parakeet/shared/theme.css";
 @import "@parakeet/shared/motion.css";
+
+/* ============================================================
+   Friday Jobs: a light, quiet workspace. Same brand hues as Friday AI, tuned for white surfaces;
+   ink-dark primary actions, brand colour reserved for matches and highlights.
+   ============================================================ */
+
+@theme {
+  --color-ink: #0c1322;
+}
+
+:root {
+  color-scheme: light;
+
+  --color-bg: #f6f7f9;
+  --color-surface: #ffffff;
+  --color-surface-2: #f3f4f7;
+  --color-surface-3: #e8eaef;
+  --color-line: #e7e9ee;
+  --color-line-strong: #d7dae1;
+  --color-fg: #0c1322;
+  --color-muted: #5a6476;
+  --color-faint: #959dab;
+
+  --color-brand: #059669;
+  --color-brand-2: #0891b2;
+  --color-accent: #7c3aed;
+  --color-danger: #dc2626;
+  --color-warn: #b45309;
+
+  --radius-card: 1rem;
+  --shadow-card: 0 1px 2px rgb(12 19 34 / 0.04), 0 1px 1px rgb(12 19 34 / 0.02);
+  --shadow-raised: 0 1px 2px rgb(12 19 34 / 0.05), 0 12px 32px -12px rgb(12 19 34 / 0.18);
+}
+
+html { color-scheme: light; }
+::selection { background: rgb(5 150 105 / 0.16); }
+
+@utility card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+}
+
+/* Buttons: the shared .btn sizing with light-surface variants. */
+@utility btn-primary {
+  color: #fff;
+  background: var(--color-ink);
+  box-shadow: 0 1px 2px rgb(12 19 34 / 0.2), inset 0 1px 0 rgb(255 255 255 / 0.1);
+  &:hover { background: #1c2536; }
+}
+
+@utility btn-brand {
+  color: #fff;
+  background: linear-gradient(120deg, #059669, #0891b2);
+  box-shadow: 0 6px 20px -8px rgb(5 150 105 / 0.6), inset 0 1px 0 rgb(255 255 255 / 0.25);
+  &:hover { filter: brightness(1.06); }
+}
+
+@utility btn-secondary {
+  color: var(--color-fg);
+  background: var(--color-surface);
+  border: 1px solid var(--color-line-strong);
+  box-shadow: 0 1px 2px rgb(12 19 34 / 0.04);
+  &:hover { background: var(--color-surface-2); }
+}
+
+@utility btn-ghost {
+  color: var(--color-muted);
+  &:hover { color: var(--color-fg); background: rgb(12 19 34 / 0.05); }
+}
+
+@utility input {
+  background: var(--color-surface);
+  &:focus { border-color: rgb(5 150 105 / 0.55); box-shadow: 0 0 0 4px rgb(5 150 105 / 0.1); }
+}
+
+@utility chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  border-radius: 9999px;
+  border: 1px solid var(--color-line);
+  background: var(--color-surface-2);
+  padding: 0.2rem 0.6rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--color-muted);
+  white-space: nowrap;
+}
+
+.text-gradient {
+  background: linear-gradient(100deg, #059669 0%, #0891b2 50%, #7c3aed 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+
+/* Soft hero wash for the landing page. */
+.hero-wash {
+  background:
+    radial-gradient(50% 60% at 20% 0%, rgb(16 185 129 / 0.12), transparent 70%),
+    radial-gradient(40% 50% at 85% 10%, rgb(124 58 237 / 0.1), transparent 70%),
+    radial-gradient(40% 50% at 55% 40%, rgb(8 145 178 / 0.08), transparent 70%);
+}
+.dot-grid {
+  background-image: radial-gradient(rgb(12 19 34 / 0.08) 1px, transparent 1px);
+  background-size: 22px 22px;
+  mask-image: radial-gradient(ellipse at 50% 30%, black 20%, transparent 70%);
+}
+
+/* Match score ring: --score 0–100, --ring the colour. */
+.match-ring {
+  background: conic-gradient(var(--ring) calc(var(--score) * 1%), var(--color-surface-3) 0);
+  border-radius: 9999px;
+  display: grid;
+  place-items: center;
+}
+.match-ring > span {
+  background: var(--color-surface);
+  border-radius: 9999px;
+  display: grid;
+  place-items: center;
+}
+
+.skeleton {
+  background: linear-gradient(90deg, var(--color-surface-2) 25%, var(--color-surface-3) 50%, var(--color-surface-2) 75%);
+  background-size: 200% 100%;
+  animation: skeleton 1.4s ease infinite;
+  border-radius: 0.5rem;
+}
+@keyframes skeleton { to { background-position: -200% 0; } }
+
+/* Job descriptions: sanitised HTML from company job boards (formatting tags and links only). */
+.job-description {
+  color: #3b4456;
+  font-size: 0.9375rem;
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+
+  & :where(h2, h3, h4) { color: var(--color-fg); font-weight: 600; margin: 1.6em 0 0.5em; }
+  & h2 { font-size: 1.125rem; }
+  & h3 { font-size: 1rem; }
+  & :where(p, ul, ol, blockquote, div) { margin: 0.7em 0; }
+  & :where(ul, ol) { padding-left: 1.3em; }
+  & ul { list-style: disc; }
+  & ol { list-style: decimal; }
+  & li { margin: 0.3em 0; }
+  & li::marker { color: var(--color-faint); }
+  & :where(strong, b) { color: var(--color-fg); font-weight: 600; }
+  & a { color: var(--color-brand); text-decoration: underline; text-underline-offset: 2px; }
+  & blockquote { border-left: 2px solid var(--color-line-strong); padding-left: 1em; }
+  & > :first-child { margin-top: 0; }
+}

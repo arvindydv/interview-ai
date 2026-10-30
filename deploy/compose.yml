@@ -44,7 +44,10 @@ services:
     <<: *service
     image: ${REGISTRY:?}/parakeet-jobs:${TAG:?}
     environment:
+      # Listings are fetched server-side from the API over the internal network.
+      API_URL: http://api:4000
       NODE_OPTIONS: --max-old-space-size=160
+    depends_on: [api]
     mem_limit: 256m
 
   api:

@@ -69,3 +69,20 @@ export async function sendEmail(job: EmailJob, dedupeKey: string, log: { error: 
     log.error({ err, template: job.template }, 'failed to enqueue email');
   }
 }
+
+// Friday Jobs matches, run by apps/worker: "matches.refresh" { userId } rescores listings for one user.
+export const MATCHES_QUEUE = 'matches';
+export const matchesQueue = new Queue<{ userId: string }>(MATCHES_QUEUE, { connection });
+
+/** Queues a match refresh; one already waiting for this user absorbs it. Never throws. */
+export async function refreshMatches(userId: string, log: { error: (o: object, m: string) => void }) {
+  try {
+    await matchesQueue.add('matches.refresh', { userId }, {
+      jobId: `refresh-${userId}`,
+      removeOnComplete: true,
+      removeOnFail: { age: 24 * 3600 },
+    });
+  } catch (err) {
+    log.error({ err }, 'failed to enqueue match refresh');
+  }
+}
