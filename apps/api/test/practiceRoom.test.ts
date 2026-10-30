@@ -171,3 +171,40 @@ test('a repeat request keeps the same question open', async () => {
   assert.equal(store.answers[0], null);
   room.close();
 });
+
+test('a decision started on the early end of a sentence is used when the sentence ends as predicted', async () => {
+  const { room, store, lines, listening } = setup();
+  await room.join();
+  script.greeting.push({ action: 'reply', say: 'Ready to start?' });
+  speak('Hi');
+  await until(() => lines().length === 2 && listening());
+  script.confirm.push({ action: 'start', say: 'Tell me about your role at Acme.' });
+  speak('Sure');
+  await until(() => store.questions.length === 1 && listening());
+
+  const before = prompts.length;
+  script.interview.push({ action: 'ask', say: 'Got it. What was the hardest part?' });
+  const answer = 'I led the billing team of five and we rebuilt invoicing';
+  onTurn({ event: 'StartOfTurn', turn_index: 1, transcript: '' });
+  onTurn({ event: 'Update', turn_index: 1, transcript: answer });
+  onTurn({ event: 'EagerEndOfTurn', turn_index: 1, transcript: answer });
+  await wait(30); // the model is asked now, before the end of the sentence is confirmed
+  assert.equal(prompts.length, before + 1);
+  assert.match(prompts[prompts.length - 1], /Candidate: I led the billing team/);
+  onTurn({ event: 'EndOfTurn', turn_index: 1, transcript: answer });
+  await until(() => store.questions.length === 2 && listening());
+  assert.equal(prompts.length, before + 1, 'no second model call');
+  assert.equal(store.answers[0]?.text, answer);
+
+  // A sentence that carries on after the early end throws the speculation away.
+  script.interview.push({ action: 'ask', say: 'unused' }, { action: 'ask', say: 'And how did you measure it?' });
+  onTurn({ event: 'StartOfTurn', turn_index: 2, transcript: '' });
+  onTurn({ event: 'EagerEndOfTurn', turn_index: 2, transcript: 'The hardest part was' });
+  await wait(30);
+  onTurn({ event: 'TurnResumed', turn_index: 2, transcript: 'The hardest part was' });
+  onTurn({ event: 'Update', turn_index: 2, transcript: 'The hardest part was migrating old invoices' });
+  onTurn({ event: 'EndOfTurn', turn_index: 2, transcript: 'The hardest part was migrating old invoices' });
+  await until(() => store.questions.length === 3 && listening());
+  assert.equal(store.questions[2].question, 'And how did you measure it?');
+  room.close();
+});

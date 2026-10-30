@@ -8,6 +8,7 @@ import { AnswerMeter } from './delivery.js';
 import { interviewerTurn, type Turn } from './interviewer.js';
 import { subscribeLive, type LiveEvent } from './liveEvents.js';
 import { onlineUserIds } from './liveRegistry.js';
+import { warmConnections } from './warm.js';
 import { FluxStream, sttConfigured, type TurnInfo } from './stt.js';
 import { chargeMinutes, minutesLeft, trialBalance } from './trial.js';
 import { streamSpeech } from './tts.js';
@@ -22,9 +23,11 @@ import { streamSpeech } from './tts.js';
 // (lib/delivery.ts) for the confidence debrief.
 
 /** After a sentence ends, wait this long for more before deciding the answer might be done. */
-const SETTLE_MS = 700;
+const SETTLE_MS = 400;
 /** Silence after an answer the model judged unfinished, before moving on anyway. */
-const PATIENCE_MS = 6_000;
+const PATIENCE_MS = 4_000;
+/** While the room is open, connections to the speech and model services are kept warm this often. */
+const WARM_MS = 25_000;
 /** If speech started but the recogniser never closed the sentence, decide anyway after this long. */
 const STUCK_MS = 10_000;
 /** Silence after a question before the interviewer offers to repeat it (once per question). */
@@ -85,6 +88,7 @@ type Line = { role: 'interviewer' | 'candidate'; text: string };
 
 const greetingTime = (hour: number) => (hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening');
 const firstName = (name: string) => name.trim().split(/\s+/)[0] ?? '';
+const normalize = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 const wordCount = (s: string) => (s.trim() ? s.trim().split(/\s+/).length : 0);
 
 export class PracticeRoom {
@@ -113,6 +117,13 @@ export class PracticeRoom {
   /** Bumped whenever the candidate says more, so a decision made on an older transcript is dropped. */
   private generation = 0;
   private thinking: AbortController | null = null;
+  /**
+   * A decision started speculatively when the recogniser thought the candidate had *probably*
+   * finished (EagerEndOfTurn). If the sentence ends as predicted, it's used at once instead of
+   * waiting for the confirmed end and asking the model then.
+   */
+  private spec: { reply: string; turn: Promise<Turn | null>; ctrl: AbortController } | null = null;
+  private warmer: NodeJS.Timeout | null = null;
 
   // The clock: interview time used before this connection, plus time since `since` while running.
   private endsAt = 0;
@@ -140,6 +151,8 @@ export class PracticeRoom {
   async join() {
     if (this.phase !== 'lobby' || this.closed) return;
     this.openFlux();
+    warmConnections();
+    this.warmer = setInterval(warmConnections, WARM_MS);
     if (this.session.startedAt) return this.resume();
     this.setPhase('greeting');
     const name = firstName(this.deps.candidateName);
@@ -225,7 +238,9 @@ export class PracticeRoom {
     if (this.closed) return;
     this.closed = true;
     this.thinking?.abort();
+    this.dropSpec();
     this.clearTimers();
+    if (this.warmer) clearInterval(this.warmer);
     if (this.tick) clearInterval(this.tick);
     if (this.endTimer) clearTimeout(this.endTimer);
     this.playing?.done();
@@ -308,9 +323,14 @@ export class PracticeRoom {
   private onTurn(turn: TurnInfo) {
     if (!this.listening) return;
     const text = turn.transcript.trim();
-    if (turn.event === 'StartOfTurn' || turn.event === 'TurnResumed' || (turn.event === 'Update' && text)) {
+    const grew = turn.event === 'Update' && text && wordCount(text) > wordCount(this.partial);
+    if (turn.event === 'StartOfTurn' || turn.event === 'TurnResumed' || grew) {
       // They're (still) talking: whatever was being decided is out of date.
       this.saidMore();
+    }
+    if (turn.event === 'EagerEndOfTurn' && text) {
+      this.partial = text;
+      this.speculate();
     }
     if (turn.event === 'EndOfTurn') {
       this.partial = '';
@@ -319,9 +339,16 @@ export class PracticeRoom {
         this.lines.push({ role: 'candidate', text });
         this.meter?.wordConfidence(turn.words?.map((w) => w.confidence) ?? []);
       }
-      this.deps.send({ type: 'transcript', text: this.replyText(), final: true });
-      this.meter?.words(wordCount(this.replyText()));
-      if (this.replyText()) this.settleTimer = setTimeout(() => void this.decide(false), SETTLE_MS);
+      const reply = this.replyText();
+      this.deps.send({ type: 'transcript', text: reply, final: true });
+      this.meter?.words(wordCount(reply));
+      const spec = this.spec;
+      this.spec = null;
+      if (spec && normalize(spec.reply) === normalize(reply)) void this.decide(false, undefined, spec);
+      else {
+        spec?.ctrl.abort();
+        if (reply) this.settleTimer = setTimeout(() => void this.decide(false), SETTLE_MS);
+      }
       return;
     }
     if (text) {
@@ -331,10 +358,27 @@ export class PracticeRoom {
     }
   }
 
+  /** Starts deciding on the reply as it stands, in case this is where the sentence ends. */
+  private speculate() {
+    if (this.closed || this.finishing || !['greeting', 'confirm', 'interview'].includes(this.phase)) return;
+    if (this.phase === 'interview' && (this.timeUp || this.endsAt - Date.now() < WRAP_AT_MS)) return;
+    this.dropSpec();
+    const reply = this.replyText();
+    const ctrl = new AbortController();
+    const turn = this.ask(this.prompt(false, false, this.partial), ctrl.signal).catch(() => null);
+    this.spec = { reply, turn, ctrl };
+  }
+
+  private dropSpec() {
+    this.spec?.ctrl.abort();
+    this.spec = null;
+  }
+
   private saidMore() {
     this.generation++;
     this.thinking?.abort();
     this.thinking = null;
+    this.dropSpec();
     this.clearTimers();
     if (this.replyText()) this.patienceTimer = setTimeout(() => void this.decide(true), STUCK_MS);
     if (this.interviewer !== 'listening') this.state('listening');
@@ -363,14 +407,14 @@ export class PracticeRoom {
    * said so, or went quiet after an unfinished-sounding answer). `next` asks for a question with no
    * reply to judge (after a reconnect).
    */
-  private async decide(force: boolean, next?: 'next') {
+  private async decide(force: boolean, next?: 'next', spec?: { turn: Promise<Turn | null>; ctrl: AbortController }) {
     if (this.closed || this.finishing || !['greeting', 'confirm', 'interview'].includes(this.phase)) return;
     const reply = this.replyText();
     if (!next && !reply) return;
     this.clearTimers();
     const generation = ++this.generation;
     this.thinking?.abort();
-    const ctrl = new AbortController();
+    const ctrl = spec?.ctrl ?? new AbortController();
     this.thinking = ctrl;
     this.state('thinking');
 
@@ -381,7 +425,7 @@ export class PracticeRoom {
 
     let turn: Turn;
     try {
-      turn = await this.ask(this.prompt(force, Boolean(next)), ctrl.signal);
+      turn = (spec && (await spec.turn)) || (await this.ask(this.prompt(force, Boolean(next)), ctrl.signal));
     } catch (err) {
       if (ctrl.signal.aborted || this.closed) return;
       this.deps.log.warn({ err: (err as Error).message }, 'interviewer turn failed');
@@ -450,7 +494,8 @@ export class PracticeRoom {
     }
   }
 
-  private prompt(force: boolean, next: boolean) {
+  /** `pending` is what the candidate is saying now, before the recogniser has settled it. */
+  private prompt(force: boolean, next: boolean, pending?: string) {
     const round = ROUND_TYPES.find((r) => r.id === this.session.roundType);
     const difficulty = PRACTICE_DIFFICULTIES.find((d) => d.id === this.session.difficulty);
     const name = firstName(this.deps.candidateName);
@@ -465,8 +510,7 @@ export class PracticeRoom {
       this.phase === 'interview' && `Questions asked so far: ${this.session.questions.length}`,
       '</interview_setup>',
     ].filter(Boolean);
-    const convo = this.lines
-      .slice(-40)
+    const convo = [...this.lines.slice(-40), ...(pending ? [{ role: 'candidate' as const, text: pending }] : [])]
       .map((l) => `${l.role === 'interviewer' ? 'Interviewer' : 'Candidate'}: ${l.text}`)
       .join('\n');
 

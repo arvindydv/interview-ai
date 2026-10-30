@@ -150,8 +150,9 @@ class VoicePlayer {
     const src = ctx.createBufferSource();
     src.buffer = buffer;
     src.connect(ctx.destination);
-    // A little lead time for the first chunk, then each one right after the last.
-    this.next = Math.max(this.next, ctx.currentTime + 0.05);
+    // Buffer a moment before the first chunk (and after a hiccup in the stream), so a late chunk
+    // doesn't leave a gap mid-word; then each chunk plays right after the last.
+    if (this.next < ctx.currentTime + 0.02) this.next = ctx.currentTime + (this.next ? 0.15 : 0.3);
     src.start(this.next);
     this.next += buffer.duration;
     this.sources.add(src);
