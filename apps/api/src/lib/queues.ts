@@ -58,6 +58,18 @@ export const historyQueue = new Queue<{ sessionId?: string; userId?: string }>(H
   },
 });
 
+// Friday Jobs resume tailoring, run by apps/worker. Job "resume.tailor", data { tailoredId }.
+export const TAILOR_QUEUE = 'tailor';
+export const tailorQueue = new Queue<{ tailoredId: string }>(TAILOR_QUEUE, {
+  connection,
+  defaultJobOptions: {
+    attempts: 3,
+    backoff: { type: 'exponential', delay: 5_000 },
+    removeOnComplete: { age: 24 * 3600 },
+    removeOnFail: { age: 7 * 24 * 3600 },
+  },
+});
+
 /**
  * Queues an email. `dedupeKey` becomes the job ID, so retried requests can't send it twice.
  * Never throws: email is best-effort and must not fail the request that triggered it.

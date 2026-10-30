@@ -9,11 +9,12 @@ import { closeMatchesQueue, startMatchesWorker } from './queues/matches.js';
 import { startPracticeWorker } from './queues/practice.js';
 import { startProfileWorker } from './queues/profile.js';
 import { startSystemWorker } from './queues/system.js';
+import { startTailorWorker } from './queues/tailor.js';
 
 // Background jobs (spec §3.2). Resume parsing, Interview Pack builds, summaries, scoring, retention
 // and usage roll-ups get their own queues here as they land.
-const workers = [startSystemWorker(), startEmailWorker(), startProfileWorker(), startPracticeWorker(), startHistoryWorker(), startListingsWorker(), startMatchesWorker(), startDiscoveryWorker()];
-console.log(`[worker] listening on queues "system", "email", "profile", "practice", "history", "listings", "matches", "discovery" (${env.REDIS_URL})`);
+const workers = [startSystemWorker(), startEmailWorker(), startProfileWorker(), startPracticeWorker(), startHistoryWorker(), startListingsWorker(), startMatchesWorker(), startDiscoveryWorker(), startTailorWorker()];
+console.log(`[worker] listening on queues "system", "email", "profile", "practice", "history", "listings", "matches", "discovery", "tailor" (${env.REDIS_URL})`);
 void verifyMailer();
 
 const shutdown = async () => {

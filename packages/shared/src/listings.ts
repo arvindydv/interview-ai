@@ -405,3 +405,46 @@ export interface WebJobPage {
   /** False when no Careerjet key is configured. */
   available: boolean;
 }
+
+/**
+ * The candidate's resume rewritten for one job (apps/worker/src/queues/tailor.ts). Reordered and
+ * reworded to put the job's must-haves first, using only facts from their own resume.
+ */
+export interface TailoredResume {
+  name: string | null;
+  /** One line under the name, aimed at this job, e.g. "Backend engineer · Payments · 6 years". */
+  headline: string;
+  /** Email, phone, city and profile links, exactly as on the resume. */
+  contact: string[];
+  /** 2–3 lines aimed at this job. */
+  summary: string;
+  /** Grouped, the job's must-haves first. */
+  skills: { group: string; items: string[] }[];
+  experience: { company: string; title: string; location: string | null; period: string | null; bullets: string[] }[];
+  projects: { name: string; bullets: string[]; tech: string[] }[];
+  education: { school: string; degree: string | null; year: string | null; detail: string | null }[];
+  certifications: string[];
+  /** For the candidate's review, not printed: the job's requirements the resume now shows. */
+  matchedKeywords: string[];
+  /** The job's requirements their resume doesn't support. Never added to the resume. */
+  missingKeywords: string[];
+  /** What was changed for this job, one short line each. */
+  changes: string[];
+}
+
+export type TailorStatus = 'tailoring' | 'ready' | 'failed';
+
+/** GET/POST /v1/job-feed/:id/resume. */
+export interface TailoredResumeRecord {
+  id: string;
+  listingId: string | null;
+  title: string;
+  company: string;
+  status: TailorStatus;
+  content: TailoredResume | null;
+  error: string | null;
+  updatedAt: string;
+}
+
+/** New tailorings a day per user, and the wait before the same job can be tailored again. */
+export const TAILOR_LIMITS = { perDay: 30, retrySeconds: 30 } as const;

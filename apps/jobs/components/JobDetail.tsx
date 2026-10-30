@@ -1,11 +1,12 @@
 'use client';
 import { useEffect, useState } from 'react';
 import {
-  ArrowUpRight, Bookmark, BookmarkCheck, Briefcase, Building2, Check, Clock, MapPin, Sparkles, Wallet, X,
+  ArrowUpRight, Bookmark, BookmarkCheck, Briefcase, Building2, Check, Clock, MapPin, Wallet, X,
 } from 'lucide-react';
 import {
   APPLICATION_STATUSES, APPLICATION_STATUS_LABELS, type ApplicationStatus, type FeedDetail, type FeedItem,
 } from '@parakeet/shared';
+import { TailorPanel } from './TailorPanel';
 import { AgencyBadge, CompanyLogo, MatchRing, Spinner, StartupBadge, ViaBadge, matchTone } from './ui';
 import { api, ApiError } from '@/lib/api';
 import { listingFacts, postedAgo } from '@/lib/format';
@@ -227,19 +228,7 @@ export function JobDetail({
           </section>
         )}
 
-        <section className="flex gap-3 rounded-2xl border border-violet-200/70 bg-violet-50/50 p-4">
-          <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-violet-100 text-violet-700">
-            <Sparkles size={17} />
-          </span>
-          <div className="text-sm">
-            <p className="font-medium">
-              AI Apply <span className="ml-1 rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 uppercase">Soon</span>
-            </p>
-            <p className="mt-0.5 text-muted">
-              Friday will tailor your resume to this job description and submit the application for you.
-            </p>
-          </div>
-        </section>
+        {!(missing || head.closed) && job && <TailorPanel id={id} partial={job.descriptionPartial} />}
 
         <section>
           <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold">

@@ -2,14 +2,15 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import {
   AGGREGATORS, AGGREGATOR_NAMES, AGGREGATOR_SITES, APPLICATION_STATUSES, COMPANY_TYPES, PLATFORMS, FEED_SORTS, FEED_VIEWS, JOB_TYPES,
-  LISTING_LIMITS, MATCH_THRESHOLDS, PREFERENCE_LIMITS, SEARCH_PROVIDERS, WORKPLACES, resumeRoles, type ApplicationStatus,
+  LISTING_LIMITS, MATCH_THRESHOLDS, PREFERENCE_LIMITS, SEARCH_PROVIDERS, TAILOR_LIMITS, WORKPLACES, resumeRoles, type ApplicationStatus,
   type CompanyType, type FeedDetail, type FeedFacets, type FeedItem, type FeedPage, type FeedView, type JobPreferences, type Platform,
-  type JobType, type JobsSummary, type ListingProvider, type ResumeProfile, type WebJob, type WebJobPage, type Workplace,
+  type JobType, type JobsSummary, type ListingProvider, type ResumeProfile, type TailoredResume, type TailoredResumeRecord,
+  type TailorStatus, type WebJob, type WebJobPage, type Workplace,
   dedupeKey, isAgency,
 } from '@parakeet/shared';
 import { requireAuth } from '../lib/auth.js';
 import { sql } from '../lib/db.js';
-import { refreshMatches } from '../lib/queues.js';
+import { refreshMatches, tailorQueue } from '../lib/queues.js';
 import { careerjetEnabled, searchCareerjet } from '../lib/careerjet.js';
 import { ensureUser } from '../lib/users.js';
 
@@ -212,6 +213,30 @@ const ITEM_COLUMNS = sql`
   case when s.provider = any(${[...AGGREGATORS]}::text[]) then null else s.website end as website,
   l.company_logo, l.posted_on, l.agency, s.provider, s.startup, s.yc_batch, l.closed_at is not null as closed,
   m.score, m.title_score, m.skill_score, m.level_score, m.matched_skills, a.status`;
+
+interface TailoredRow {
+  id: string;
+  listing_id: string | null;
+  title: string;
+  company: string;
+  status: TailorStatus;
+  content: TailoredResume | null;
+  error: string | null;
+  updated_at: Date;
+}
+
+const TAILORED_COLUMNS = sql`id, listing_id, title, company, status, content, error, updated_at`;
+
+const toTailored = (r: TailoredRow): TailoredResumeRecord => ({
+  id: r.id,
+  listingId: r.listing_id,
+  title: r.title,
+  company: r.company,
+  status: r.status,
+  content: r.content,
+  error: r.error,
+  updatedAt: r.updated_at.toISOString(),
+});
 
 export default async function jobFeedRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAuth);
@@ -467,5 +492,67 @@ export default async function jobFeedRoutes(app: FastifyInstance) {
       returning status`;
     if (!row) return reply.notFound('This job is no longer available.');
     return { status: row.status };
+  });
+
+  // The candidate's resume tailored to this job, if they've asked for one.
+  app.get<{ Params: { id: string } }>('/v1/job-feed/:id/resume', async (req, reply): Promise<{ tailored: TailoredResumeRecord | null } | void> => {
+    if (!z.uuid().safeParse(req.params.id).success) return reply.notFound('No such job.');
+    const [row] = await sql<TailoredRow[]>`
+      select ${TAILORED_COLUMNS} from public.tailored_resumes
+      where user_id = ${req.user.id} and listing_id = ${req.params.id}`;
+    return { tailored: row ? toTailored(row) : null };
+  });
+
+  // Tailors the candidate's latest resume to this job (apps/worker/src/queues/tailor.ts), replacing
+  // any earlier version for the same job. The client polls the GET above until it's ready.
+  app.post<{ Params: { id: string } }>('/v1/job-feed/:id/resume', async (req, reply): Promise<{ tailored: TailoredResumeRecord } | void> => {
+    if (!z.uuid().safeParse(req.params.id).success) return reply.notFound('No such job.');
+    const userId = req.user.id;
+    const [resume] = await sql<{ id: string; status: 'parsing' | 'ready' | 'failed' }[]>`
+      select id, status from public.resumes where user_id = ${userId} order by created_at desc limit 1`;
+    if (!resume) return reply.code(409).send({ error: 'no_resume', message: 'Upload your resume first.' });
+    if (resume.status === 'parsing') {
+      return reply.code(409).send({ error: 'resume_parsing', message: 'Your resume is still being analysed. Try again in a moment.' });
+    }
+    const [listing] = await sql<{ title: string; company: string; closed: boolean }[]>`
+      select title, company, closed_at is not null as closed from public.job_listings where id = ${req.params.id}`;
+    if (!listing || listing.closed) return reply.notFound('This job is no longer available.');
+
+    const [prev] = await sql<{ status: TailorStatus; age_s: number }[]>`
+      select status, extract(epoch from now() - updated_at)::int as age_s from public.tailored_resumes
+      where user_id = ${userId} and listing_id = ${req.params.id}`;
+    if (prev?.status === 'tailoring' && prev.age_s < 300) {
+      return reply.code(409).send({ error: 'conflict', message: 'Already tailoring your resume for this job.' });
+    }
+    if (prev && prev.age_s < TAILOR_LIMITS.retrySeconds) {
+      return reply.code(429).send({ error: 'too_soon', message: 'Please wait a few seconds before tailoring again.' });
+    }
+    if (!prev) {
+      const [{ count }] = await sql<{ count: number }[]>`
+        select count(*)::int as count from public.tailored_resumes
+        where user_id = ${userId} and created_at > now() - interval '1 day'`;
+      if (count >= TAILOR_LIMITS.perDay) {
+        return reply.code(429).send({ error: 'rate_limited', message: `You can tailor your resume for ${TAILOR_LIMITS.perDay} jobs a day. Try again tomorrow.` });
+      }
+    }
+
+    await ensureUser(req);
+    const [row] = await sql<TailoredRow[]>`
+      insert into public.tailored_resumes (user_id, listing_id, resume_id, title, company)
+      values (${userId}, ${req.params.id}, ${resume.id}, ${listing.title}, ${listing.company})
+      on conflict (user_id, listing_id) do update set
+        resume_id = excluded.resume_id, title = excluded.title, company = excluded.company,
+        status = 'tailoring', error = null, updated_at = now()
+      returning ${TAILORED_COLUMNS}`;
+    try {
+      await tailorQueue.add('resume.tailor', { tailoredId: row.id }, { jobId: `tailor-${row.id}-${Date.now()}` });
+    } catch (err) {
+      req.log.error({ err }, 'failed to enqueue resume tailoring');
+      const [failed] = await sql<TailoredRow[]>`
+        update public.tailored_resumes set status = 'failed', error = 'Resume tailoring is unavailable right now.', updated_at = now()
+        where id = ${row.id} returning ${TAILORED_COLUMNS}`;
+      return { tailored: toTailored(failed) };
+    }
+    return { tailored: toTailored(row) };
   });
 }

@@ -20,6 +20,8 @@ const schema = z.object({
   LLM_PROFILE_MODEL: z.string().optional(),
   /** Mock-interview questions and scoring (spec F1/F2). Defaults to LLM_PROFILE_MODEL, then the same default. */
   LLM_PRACTICE_MODEL: z.string().optional(),
+  /** Friday Jobs resume tailoring. Defaults to LLM_PROFILE_MODEL, then the same default. */
+  LLM_TAILOR_MODEL: z.string().optional(),
 
   // Brevo transactional SMTP. Without credentials (dev only) mail goes to the local Mailpit inbox.
   SMTP_HOST: z.string().default('smtp-relay.brevo.com'),

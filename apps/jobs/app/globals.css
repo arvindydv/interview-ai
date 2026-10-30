@@ -36,6 +36,10 @@
 }
 
 html { color-scheme: light; }
+
+/* Tailored resumes (app/(app)/resume): A4 with the margins on the page, not the browser's. */
+@page { size: A4; margin: 14mm 16mm; }
+@media print { body { background: #fff; } }
 ::selection { background: rgb(5 150 105 / 0.16); }
 
 @utility card {
