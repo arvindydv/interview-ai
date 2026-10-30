@@ -149,6 +149,19 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 CMD ["node", "dist/index.js"]
 
 FROM runtime AS worker
+# Friday Jobs edits the candidate's own resume file (apps/worker/python/resume_doc.py): Python with
+# PyMuPDF and python-docx, and free fonts that stand in for common resume fonts (Calibri → Carlito,
+# Arial → Liberation Sans, Garamond → EB Garamond…) when a PDF embeds only some of a font's letters.
+# PyMuPDF 2 lists pymupdf4llm and onnxruntime as dependencies; the script doesn't use them.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends python3 python3-venv fontconfig fonts-liberation2 fonts-crosextra-carlito \
+      fonts-crosextra-caladea fonts-ebgaramond fonts-lato fonts-open-sans fonts-roboto fonts-dejavu-core \
+ && rm -rf /var/lib/apt/lists/* \
+ && python3 -m venv /opt/resume-py \
+ && /opt/resume-py/bin/pip install --no-cache-dir --no-deps pymupdf==2.0 \
+ && /opt/resume-py/bin/pip install --no-cache-dir python-docx==1.2.0
+ENV PYTHON_BIN=/opt/resume-py/bin/python
+COPY --from=source /repo/apps/worker/python apps/worker/python
 COPY --from=prod-deps-worker /repo ./
 COPY --from=build-node /repo/packages/shared/dist packages/shared/dist
 COPY --from=build-node /repo/packages/emails/dist packages/emails/dist

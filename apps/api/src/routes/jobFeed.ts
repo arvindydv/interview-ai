@@ -221,11 +221,12 @@ interface TailoredRow {
   company: string;
   status: TailorStatus;
   content: TailoredResume | null;
+  file_name: string | null;
   error: string | null;
   updated_at: Date;
 }
 
-const TAILORED_COLUMNS = sql`id, listing_id, title, company, status, content, error, updated_at`;
+const TAILORED_COLUMNS = sql`id, listing_id, title, company, status, content, file_name, error, updated_at`;
 
 const toTailored = (r: TailoredRow): TailoredResumeRecord => ({
   id: r.id,
@@ -234,6 +235,7 @@ const toTailored = (r: TailoredRow): TailoredResumeRecord => ({
   company: r.company,
   status: r.status,
   content: r.content,
+  fileName: r.file_name,
   error: r.error,
   updatedAt: r.updated_at.toISOString(),
 });
@@ -503,14 +505,37 @@ export default async function jobFeedRoutes(app: FastifyInstance) {
     return { tailored: row ? toTailored(row) : null };
   });
 
+  // The tailored resume file (PDF or DOCX, as the candidate uploaded it).
+  app.get<{ Params: { id: string } }>('/v1/job-feed/:id/resume/file', async (req, reply) => {
+    if (!z.uuid().safeParse(req.params.id).success) return reply.notFound('No such job.');
+    const [row] = await sql<{ file: Buffer | null; file_name: string | null; format: 'pdf' | 'docx' | null }[]>`
+      select file, file_name, content->>'format' as format from public.tailored_resumes
+      where user_id = ${req.user.id} and listing_id = ${req.params.id} and status = 'ready'`;
+    if (!row?.file) return reply.notFound('No tailored resume for this job yet.');
+    const type = row.format === 'docx' ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' : 'application/pdf';
+    const name = row.file_name ?? `Resume.${row.format ?? 'pdf'}`;
+    return reply
+      .type(type)
+      .header('cache-control', 'private, no-store')
+      .header('content-disposition', `attachment; filename="${name.replace(/[^\w\- .]/g, '')}"; filename*=UTF-8''${encodeURIComponent(name)}`)
+      .send(row.file);
+  });
+
   // Tailors the candidate's latest resume to this job (apps/worker/src/queues/tailor.ts), replacing
   // any earlier version for the same job. The client polls the GET above until it's ready.
   app.post<{ Params: { id: string } }>('/v1/job-feed/:id/resume', async (req, reply): Promise<{ tailored: TailoredResumeRecord } | void> => {
     if (!z.uuid().safeParse(req.params.id).success) return reply.notFound('No such job.');
     const userId = req.user.id;
-    const [resume] = await sql<{ id: string; status: 'parsing' | 'ready' | 'failed' }[]>`
-      select id, status from public.resumes where user_id = ${userId} order by created_at desc limit 1`;
+    const [resume] = await sql<{ id: string; status: 'parsing' | 'ready' | 'failed'; has_file: boolean }[]>`
+      select id, status, file is not null as has_file from public.resumes where user_id = ${userId} order by created_at desc limit 1`;
     if (!resume) return reply.code(409).send({ error: 'no_resume', message: 'Upload your resume first.' });
+    // Tailoring edits the candidate's own file, so it keeps their design. Older uploads kept only the text.
+    if (!resume.has_file) {
+      return reply.code(409).send({
+        error: 'no_resume_file',
+        message: 'Upload your resume again as a PDF or Word file, so Friday can tailor it and keep its design.',
+      });
+    }
     if (resume.status === 'parsing') {
       return reply.code(409).send({ error: 'resume_parsing', message: 'Your resume is still being analysed. Try again in a moment.' });
     }

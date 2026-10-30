@@ -22,6 +22,9 @@ const schema = z.object({
   LLM_PRACTICE_MODEL: z.string().optional(),
   /** Friday Jobs resume tailoring. Defaults to LLM_PROFILE_MODEL, then the same default. */
   LLM_TAILOR_MODEL: z.string().optional(),
+  /** Python with PyMuPDF and python-docx, for editing resume files (python/requirements.txt). Default:
+   * apps/worker/.venv/bin/python when it exists, otherwise python3. */
+  PYTHON_BIN: z.string().optional(),
 
   // Brevo transactional SMTP. Without credentials (dev only) mail goes to the local Mailpit inbox.
   SMTP_HOST: z.string().default('smtp-relay.brevo.com'),

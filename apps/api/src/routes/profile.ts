@@ -104,8 +104,8 @@ export default async function profileRoutes(app: FastifyInstance) {
       const row = await sql.begin(async (tx) => {
         await tx`delete from public.resumes where user_id = ${req.user.id}`;
         const [r] = await tx<ResumeRow[]>`
-          insert into public.resumes (user_id, file_name, mime_type, text)
-          values (${req.user.id}, ${fileName}, ${mimeType || kind}, ${text})
+          insert into public.resumes (user_id, file_name, mime_type, text, file)
+          values (${req.user.id}, ${fileName}, ${mimeType || kind}, ${text}, ${kind === 'text' ? null : file})
           returning ${RESUME_COLUMNS}`;
         return r;
       });

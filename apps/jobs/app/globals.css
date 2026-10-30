@@ -37,9 +37,9 @@
 
 html { color-scheme: light; }
 
-/* Tailored resumes (app/(app)/resume): A4 with the margins on the page, not the browser's. */
-@page { size: A4; margin: 14mm 16mm; }
-@media print { body { background: #fff; } }
+/* Tailored Word resumes (app/(app)/resume) are previewed with docx-preview; keep its page grey off. */
+.docx-preview .docx-wrapper { background: var(--color-surface-2); padding: 16px; }
+.docx-preview .docx-wrapper > section.docx { box-shadow: 0 1px 3px rgb(12 19 34 / 0.12); margin-bottom: 16px; }
 ::selection { background: rgb(5 150 105 / 0.16); }
 
 @utility card {

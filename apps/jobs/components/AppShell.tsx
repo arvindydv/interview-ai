@@ -129,12 +129,12 @@ function Shell({ children }: { children: React.ReactNode }) {
   useEffect(() => setOpen(false), [pathname]);
 
   return (
-    <div className="min-h-screen bg-bg print:bg-white">
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 border-r border-line bg-surface lg:block print:hidden">
+    <div className="min-h-screen bg-bg">
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 border-r border-line bg-surface lg:block">
         <Sidebar onNavigate={() => {}} />
       </aside>
 
-      <header className="sticky top-0 z-20 flex items-center justify-between border-b border-line bg-surface/90 px-4 py-3 backdrop-blur lg:hidden print:hidden">
+      <header className="sticky top-0 z-20 flex items-center justify-between border-b border-line bg-surface/90 px-4 py-3 backdrop-blur lg:hidden">
         <Link href="/recommended">
           <Logo />
         </Link>
@@ -155,7 +155,7 @@ function Shell({ children }: { children: React.ReactNode }) {
         </div>
       )}
 
-      <div className="lg:pl-64 print:pl-0">{children}</div>
+      <div className="lg:pl-64">{children}</div>
     </div>
   );
 }

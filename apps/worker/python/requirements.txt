@@ -1,0 +1,4 @@
+# Installed with `pip install --no-deps pymupdf==2.0` first: PyMuPDF 2 lists pymupdf4llm and onnxruntime
+# as dependencies, but resume_doc.py doesn't use them. See the worker stage of the root Dockerfile.
+pymupdf==2.0
+python-docx==1.2.0

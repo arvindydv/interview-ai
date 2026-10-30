@@ -1,149 +1,88 @@
 'use client';
-import { use, useEffect, useState } from 'react';
+import { use, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, Check, Download, Info } from 'lucide-react';
-import type { TailoredResume, TailoredResumeRecord } from '@parakeet/shared';
+import type { TailoredResumeRecord } from '@parakeet/shared';
 import { Spinner } from '@/components/ui';
-import { api } from '@/lib/api';
+import { api, apiFile } from '@/lib/api';
 
-// A resume tailored to one job, laid out to print (or save as PDF) on A4. Single column and plain
-// text so applicant tracking systems read it in order.
+// The candidate's own resume file, tailored to one job: a preview of the file itself, the download,
+// and what changed beside it.
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+/** Marks the bolded skills in a line, the way they appear in the file. */
+function Highlighted({ text, terms }: { text: string; terms: string[] }) {
+  if (!terms.length) return <>{text}</>;
+  const escaped = [...terms].sort((a, b) => b.length - a.length).map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const pattern = new RegExp(`(?<![\\w.])((?:${escaped.join('|')})(?:\\.\\w+)*)(?!\\w)`, 'gi');
   return (
-    <section className="mt-5 break-inside-avoid-page">
-      <h2 className="border-b border-ink/70 pb-0.5 text-[11px] font-bold tracking-[0.12em] uppercase">{title}</h2>
-      <div className="mt-2">{children}</div>
-    </section>
+    <>
+      {text.split(pattern).map((part, i) =>
+        i % 2 ? (
+          <mark key={i} className="rounded bg-emerald-100 px-0.5 font-semibold text-fg">
+            {part}
+          </mark>
+        ) : (
+          part
+        ),
+      )}
+    </>
   );
 }
 
-function Bullets({ items }: { items: string[] }) {
-  return (
-    <ul className="mt-1 list-disc space-y-0.5 pl-4 marker:text-ink/60">
-      {items.map((b, i) => (
-        <li key={i}>{b}</li>
-      ))}
-    </ul>
-  );
-}
-
-function ResumeDocument({ r }: { r: TailoredResume }) {
-  return (
-    <article className="mx-auto w-full max-w-[210mm] bg-white px-[16mm] py-[14mm] text-[10.5pt] leading-snug text-ink shadow-sm ring-1 ring-line print:max-w-none print:p-0 print:shadow-none print:ring-0">
-      <header className="text-center">
-        {r.name && <h1 className="text-[20pt] font-bold tracking-tight">{r.name}</h1>}
-        <p className="mt-0.5 font-medium">{r.headline}</p>
-        {r.contact.length > 0 && <p className="mt-1 text-[9.5pt] text-ink/75">{r.contact.join('  ·  ')}</p>}
-      </header>
-
-      {r.summary && (
-        <Section title="Summary">
-          <p>{r.summary}</p>
-        </Section>
-      )}
-
-      {r.skills.length > 0 && (
-        <Section title="Skills">
-          <div className="space-y-0.5">
-            {r.skills.map((g) => (
-              <p key={g.group}>
-                <span className="font-semibold">{g.group}:</span> {g.items.join(', ')}
-              </p>
-            ))}
-          </div>
-        </Section>
-      )}
-
-      {r.experience.length > 0 && (
-        <Section title="Experience">
-          <div className="space-y-3">
-            {r.experience.map((e, i) => (
-              <div key={i} className="break-inside-avoid">
-                <div className="flex flex-wrap items-baseline justify-between gap-x-3">
-                  <p>
-                    <span className="font-semibold">{e.title}</span>, {e.company}
-                    {e.location && <span className="text-ink/70"> · {e.location}</span>}
-                  </p>
-                  {e.period && <p className="text-[9.5pt] text-ink/70">{e.period}</p>}
-                </div>
-                {e.bullets.length > 0 && <Bullets items={e.bullets} />}
-              </div>
-            ))}
-          </div>
-        </Section>
-      )}
-
-      {r.projects.length > 0 && (
-        <Section title="Projects">
-          <div className="space-y-2.5">
-            {r.projects.map((p, i) => (
-              <div key={i} className="break-inside-avoid">
-                <p>
-                  <span className="font-semibold">{p.name}</span>
-                  {p.tech.length > 0 && <span className="text-ink/70"> · {p.tech.join(', ')}</span>}
-                </p>
-                {p.bullets.length > 0 && <Bullets items={p.bullets} />}
-              </div>
-            ))}
-          </div>
-        </Section>
-      )}
-
-      {r.education.length > 0 && (
-        <Section title="Education">
-          <div className="space-y-1.5">
-            {r.education.map((e, i) => (
-              <div key={i} className="flex flex-wrap items-baseline justify-between gap-x-3">
-                <p>
-                  <span className="font-semibold">{e.degree ?? e.school}</span>
-                  {e.degree && <>, {e.school}</>}
-                  {e.detail && <span className="text-ink/70"> · {e.detail}</span>}
-                </p>
-                {e.year && <p className="text-[9.5pt] text-ink/70">{e.year}</p>}
-              </div>
-            ))}
-          </div>
-        </Section>
-      )}
-
-      {r.certifications.length > 0 && (
-        <Section title="Certifications">
-          <p>{r.certifications.join(' · ')}</p>
-        </Section>
-      )}
-    </article>
-  );
+function DocxPreview({ file }: { file: Blob }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    let cancelled = false;
+    import('docx-preview')
+      .then(({ renderAsync }) => !cancelled && renderAsync(file, el, undefined, { inWrapper: true, ignoreLastRenderedPageBreak: true }))
+      .catch(() => !cancelled && setFailed(true));
+    return () => {
+      cancelled = true;
+      el.innerHTML = '';
+    };
+  }, [file]);
+  if (failed) return <p className="card p-6 text-sm text-muted">The preview isn&rsquo;t available. Download the file to see it.</p>;
+  return <div ref={ref} className="docx-preview overflow-x-auto rounded-xl" />;
 }
 
 export default function TailoredResumePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const [record, setRecord] = useState<TailoredResumeRecord | null | undefined>(undefined);
+  const [file, setFile] = useState<Blob | null>(null);
+  const [url, setUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api<{ tailored: TailoredResumeRecord | null }>(`/v1/job-feed/${id}/resume`).then(
-      (r) => setRecord(r.tailored),
-      (e) => setError((e as Error).message),
-    );
+    let cancelled = false;
+    api<{ tailored: TailoredResumeRecord | null }>(`/v1/job-feed/${id}/resume`)
+      .then(async ({ tailored }) => {
+        if (cancelled) return;
+        setRecord(tailored);
+        if (tailored?.status !== 'ready') return;
+        const blob = await apiFile(`/v1/job-feed/${id}/resume/file`);
+        if (!cancelled) setFile(blob);
+      })
+      .catch((e) => !cancelled && setError((e as Error).message));
+    return () => {
+      cancelled = true;
+    };
   }, [id]);
 
-  // The browser offers the title as the PDF's file name.
   useEffect(() => {
-    const c = record?.content;
-    if (!c || !record) return;
-    const prev = document.title;
-    document.title = [c.name, record.company, 'Resume'].filter(Boolean).join(' - ');
-    return () => {
-      document.title = prev;
-    };
-  }, [record]);
+    if (!file) return;
+    const u = URL.createObjectURL(file);
+    setUrl(u);
+    return () => URL.revokeObjectURL(u);
+  }, [file]);
 
   const content = record?.status === 'ready' ? record.content : null;
 
   return (
-    <main className="mx-auto max-w-5xl px-4 py-6 sm:px-6 print:p-0">
-      <div className="mb-5 flex flex-wrap items-center justify-between gap-3 print:hidden">
+    <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6">
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div>
           <Link href="/saved" onClick={(e) => history.length > 1 && (e.preventDefault(), history.back())} className="btn btn-ghost -ml-3 !px-3">
             <ArrowLeft size={16} /> Back
@@ -154,10 +93,10 @@ export default function TailoredResumePage({ params }: { params: Promise<{ id: s
             </h1>
           )}
         </div>
-        {content && (
-          <button onClick={() => window.print()} className="btn btn-primary">
-            <Download size={16} /> Download PDF
-          </button>
+        {url && record?.fileName && (
+          <a href={url} download={record.fileName} className="btn btn-primary">
+            <Download size={16} /> Download {content?.format === 'docx' ? 'Word file' : 'PDF'}
+          </a>
         )}
       </div>
 
@@ -174,9 +113,20 @@ export default function TailoredResumePage({ params }: { params: Promise<{ id: s
             : 'There’s no tailored resume for this job yet. Open the job and choose “Tailor my resume”.'}
         </div>
       ) : (
-        <div className="grid gap-6 lg:grid-cols-[1fr_280px] print:block">
-          <ResumeDocument r={content} />
-          <aside className="space-y-4 text-sm print:hidden">
+        <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
+          <div className="min-w-0">
+            {!file ? (
+              <div className="grid h-96 place-items-center">
+                <Spinner className="text-muted" />
+              </div>
+            ) : content.format === 'pdf' ? (
+              url && <iframe src={`${url}#toolbar=0&navpanes=0&view=FitH`} title="Tailored resume" className="h-[80vh] w-full rounded-xl border border-line bg-white" />
+            ) : (
+              <DocxPreview file={file} />
+            )}
+          </div>
+
+          <aside className="space-y-4 text-sm">
             <div className="card p-4">
               <p className="flex items-center gap-1.5 font-semibold">
                 <Info size={15} className="text-faint" /> What changed
@@ -187,6 +137,24 @@ export default function TailoredResumePage({ params }: { params: Promise<{ id: s
                 ))}
               </ul>
             </div>
+
+            {content.edits.length > 0 && (
+              <div className="card p-4">
+                <p className="font-semibold">Rewritten lines</p>
+                <p className="mt-0.5 text-xs text-muted">Skills in bold on your resume are highlighted.</p>
+                <ol className="mt-3 space-y-3">
+                  {content.edits.map((e, i) => (
+                    <li key={i} className="space-y-1 border-t border-line pt-3 first:border-0 first:pt-0">
+                      <p className="text-xs text-faint line-through decoration-faint/50">{e.before}</p>
+                      <p className="leading-relaxed">
+                        <Highlighted text={e.after} terms={content.bold} />
+                      </p>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            )}
+
             {content.matchedKeywords.length > 0 && (
               <div className="card p-4">
                 <p className="font-semibold">Matches the job</p>
@@ -199,6 +167,7 @@ export default function TailoredResumePage({ params }: { params: Promise<{ id: s
                 </div>
               </div>
             )}
+
             {content.missingKeywords.length > 0 && (
               <div className="card p-4">
                 <p className="font-semibold text-warn">Not on your resume</p>
@@ -209,9 +178,7 @@ export default function TailoredResumePage({ params }: { params: Promise<{ id: s
                 <p className="mt-2">{content.missingKeywords.join(', ')}</p>
               </div>
             )}
-            <p className="px-1 text-xs text-faint">
-              Check every line before you send it. In the print dialog, choose &ldquo;Save as PDF&rdquo; and turn off headers and footers.
-            </p>
+            <p className="px-1 text-xs text-faint">Check every line before you send it.</p>
           </aside>
         </div>
       )}

@@ -60,7 +60,8 @@ export function TailorPanel({ id, partial }: { id: string; partial: boolean }) {
         <div className="min-w-0 flex-1 text-sm">
           <p className="font-medium">Resume tailored to this job</p>
           <p className="mt-0.5 text-muted">
-            Friday rewrites your resume around this job&rsquo;s requirements, using only what&rsquo;s already in it.
+            Friday rewords your own resume around this job&rsquo;s requirements and puts the matching skills in bold.
+            Your design stays the same, and nothing is added that isn&rsquo;t already in it.
           </p>
 
           {tailored === undefined && !error ? (
@@ -104,6 +105,11 @@ export function TailorPanel({ id, partial }: { id: string; partial: boolean }) {
               {tailored?.status === 'failed' && tailored.error && (
                 <p className="flex items-center gap-1.5 text-xs text-danger">
                   <AlertCircle size={13} /> {tailored.error}
+                  {/again as a PDF or Word file/.test(tailored.error) && (
+                    <Link href="/profile" className="font-medium underline underline-offset-2">
+                      Upload it
+                    </Link>
+                  )}
                 </p>
               )}
               {resumeStatus === 'parsing' && <p className="text-xs text-muted">Your resume is still being analysed.</p>}
@@ -115,7 +121,16 @@ export function TailorPanel({ id, partial }: { id: string; partial: boolean }) {
               </button>
             </div>
           )}
-          {error && <p className="mt-2 text-xs text-danger">{error}</p>}
+          {error && (
+            <p className="mt-2 text-xs text-danger">
+              {error}{' '}
+              {/again as a PDF or Word file/.test(error) && (
+                <Link href="/profile" className="font-medium underline underline-offset-2">
+                  Upload it
+                </Link>
+              )}
+            </p>
+          )}
 
           <p className="mt-3 border-t border-violet-200/60 pt-2.5 text-xs text-muted">
             <span className="mr-1 rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 uppercase">Soon</span>

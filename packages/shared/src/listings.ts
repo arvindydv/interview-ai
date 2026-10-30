@@ -407,24 +407,16 @@ export interface WebJobPage {
 }
 
 /**
- * The candidate's resume rewritten for one job (apps/worker/src/queues/tailor.ts). Reordered and
- * reworded to put the job's must-haves first, using only facts from their own resume.
+ * What tailoring changed in the candidate's own resume file for one job (apps/worker/src/queues/tailor.ts).
+ * The file keeps its design: only the wording of some lines changes, using facts already in it.
  */
 export interface TailoredResume {
-  name: string | null;
-  /** One line under the name, aimed at this job, e.g. "Backend engineer · Payments · 6 years". */
-  headline: string;
-  /** Email, phone, city and profile links, exactly as on the resume. */
-  contact: string[];
-  /** 2–3 lines aimed at this job. */
-  summary: string;
-  /** Grouped, the job's must-haves first. */
-  skills: { group: string; items: string[] }[];
-  experience: { company: string; title: string; location: string | null; period: string | null; bullets: string[] }[];
-  projects: { name: string; bullets: string[]; tech: string[] }[];
-  education: { school: string; degree: string | null; year: string | null; detail: string | null }[];
-  certifications: string[];
-  /** For the candidate's review, not printed: the job's requirements the resume now shows. */
+  format: 'pdf' | 'docx';
+  /** Each rewritten paragraph or bullet, as it was and as it is now. */
+  edits: { before: string; after: string }[];
+  /** Set in bold wherever they appear: the job's requirements the resume shows. */
+  bold: string[];
+  /** The job's requirements the resume now shows. */
   matchedKeywords: string[];
   /** The job's requirements their resume doesn't support. Never added to the resume. */
   missingKeywords: string[];
@@ -442,6 +434,8 @@ export interface TailoredResumeRecord {
   company: string;
   status: TailorStatus;
   content: TailoredResume | null;
+  /** The tailored file's name, once it's ready (GET /v1/job-feed/:id/resume/file). */
+  fileName: string | null;
   error: string | null;
   updatedAt: string;
 }
