@@ -1,14 +1,17 @@
 'use client';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Check, ChevronDown, Copy, Gauge, Lightbulb, MessageSquareQuote, RotateCcw, Target, Timer, TrendingUp } from 'lucide-react';
 import {
-  PRACTICE_DIFFICULTIES, PRACTICE_LENGTHS, type PracticeAnswer, type PracticeFeedback, type PracticeLength,
-  type PracticeQuestion, type PracticeScores, type PracticeSession,
+  BookOpenText, Check, ChevronDown, Copy, Gauge, Hourglass, Lightbulb, MessageSquareQuote, Mic, RotateCcw, ShieldCheck, Target, Timer,
+  TrendingUp,
+} from 'lucide-react';
+import {
+  PRACTICE_DIFFICULTIES, PRACTICE_DURATIONS, type PracticeAnswer, type PracticeConfidence, type PracticeFeedback,
+  type PracticeQuestion, type PracticeScores, type PracticeSession, type ReadingVerdict,
 } from '@parakeet/shared';
 import { ApiError, api } from '@/lib/api';
 import { roundLabel } from '@/lib/interviews';
-import { KIND_LABEL, PACE, formatDuration, scoreLabel, scoreTone } from '@/lib/practice';
+import { KIND_LABEL, PACE, formatDuration, formatSeconds, scoreLabel, scoreTone } from '@/lib/practice';
 import { Spinner } from '@/components/ui';
 import { toast } from '@/components/overlay';
 import { ReadinessRing } from '@/components/interviews/parts';
@@ -16,13 +19,27 @@ import { ScoreBars } from '@/components/practice/charts';
 
 const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
 
+/** One answer's score out of 10, weighted like the overall score (apps/worker, queues/practice.ts). */
+const answerScore = (s: PracticeScores) => {
+  const content = mean([s.relevance, s.structure, s.specificity, s.clarity]);
+  return s.confidence === undefined ? content : 0.6 * content + 0.4 * s.confidence;
+};
+
+export const READING: Record<ReadingVerdict, { label: string; tone: string }> = {
+  natural: { label: 'Sounded natural', tone: 'text-brand bg-brand/10 ring-brand/30' },
+  possibly_reading: { label: 'May have been reading', tone: 'text-brand-2 bg-brand-2/10 ring-brand-2/30' },
+  likely_reading: { label: 'Sounded read out', tone: 'text-warn bg-warn/10 ring-warn/30' },
+};
+
 export function Debrief({ session }: { session: PracticeSession }) {
   const router = useRouter();
   const [again, setAgain] = useState(false);
   const result = session.result!;
   const answered = session.answers.map((a, n) => ({ a, f: result.questions[n] })).filter(({ a }) => a && !a.skipped);
   const categories = Object.fromEntries(
-    (['relevance', 'structure', 'specificity', 'clarity'] as const).map((k) => [k, mean(answered.map(({ f }) => f.scores[k]))]),
+    (['confidence', 'relevance', 'structure', 'specificity', 'clarity'] as const)
+      .filter((k) => answered.some(({ f }) => f.scores[k] !== undefined))
+      .map((k) => [k, mean(answered.map(({ f }) => f.scores[k] ?? 0))]),
   ) as unknown as PracticeScores;
   const spoken = session.answers.filter((a): a is PracticeAnswer => Boolean(a && !a.skipped && a.wpm));
   const pace = spoken.length ? Math.round(mean(spoken.map((a) => a.wpm!))) : null;
@@ -32,12 +49,10 @@ export function Debrief({ session }: { session: PracticeSession }) {
   const practiseAgain = async () => {
     setAgain(true);
     try {
-      const questionCount = (PRACTICE_LENGTHS as readonly number[]).includes(session.questionCount)
-        ? (session.questionCount as PracticeLength)
-        : 5;
+      const durationMinutes = (PRACTICE_DURATIONS as readonly number[]).includes(session.durationMinutes ?? 0) ? session.durationMinutes : 10;
       const r = await api<{ session: PracticeSession }>('/v1/practice', {
         method: 'POST',
-        body: JSON.stringify({ interviewId: session.interviewId, roundType: session.roundType, difficulty: session.difficulty, questionCount }),
+        body: JSON.stringify({ interviewId: session.interviewId, roundType: session.roundType, difficulty: session.difficulty, durationMinutes }),
       });
       router.push(`/practice/${r.session.id}`);
     } catch (e) {
@@ -54,7 +69,7 @@ export function Debrief({ session }: { session: PracticeSession }) {
         <div className="absolute inset-0 -z-10 bg-surface" />
         <div className="absolute -top-28 -right-24 -z-10 size-[28rem] glow opacity-80" />
         <div className="flex flex-col gap-6 sm:flex-row sm:items-center">
-          <ReadinessRing score={result.score} size={120} stroke={9} label="Interview score" />
+          <ReadinessRing score={result.score} size={120} stroke={9} label="Interview score" outOf10 />
           <div className="min-w-0 flex-1">
             <p className="text-xs text-muted">
               {session.title} · {roundLabel(session.roundType)} · {PRACTICE_DIFFICULTIES.find((d) => d.id === session.difficulty)?.label}
@@ -64,7 +79,7 @@ export function Debrief({ session }: { session: PracticeSession }) {
           </div>
         </div>
         <dl className="mt-6 grid grid-cols-2 gap-2 sm:grid-cols-4">
-          <Stat icon={Check} label="Answered" value={`${answered.length} / ${session.questions.length}`} />
+          <Stat icon={Check} label="Questions answered" value={`${answered.length} of ${session.questions.length}`} />
           <Stat
             icon={Gauge}
             label="Speaking pace"
@@ -75,6 +90,8 @@ export function Debrief({ session }: { session: PracticeSession }) {
           <Stat icon={Timer} label="Talking time" value={formatDuration(time)} />
         </dl>
       </section>
+
+      {result.confidence && <ConfidenceCard confidence={result.confidence} answers={session.answers} />}
 
       <div className="grid items-start gap-6 lg:grid-cols-[1fr_1.2fr]">
         <section className="glass rounded-[var(--radius-card)] p-5 sm:p-6 animate-fade-up">
@@ -97,10 +114,67 @@ export function Debrief({ session }: { session: PracticeSession }) {
 
       <div className="flex flex-wrap justify-center gap-2 pt-2">
         <button onClick={practiseAgain} disabled={again} className="btn btn-primary">
-          {again ? <Spinner className="!size-4" /> : <RotateCcw size={15} />} Practise again with new questions
+          {again ? <Spinner className="!size-4" /> : <RotateCcw size={15} />} Practise again
         </button>
       </div>
     </div>
+  );
+}
+
+/** How confidently the candidate came across: the debrief's focus for live practice. */
+function ConfidenceCard({ confidence: c, answers }: { confidence: PracticeConfidence; answers: (PracticeAnswer | null)[] }) {
+  const spoken = answers.filter((a): a is PracticeAnswer => Boolean(a && !a.skipped && a.delivery));
+  const think = spoken.length ? mean(spoken.map((a) => a.delivery!.thinkMs)) : null;
+  const pauses = spoken.reduce((n, a) => n + a.delivery!.longPauses, 0);
+  const hedges = spoken.reduce((n, a) => n + a.delivery!.hedges.reduce((m, h) => m + h.count, 0), 0);
+  const reading = READING[c.reading];
+  return (
+    <section className="relative overflow-hidden rounded-[var(--radius-card)] border border-line p-6 sm:p-7 animate-fade-up">
+      <div className="absolute inset-0 -z-10 bg-surface" />
+      <div className="flex flex-col gap-6 sm:flex-row">
+        <div className="sm:w-56 sm:shrink-0">
+          <p className="flex items-center gap-1.5 text-xs text-muted">
+            <ShieldCheck size={14} className="text-brand" /> Confidence
+          </p>
+          <p className={`mt-2 text-4xl font-semibold tracking-tight tabular-nums ${scoreTone(c.score * 10)}`}>
+            {c.score.toFixed(1)}
+            <span className="text-base font-normal text-faint">/10</span>
+          </p>
+          <div className="mt-3 h-2 overflow-hidden rounded bg-white/[0.06]">
+            <div className="h-full rounded bg-brand transition-[width] duration-700" style={{ width: `${c.score * 10}%` }} />
+          </div>
+          <p className={`mt-4 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ring-1 ${reading.tone}`}>
+            <BookOpenText size={13} /> {reading.label}
+          </p>
+          {c.readingEvidence && <p className="mt-2 text-xs leading-relaxed text-muted">{c.readingEvidence}</p>}
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm leading-relaxed text-fg/85">{c.summary}</p>
+          {spoken.length > 0 && (
+            <dl className="mt-4 grid grid-cols-3 gap-2">
+              <Stat icon={Hourglass} label="Time to start" value={formatSeconds(think!)} note={think! > 6000 ? 'Start sooner' : 'Good'} />
+              <Stat icon={Timer} label="Long pauses" value={String(pauses)} note={pauses > spoken.length ? 'Mid-answer silences' : undefined} />
+              <Stat icon={MessageSquareQuote} label="Hedges" value={String(hedges)} note={hedges > 3 ? '“I think”, “maybe”…' : undefined} />
+            </dl>
+          )}
+          {c.tips.length > 0 && (
+            <div className="mt-5">
+              <h3 className="flex items-center gap-2 text-sm font-semibold">
+                <Lightbulb size={15} className="text-warn" /> Sound more confident next time
+              </h3>
+              <ol className="mt-3 space-y-2">
+                {c.tips.map((t, n) => (
+                  <li key={n} className="flex gap-3 text-sm leading-relaxed text-fg/85">
+                    <span className="grid size-5 shrink-0 place-items-center rounded-full bg-warn/10 text-[11px] font-semibold text-warn">{n + 1}</span>
+                    {t}
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -169,7 +243,7 @@ function QuestionReview({
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const skipped = !a || a.skipped;
-  const score = Math.round(mean(Object.values(f.scores)) * 10);
+  const score = answerScore(f.scores);
   const copy = () =>
     navigator.clipboard.writeText(f.betterAnswer).then(
       () => toast('Copied.'),
@@ -180,10 +254,10 @@ function QuestionReview({
       <button onClick={() => setOpen((o) => !o)} aria-expanded={open} className="flex w-full items-center gap-4 p-4 text-left sm:p-5">
         <span
           className={`grid size-11 shrink-0 place-items-center rounded-xl text-sm font-semibold tabular-nums ring-1 ${
-            skipped ? 'bg-white/5 text-faint ring-line' : `bg-white/[0.04] ring-line-strong ${scoreTone(score)}`
+            skipped ? 'bg-white/5 text-faint ring-line' : `bg-white/[0.04] ring-line-strong ${scoreTone(score * 10)}`
           }`}
         >
-          {skipped ? '–' : score}
+          {skipped ? '–' : score.toFixed(1)}
         </span>
         <span className="min-w-0 flex-1">
           <span className="block text-[11px] text-faint">
@@ -208,7 +282,11 @@ function QuestionReview({
                   <p className="mt-2 text-[11px] text-faint">
                     {a!.words} words · {formatDuration(a!.durationMs)}
                     {a!.wpm ? ` · ${a!.wpm} wpm` : ''}
+                    {a!.delivery && ` · ${formatSeconds(a!.delivery.thinkMs)} to start`}
+                    {a!.delivery && a!.delivery.longPauses > 0 && ` · ${a!.delivery.longPauses} long pause${a!.delivery.longPauses === 1 ? '' : 's'}`}
                     {a!.fillers.length > 0 && ` · fillers: ${a!.fillers.map((x) => `“${x.word}” ×${x.count}`).join(', ')}`}
+                    {a!.delivery && a!.delivery.hedges.length > 0 &&
+                      ` · hedges: ${a!.delivery.hedges.map((x) => `“${x.word}” ×${x.count}`).join(', ')}`}
                   </p>
                 </>
               )}
@@ -219,6 +297,17 @@ function QuestionReview({
               </p>
               <p className="mt-1.5 text-sm leading-relaxed text-fg/85">{f.feedback}</p>
             </div>
+            {f.delivery && (
+              <div className="rounded-xl border border-line bg-bg/40 p-4">
+                <p className="flex flex-wrap items-center gap-1.5 text-xs font-semibold">
+                  <Mic size={13} className="text-brand" /> How you said it
+                  {f.reading && f.reading !== 'natural' && (
+                    <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ${READING[f.reading].tone}`}>{READING[f.reading].label}</span>
+                  )}
+                </p>
+                <p className="mt-1.5 text-sm leading-relaxed text-fg/85">{f.delivery}</p>
+              </div>
+            )}
             <div className="rounded-xl border border-brand/25 bg-brand/[0.04] p-4">
               <div className="flex items-center justify-between gap-2">
                 <p className="flex items-center gap-1.5 text-xs font-semibold text-brand">

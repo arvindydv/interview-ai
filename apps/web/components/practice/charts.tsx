@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import { PRACTICE_SCORE_LABELS, type PracticeScores } from '@parakeet/shared';
+import { PRACTICE_SCORE_LABELS, scoreOutOf10, type PracticeScores } from '@parakeet/shared';
 
 export interface TrendPoint {
   id: string;
@@ -80,7 +80,7 @@ export function ScoreTrend({ points }: { points: TrendPoint[] }) {
           <g key={g}>
             <line x1={PAD.left} x2={width - PAD.right} y1={y(g)} y2={y(g)} stroke="rgb(255 255 255 / 0.06)" />
             <text x={PAD.left - 8} y={y(g)} dy="0.32em" textAnchor="end" className="fill-faint text-[10px] tabular-nums">
-              {g}
+              {g / 10}
             </text>
           </g>
         ))}
@@ -117,7 +117,7 @@ export function ScoreTrend({ points }: { points: TrendPoint[] }) {
           }`}
           style={{ left: Math.min(Math.max(x(active), 70), width - 70), top: flip ? y(p.score) + 12 : y(p.score) - 10 }}
         >
-          <p className="text-sm font-semibold tabular-nums">{p.score}</p>
+          <p className="text-sm font-semibold tabular-nums">{scoreOutOf10(p.score)}</p>
           <p className="max-w-40 truncate text-muted">{p.title}</p>
           <p className="text-faint">{shortDate(p.date)}</p>
         </div>
@@ -136,7 +136,7 @@ export function ScoreTrend({ points }: { points: TrendPoint[] }) {
             <tr key={pt.id}>
               <td>{shortDate(pt.date)}</td>
               <td>{pt.title}</td>
-              <td>{pt.score}</td>
+              <td>{scoreOutOf10(pt.score)}</td>
             </tr>
           ))}
         </tbody>
@@ -149,13 +149,13 @@ export function ScoreTrend({ points }: { points: TrendPoint[] }) {
 export function ScoreBars({ scores, compact }: { scores: PracticeScores; compact?: boolean }) {
   return (
     <dl className={compact ? 'space-y-1.5' : 'space-y-3'}>
-      {PRACTICE_SCORE_LABELS.map(({ key, label }) => (
+      {PRACTICE_SCORE_LABELS.filter(({ key }) => scores[key] !== undefined).map(({ key, label }) => (
         <div key={key} className="grid grid-cols-[6.5rem_1fr_2rem] items-center gap-3">
           <dt className={`text-muted ${compact ? 'text-xs' : 'text-sm'}`}>{label}</dt>
           <dd className={`overflow-hidden rounded bg-white/[0.06] ${compact ? 'h-1.5' : 'h-2'}`}>
-            <div className="h-full rounded bg-brand transition-[width] duration-700" style={{ width: `${scores[key] * 10}%` }} />
+            <div className="h-full rounded bg-brand transition-[width] duration-700" style={{ width: `${scores[key]! * 10}%` }} />
           </dd>
-          <dd className={`text-right tabular-nums ${compact ? 'text-xs' : 'text-sm'}`}>{Math.round(scores[key] * 10) / 10}</dd>
+          <dd className={`text-right tabular-nums ${compact ? 'text-xs' : 'text-sm'}`}>{Math.round(scores[key]! * 10) / 10}</dd>
         </div>
       ))}
     </dl>

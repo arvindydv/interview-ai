@@ -59,17 +59,20 @@ export function ReadinessRing({
   size = 76,
   stroke = 7,
   label = 'Readiness',
+  outOf10,
 }: {
   score: number;
   size?: number;
   stroke?: number;
   label?: string;
+  /** Show the 0–100 score out of 10 (practice scores). */
+  outOf10?: boolean;
 }) {
   const id = useId();
   const r = (size - stroke) / 2;
   const c = 2 * Math.PI * r;
   return (
-    <div className="relative shrink-0" style={{ width: size, height: size }} role="img" aria-label={`${label} ${score}%`}>
+    <div className="relative shrink-0" style={{ width: size, height: size }} role="img" aria-label={outOf10 ? `${label} ${(score / 10).toFixed(1)} out of 10` : `${label} ${score}%`}>
       <svg width={size} height={size} className="-rotate-90">
         <defs>
           <linearGradient id={id} x1="0" y1="0" x2="1" y2="1">
@@ -93,8 +96,8 @@ export function ReadinessRing({
       </svg>
       <span className="absolute inset-0 grid place-items-center text-center">
         <span className="font-semibold tabular-nums" style={{ fontSize: size * 0.24 }}>
-          {score}
-          <span className="text-muted" style={{ fontSize: size * 0.13 }}>%</span>
+          {outOf10 ? (score / 10).toFixed(1) : score}
+          <span className="text-muted" style={{ fontSize: size * 0.13 }}>{outOf10 ? '/10' : '%'}</span>
         </span>
       </span>
     </div>

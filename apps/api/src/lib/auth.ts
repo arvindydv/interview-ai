@@ -41,6 +41,34 @@ export async function verifyAccessToken(token: string): Promise<AuthUser> {
   };
 }
 
+/** Why a token was refused, as an HTTP status and the API's error body. */
+export class AuthError extends Error {
+  constructor(
+    readonly status: 401 | 403,
+    readonly code: 'unauthorized' | 'suspended' | 'email_unverified',
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+/** The user behind an access token, if they may use the API; throws AuthError otherwise. */
+export async function authenticate(token: string, log?: FastifyRequest['log']): Promise<AuthUser> {
+  let user: AuthUser;
+  try {
+    user = await verifyAccessToken(token);
+  } catch (err) {
+    log?.debug({ err }, 'token verification failed');
+    throw new AuthError(401, 'unauthorized', 'Invalid or expired token');
+  }
+  const status = await accountStatus(user.id);
+  if (status.suspended) throw new AuthError(403, 'suspended', 'This account has been suspended. Contact support.');
+  // Supabase withholds a session until the address is confirmed, but only if "Confirm email" is on
+  // for the project. Enforce it here too so a misconfigured project can't let unverified emails in.
+  if (!status.confirmed) throw new AuthError(403, 'email_unverified', 'Confirm your email address to continue.');
+  return user;
+}
+
 /** preHandler / preValidation hook: requires `Authorization: Bearer <supabase access token>`. */
 export async function requireAuth(req: FastifyRequest, reply: FastifyReply) {
   const header = req.headers.authorization;
@@ -48,19 +76,10 @@ export async function requireAuth(req: FastifyRequest, reply: FastifyReply) {
     return reply.code(401).send({ error: 'unauthorized', message: 'Missing bearer token' });
   }
   try {
-    req.user = await verifyAccessToken(header.slice(7));
+    req.user = await authenticate(header.slice(7), req.log);
   } catch (err) {
-    req.log.debug({ err }, 'token verification failed');
-    return reply.code(401).send({ error: 'unauthorized', message: 'Invalid or expired token' });
-  }
-  const status = await accountStatus(req.user.id);
-  if (status.suspended) {
-    return reply.code(403).send({ error: 'suspended', message: 'This account has been suspended. Contact support.' });
-  }
-  // Supabase withholds a session until the address is confirmed, but only if "Confirm email" is on
-  // for the project. Enforce it here too so a misconfigured project can't let unverified emails in.
-  if (!status.confirmed) {
-    return reply.code(403).send({ error: 'email_unverified', message: 'Confirm your email address to continue.' });
+    if (err instanceof AuthError) return reply.code(err.status).send({ error: err.code, message: err.message });
+    throw err;
   }
 }
 

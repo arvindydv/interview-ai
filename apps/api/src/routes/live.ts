@@ -7,6 +7,7 @@ import { closeLiveSession, openLiveSession, questionsToday, recordTurn, type Tur
 import { requireAuth } from '../lib/auth.js';
 import { loadInterviewContext, type InterviewContext } from '../lib/context.js';
 import { Conversation, Listener, type AnswerHandle } from '../lib/listen.js';
+import { publishLive } from '../lib/liveEvents.js';
 import { trackConnection } from '../lib/liveRegistry.js';
 import { LlmError, llmConfigured, streamAnswer, warmAnswerCache } from '../lib/llm.js';
 import { getSettings } from '../lib/settings.js';
@@ -227,12 +228,16 @@ export default async function liveRoutes(app: FastifyInstance) {
     (socket, req) => {
       const { sessionId } = req.params;
       const turns = new Map<string, AbortController>();
+      const userId = req.user.id;
       const send = (m: ServerMessage) => {
         if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(m));
+        // The practice room watches what the desktop app hears and answers (lib/liveEvents.ts).
+        publishLive(userId, { kind: 'message', message: m });
       };
 
       req.log.info({ userId: req.user.id, sessionId }, 'live session connected');
       const untrack = trackConnection(req.user.id, { close: (code, reason) => socket.close(code, reason) });
+      publishLive(userId, { kind: 'open' });
       // Activity tracking is best-effort: answers still work if Postgres is unhappy.
       const liveSessionId = openLiveSession(req.user, sessionId).catch((err) => {
         req.log.error({ err }, 'failed to record live session');
@@ -361,6 +366,7 @@ export default async function liveRoutes(app: FastifyInstance) {
         void meter.stop();
         for (const ctrl of turns.values()) ctrl.abort();
         untrack();
+        publishLive(userId, { kind: 'close' });
         void liveSessionId.then((id) => (id ? closeLiveSession(id) : undefined)).catch(() => {});
         req.log.info({ sessionId }, 'live session closed');
       });

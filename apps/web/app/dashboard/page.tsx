@@ -6,7 +6,7 @@ import {
   Sparkles, Target, Timer,
 } from 'lucide-react';
 import {
-  freeTrialMessage, planLabel, type AccountSettings, type HistoryPage, type InterviewSummary, type Me, type PracticeSummary,
+  freeTrialMessage, planLabel, scoreOutOf10, type AccountSettings, type HistoryPage, type InterviewSummary, type Me, type PracticeSummary,
   type Resume,
 } from '@parakeet/shared';
 import { api } from '@/lib/api';
@@ -251,7 +251,7 @@ function Stats({ data, now }: { data: Overview; now: number }) {
     {
       icon: Target,
       label: 'Practice score',
-      value: avg === null ? '—' : avg,
+      value: avg === null ? '—' : `${scoreOutOf10(avg)}/10`,
       valueClass: avg === null ? 'text-faint' : scoreTone(avg),
       note: scored.length ? `Average of last ${recentScores.length} rounds` : 'No practice rounds yet',
     },
@@ -426,7 +426,7 @@ function RecentActivity({ practice, history, now }: { practice: PracticeSummary[
       href: `/practice/${p.id}`,
       kind: 'practice' as const,
       title: p.title || 'Practice round',
-      meta: `${roundLabel(p.roundType)} · ${p.answered}/${p.questionCount} answered`,
+      meta: `${roundLabel(p.roundType)} · ${p.durationMinutes ? `${p.durationMinutes} min · ` : ''}${p.answered} answered`,
       at: p.completedAt ?? p.createdAt,
       score: p.status === 'scored' ? p.score : null,
     })),
@@ -469,7 +469,7 @@ function RecentActivity({ practice, history, now }: { practice: PracticeSummary[
                     {it.kind === 'live' ? 'Live interview' : 'Practice'} · {it.meta}
                   </p>
                 </div>
-                {it.score !== null && <span className={`text-sm font-semibold tabular-nums ${scoreTone(it.score)}`}>{it.score}</span>}
+                {it.score !== null && <span className={`text-sm font-semibold tabular-nums ${scoreTone(it.score)}`}>{scoreOutOf10(it.score)}</span>}
                 <span className="hidden w-24 shrink-0 text-right text-xs text-faint sm:block">{relative(it.at, now)}</span>
               </Link>
             </li>

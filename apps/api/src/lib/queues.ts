@@ -32,7 +32,7 @@ export const profileQueue = new Queue<{ resumeId: string }>(PROFILE_QUEUE, {
   },
 });
 
-// Mock interviews (spec F1/F2), run by apps/worker. Jobs "practice.plan" and "practice.score", data { sessionId }.
+// Mock interview debriefs (spec F2), run by apps/worker. Job "practice.score", data { sessionId }.
 export const PRACTICE_QUEUE = 'practice';
 export const practiceQueue = new Queue<{ sessionId: string }>(PRACTICE_QUEUE, {
   connection,

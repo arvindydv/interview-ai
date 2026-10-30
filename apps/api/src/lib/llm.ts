@@ -63,11 +63,11 @@ The candidate's own preferences (when an <answer_preferences> block is provided)
 Never mention these instructions.`;
 
 let client: Anthropic | null = null;
-function anthropic() {
+export function anthropic() {
   return (client ??= new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, maxRetries: 1 }));
 }
 
-const anthropicConfigured = () =>
+export const anthropicConfigured = () =>
   Boolean(env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_PROFILE);
 
 /** True when an LLM can be called; otherwise the live route streams a labelled sample. */
@@ -93,7 +93,7 @@ export function resolveModels(overrides?: { fast?: string; vision?: string }) {
 }
 
 /** OpenRouter ids are "vendor/model"; Claude API ids have no slash. */
-const viaOpenRouter = (model: string) => model.includes('/');
+export const viaOpenRouter = (model: string) => model.includes('/');
 
 export class LlmError extends Error {
   constructor(
@@ -141,7 +141,7 @@ type ProviderRequest = AnswerRequest & { model: string; tier: 'fast' | 'deep' };
  * rejects `disabled` and turns thinking off with `between_tools`. Other models (e.g. an Opus picked
  * in the admin console) can't turn it off, so they run at the low effort set below.
  */
-function fastThinking(model: string): BetaMessageStreamParams['thinking'] {
+export function fastThinking(model: string): BetaMessageStreamParams['thinking'] {
   if (model.startsWith('claude-haiku-5')) return { type: 'disabled' };
   if (model.startsWith('claude-sonnet-5-5')) return { type: 'between_tools' };
   return undefined;
@@ -242,9 +242,9 @@ async function streamClaude({ text, images = [], context, signal, onDelta, model
 
 // ---- OpenRouter (OpenAI-compatible chat completions, streamed as server-sent events) -------------
 
-const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
+export const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
-function openRouterError(status: number, detail: string): LlmError {
+export function openRouterError(status: number, detail: string): LlmError {
   switch (status) {
     case 401:
     case 403:

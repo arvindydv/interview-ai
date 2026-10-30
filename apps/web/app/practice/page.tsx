@@ -1,18 +1,21 @@
 'use client';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
-  ArrowRight, BarChart3, ChevronRight, Download, Flame, GraduationCap, Mic, MoreHorizontal, Play, Target, Timer, Trash2, Trophy,
+  ArrowRight, BarChart3, ChevronRight, Download, FileText, Flame, GraduationCap, Mic, MoreHorizontal, Play, Target, Timer, Trash2, Trophy,
+  Upload,
 } from 'lucide-react';
 import {
-  FREE_MINUTES, NO_MINUTES_ERROR, PRACTICE_DIFFICULTIES, freeTrialMessage, type FreeTrialStatus, PRACTICE_LENGTHS, type InterviewSummary, type Me, type PracticeDifficulty, type PracticeLength,
-  type PracticeSession, type PracticeSetup, type PracticeSummary, type RoundType,
+  FREE_MINUTES, NO_MINUTES_ERROR, NO_RESUME_ERROR, PRACTICE_DIFFICULTIES, PRACTICE_DURATIONS, freeTrialMessage, scoreOutOf10,
+  type FreeTrialStatus, type InterviewSummary, type Me, type PracticeDifficulty, type PracticeDuration, type PracticeSession,
+  type PracticeSetup, type PracticeSummary, type Resume, type RoundType,
 } from '@parakeet/shared';
 import { ApiError, api } from '@/lib/api';
 import { useRequireSession } from '@/lib/useSession';
 import { interviewTitle, relative, roundLabel, roundsFor } from '@/lib/interviews';
 import { formatLeft, scoreLabel, scoreTone, secondsLeft } from '@/lib/practice';
+import { ACCEPT, fileProblem, toUpload } from '@/lib/resume';
 import { AppShell } from '@/components/AppShell';
 import { LogoMark } from '@/components/Logo';
 import { Spinner } from '@/components/ui';
@@ -22,8 +25,7 @@ import { ScoreTrend } from '@/components/practice/charts';
 
 const errorText = (e: unknown) => (e instanceof ApiError ? e.message : 'Something went wrong. Try again.');
 
-/** Roughly two minutes per question, including thinking time. */
-const minutesFor = (n: number) => n * 2;
+const DEFAULT_SETUP = { interviewId: null, roundType: 'general', difficulty: 'standard', durationMinutes: 10 } as const satisfies PracticeSetup;
 
 export default function PracticePage() {
   const email = useRequireSession();
@@ -37,6 +39,8 @@ export default function PracticePage() {
   // Seconds of session minutes left; null = unlimited plan; undefined = still loading.
   const [left, setLeft] = useState<number | null | undefined>(undefined);
   const [trialStatus, setTrialStatus] = useState<FreeTrialStatus>('granted');
+  // The interviewer asks only about the resume, so practice needs one. undefined = still loading.
+  const [resume, setResume] = useState<Resume | null | undefined>(undefined);
 
   const load = () =>
     api<{ sessions: PracticeSummary[] }>('/v1/practice').then(
@@ -62,9 +66,14 @@ export default function PracticePage() {
       ({ interviews }) => {
         setInterviews(interviews);
         const active = interviews.find((i) => i.active);
-        setSetup({ interviewId: active?.id ?? null, roundType: active?.roundType ?? 'general', difficulty: 'standard', questionCount: 5 });
+        setSetup({ ...DEFAULT_SETUP, interviewId: active?.id ?? null, roundType: active?.roundType ?? 'general' });
       },
-      () => setSetup({ interviewId: null, roundType: 'general', difficulty: 'standard', questionCount: 5 }),
+      () => setSetup({ ...DEFAULT_SETUP }),
+    );
+    // If it can't be read, let the server decide when the session is created.
+    api<{ resume: Resume | null }>('/v1/resume').then(
+      (r) => setResume(r.resume),
+      () => setResume(null),
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [email]);
@@ -76,6 +85,11 @@ export default function PracticePage() {
       const r = await api<{ session: PracticeSession }>('/v1/practice', { method: 'POST', body: JSON.stringify(setup) });
       router.push(`/practice/${r.session.id}`);
     } catch (e) {
+      if (e instanceof ApiError && e.status === 409 && e.message.toLowerCase().includes('resume')) {
+        setResume(null);
+        setStarting(false);
+        return;
+      }
       if (e instanceof ApiError && e.status === 402) {
         toast(e.message, { tone: 'bad' });
         router.push(`/pricing?${new URLSearchParams({ from: 'practice', reason: NO_MINUTES_ERROR })}`);
@@ -107,7 +121,7 @@ export default function PracticePage() {
   }
 
   const scored = (sessions ?? []).filter((s) => s.status === 'scored' && s.score !== null);
-  const unfinished = (sessions ?? []).find((s) => s.status === 'ready');
+  const unfinished = (sessions ?? []).find((s) => s.status === 'ready' && s.durationMinutes);
 
   return (
     <AppShell email={email}>
@@ -116,8 +130,8 @@ export default function PracticePage() {
           <p className="eyebrow">Workspace</p>
           <h1 className="mt-1.5 text-3xl font-semibold tracking-tight">Practice</h1>
           <p className="mt-1.5 max-w-xl text-sm text-muted">
-            Mock interviews with an AI interviewer who knows the role and your resume. Answer out loud, then get scores, honest
-            feedback and a stronger version of every answer.
+            A real-feeling, spoken interview with Friday, your AI interviewer. It asks about your own resume, listens to every
+            answer, follows up, and then scores how well and how confidently you answered.
           </p>
         </header>
 
@@ -131,14 +145,18 @@ export default function PracticePage() {
               <span className="font-medium">Continue your session</span>
               <span className="text-muted">
                 {' '}
-                · {unfinished.title} · {unfinished.answered} of {unfinished.questionCount} answered
+                · {unfinished.title} · {unfinished.startedAt ? `${unfinished.answered} answered` : 'not started yet'}
               </span>
             </span>
             <ChevronRight size={16} className="text-muted" />
           </Link>
         )}
 
-        <SetupCard setup={setup} setSetup={setSetup} interviews={interviews} starting={starting} onStart={start} left={left} trialStatus={trialStatus} />
+        {resume === null ? (
+          <ResumeGate onUploaded={setResume} />
+        ) : (
+          <SetupCard setup={setup} setSetup={setSetup} interviews={interviews} starting={starting} onStart={start} left={left} trialStatus={trialStatus} />
+        )}
 
         {loadError && !sessions && (
           <div className="glass flex flex-wrap items-center justify-between gap-3 rounded-[var(--radius-card)] p-5 text-sm">
@@ -162,8 +180,8 @@ export default function PracticePage() {
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium group-hover:text-brand">{s.title}</p>
                     <p className="truncate text-xs text-muted">
-                      {roundLabel(s.roundType)} · {PRACTICE_DIFFICULTIES.find((d) => d.id === s.difficulty)?.label} ·{' '}
-                      {relative(s.createdAt)}
+                      {roundLabel(s.roundType)} · {s.durationMinutes ? `${s.durationMinutes} min` : `${s.questionCount} questions`} ·{' '}
+                      {PRACTICE_DIFFICULTIES.find((d) => d.id === s.difficulty)?.label} · {relative(s.createdAt)}
                     </p>
                   </div>
                   <StatusBadge session={s} />
@@ -199,14 +217,18 @@ function StatusBadge({ session: s }: { session: PracticeSummary }) {
   if (s.status === 'scored' && s.score !== null) {
     return (
       <span className="text-right">
-        <span className={`block text-lg font-semibold tabular-nums ${scoreTone(s.score)}`}>{s.score}</span>
+        <span className={`block text-lg font-semibold tabular-nums ${scoreTone(s.score)}`}>
+          {scoreOutOf10(s.score)}
+          <span className="text-xs font-normal text-faint">/10</span>
+        </span>
         <span className="block text-[11px] text-faint">{scoreLabel(s.score)}</span>
       </span>
     );
   }
   const map = {
-    planning: ['Preparing', 'text-brand-2'],
-    ready: [`${s.answered}/${s.questionCount} answered`, 'text-brand-2'],
+    // Only sessions from before live practice: their questions were never written.
+    planning: ['Old format', 'text-faint'],
+    ready: [s.startedAt ? `In progress · ${s.answered} answered` : 'Not started', 'text-brand-2'],
     scoring: ['Scoring', 'text-brand-2'],
     failed: ['Needs retry', 'text-warn'],
     scored: ['', ''],
@@ -254,7 +276,9 @@ function SetupCard({
           </span>
           <div>
             <h2 className="text-lg font-semibold tracking-tight">Start a mock interview</h2>
-            <p className="mt-0.5 text-sm text-muted">The interviewer asks; you answer out loud or by typing. Feedback in about a minute.</p>
+            <p className="mt-0.5 text-sm text-muted">
+              Pick a round and how long you have. Friday asks one question at a time from your resume until the time is up.
+            </p>
           </div>
         </div>
 
@@ -324,23 +348,23 @@ function SetupCard({
                   })}
                 </div>
               </Row>
-              <Row label="Questions">
-                <div className="flex gap-1.5" role="radiogroup" aria-label="Number of questions">
-                  {PRACTICE_LENGTHS.map((n) => {
-                    const on = setup.questionCount === n;
+              <Row label="Length">
+                <div className="flex gap-1.5" role="radiogroup" aria-label="Interview length">
+                  {PRACTICE_DURATIONS.map((n) => {
+                    const on = setup.durationMinutes === n;
                     return (
                       <button
                         key={n}
                         type="button"
                         role="radio"
                         aria-checked={on}
-                        onClick={() => setSetup({ ...setup, questionCount: n as PracticeLength })}
-                        className={`w-16 rounded-xl border px-2 py-3 text-center transition ${
+                        onClick={() => setSetup({ ...setup, durationMinutes: n as PracticeDuration })}
+                        className={`w-14 rounded-xl border px-2 py-3 text-center transition ${
                           on ? 'border-brand/50 bg-brand/[0.07]' : 'border-line bg-bg/40 hover:border-line-strong'
                         }`}
                       >
                         <span className="block text-sm font-semibold tabular-nums">{n}</span>
-                        <span className="block text-[11px] text-muted">~{minutesFor(n)} min</span>
+                        <span className="block text-[11px] text-muted">min</span>
                       </button>
                     );
                   })}
@@ -385,15 +409,15 @@ function SetupCard({
               <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-5">
                 <p className="text-xs text-muted">
                   {left === undefined || left === null ? (
-                    <>Tip: speak your answers. It&apos;s the closest thing to the real interview, and you get pace and filler-word feedback.</>
+                    <>Use headphones or a quiet room. The clock starts when you tell Friday you&apos;re ready.</>
                   ) : (
                     <span className="flex items-center gap-1.5">
-                      <Timer size={13} className={left < minutesFor(setup.questionCount) * 60 ? 'text-warn' : 'text-brand'} />
-                      Uses your session minutes while you answer.{' '}
-                      <span className={left < minutesFor(setup.questionCount) * 60 ? 'text-warn' : 'text-fg'}>{formatLeft(left)} left</span>
-                      {left < minutesFor(setup.questionCount) * 60 && (
+                      <Timer size={13} className={left < setup.durationMinutes * 60 ? 'text-warn' : 'text-brand'} />
+                      Uses your session minutes once the interview starts.{' '}
+                      <span className={left < setup.durationMinutes * 60 ? 'text-warn' : 'text-fg'}>{formatLeft(left)} left</span>
+                      {left < setup.durationMinutes * 60 && (
                         <>
-                          , which may not cover {setup.questionCount} questions.{' '}
+                          , so the interview will end early.{' '}
                           <Link href="/pricing?from=practice" className="text-brand hover:underline">Get more</Link>
                         </>
                       )}
@@ -401,12 +425,62 @@ function SetupCard({
                   )}
                 </p>
                 <button onClick={onStart} disabled={starting || left === undefined} className="btn btn-primary btn-shine">
-                  {starting ? <Spinner className="!size-4" /> : <Play size={16} />} Start interview
+                  {starting ? <Spinner className="!size-4" /> : <Play size={16} />} Set up interview
                 </button>
               </div>
             )}
           </div>
         )}
+      </div>
+    </section>
+  );
+}
+
+function ResumeGate({ onUploaded }: { onUploaded: (r: Resume) => void }) {
+  const input = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const upload = async (file: File | undefined) => {
+    if (!file) return;
+    const problem = fileProblem(file);
+    if (problem) return toast(problem, { tone: 'bad' });
+    setUploading(true);
+    try {
+      const r = await api<{ resume: Resume }>('/v1/resume', { method: 'POST', body: JSON.stringify(await toUpload(file)) });
+      toast('Resume uploaded. Now pick your round.');
+      onUploaded(r.resume);
+    } catch (e) {
+      toast(errorText(e), { tone: 'bad' });
+    }
+    setUploading(false);
+  };
+  return (
+    <section className="relative overflow-hidden rounded-[var(--radius-card)] border border-line p-6 sm:p-7 animate-fade-up">
+      <div className="absolute inset-0 -z-10 bg-surface" />
+      <div className="absolute -top-32 -right-24 -z-10 size-[30rem] glow opacity-70" />
+      <div className="flex items-start gap-4">
+        <span className="grid size-12 shrink-0 place-items-center rounded-2xl bg-brand/10 text-brand ring-1 ring-brand/25">
+          <FileText size={22} />
+        </span>
+        <div className="min-w-0">
+          <h2 className="text-lg font-semibold tracking-tight">First, upload your resume</h2>
+          <p className="mt-0.5 max-w-lg text-sm text-muted">
+            Friday asks only about your own experience: your roles, projects, skills and achievements, just like a real interviewer
+            reading your resume. PDF, DOCX or TXT, up to 5 MB.
+          </p>
+          <input
+            ref={input}
+            type="file"
+            accept={ACCEPT}
+            className="hidden"
+            onChange={(e) => {
+              void upload(e.target.files?.[0]);
+              e.target.value = '';
+            }}
+          />
+          <button onClick={() => input.current?.click()} disabled={uploading} className="btn btn-primary mt-5">
+            {uploading ? <Spinner className="!size-4" /> : <Upload size={16} />} {uploading ? 'Uploading…' : 'Upload resume'}
+          </button>
+        </div>
       </div>
     </section>
   );
@@ -447,12 +521,12 @@ function Progress({ scored }: { scored: PracticeSummary[] }) {
   const first = ordered[0].score!;
   const change = ordered.length > 1 ? ordered[ordered.length - 1].score! - first : null;
   const tiles = [
-    { icon: BarChart3, label: 'Average (last 5)', value: avg, note: scoreLabel(avg) },
-    { icon: Trophy, label: 'Best score', value: best, note: `of ${scored.length} scored` },
+    { icon: BarChart3, label: 'Average (last 5)', value: `${scoreOutOf10(avg)}/10`, note: scoreLabel(avg) },
+    { icon: Trophy, label: 'Best score', value: `${scoreOutOf10(best)}/10`, note: `of ${scored.length} scored` },
     {
       icon: Target,
       label: 'Since your first',
-      value: change === null ? '–' : `${change >= 0 ? '+' : ''}${change}`,
+      value: change === null ? '–' : `${change >= 0 ? '+' : '−'}${scoreOutOf10(Math.abs(change))}`,
       note: change === null ? 'Practise again to see' : change >= 0 ? 'points up' : 'points down',
     },
     {
@@ -479,7 +553,7 @@ function Progress({ scored }: { scored: PracticeSummary[] }) {
         <div className="glass rounded-[var(--radius-card)] p-5 sm:p-6 animate-fade-up">
           <div className="mb-4 flex items-center justify-between gap-3">
             <h2 className="text-sm font-semibold">Readiness trend</h2>
-            <span className="text-xs text-muted">Score per session, out of 100</span>
+            <span className="text-xs text-muted">Score per session, out of 10</span>
           </div>
           <ScoreTrend points={ordered.slice(-20).map((s) => ({ id: s.id, score: s.score!, date: s.completedAt ?? s.createdAt, title: s.title }))} />
         </div>
