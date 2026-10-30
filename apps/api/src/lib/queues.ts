@@ -98,3 +98,41 @@ export async function refreshMatches(userId: string, log: { error: (o: object, m
     log.error({ err }, 'failed to enqueue match refresh');
   }
 }
+
+// Friday Jobs Auto Apply, run by apps/worker (queues/autoApply.ts): "autoapply.plan" { userId } picks the
+// day's jobs, "autoapply.prepare" { applicationId } prepares one, "autoapply.notify" { userId } emails the
+// user about applications waiting for them.
+export const AUTO_APPLY_QUEUE = 'autoapply';
+export const autoApplyQueue = new Queue(AUTO_APPLY_QUEUE, { connection });
+
+/** Never throws: the request that triggered it has already succeeded. */
+export async function queueAutoApply(
+  name: 'autoapply.plan' | 'autoapply.prepare' | 'autoapply.notify',
+  data: { userId?: string; applicationId?: string },
+  log: { error: (o: object, m: string) => void },
+) {
+  try {
+    if (name === 'autoapply.plan') {
+      await autoApplyQueue.add(name, data, { jobId: `plan-${data.userId}`, removeOnComplete: true, removeOnFail: { age: 3600 } });
+    } else if (name === 'autoapply.prepare') {
+      await autoApplyQueue.add(name, data, {
+        jobId: `prepare-${data.applicationId}-${Date.now()}`,
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 30_000 },
+        removeOnComplete: { age: 24 * 3600 },
+        removeOnFail: { age: 7 * 24 * 3600 },
+      });
+    } else {
+      // One email a day, sent a little later so it covers everything that's waiting.
+      const day = new Date().toISOString().slice(0, 10);
+      await autoApplyQueue.add(name, data, {
+        jobId: `notify-${data.userId}-${day}`,
+        delay: 30 * 60_000,
+        removeOnComplete: { age: 2 * 24 * 3600 },
+        removeOnFail: { age: 2 * 24 * 3600 },
+      });
+    }
+  } catch (err) {
+    log.error({ err, name }, 'failed to enqueue auto apply job');
+  }
+}

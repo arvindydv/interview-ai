@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { Bookmark, Globe, LogOut, Menu, Search, Send, Sparkles, Target, UserRound, X } from 'lucide-react';
+import { Bookmark, Globe, LogOut, Menu, Search, Send, Sparkles, Target, UserRound, X, Zap } from 'lucide-react';
 import { Logo } from './Logo';
 import { Spinner } from './ui';
 import { JobsProvider, useJobs } from '@/lib/jobs';
@@ -19,6 +19,7 @@ const NAV = [
 const MINE = [
   { href: '/saved', label: 'Saved', icon: Bookmark, count: 'saved' },
   { href: '/applied', label: 'Applied', icon: Send, count: 'applied' },
+  { href: '/auto-apply', label: 'Auto Apply', icon: Zap, count: null },
 ] as const;
 
 function NavLink({ href, label, icon: Icon, count, onNavigate }: {
@@ -77,7 +78,7 @@ function Sidebar({ onNavigate }: { onNavigate: () => void }) {
         <div className="space-y-0.5">
           <p className="px-3 pb-2 text-[11px] font-semibold tracking-wider text-faint uppercase">My jobs</p>
           {MINE.map((n) => (
-            <NavLink key={n.href} {...n} count={summary?.counts[n.count]} onNavigate={onNavigate} />
+            <NavLink key={n.href} {...n} count={n.count ? summary?.counts[n.count] : undefined} onNavigate={onNavigate} />
           ))}
         </div>
       </nav>

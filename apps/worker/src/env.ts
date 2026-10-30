@@ -25,6 +25,12 @@ const schema = z.object({
   /** Python with PyMuPDF and python-docx, for editing resume files (python/requirements.txt). Default:
    * apps/worker/.venv/bin/python when it exists, otherwise python3. */
   PYTHON_BIN: z.string().optional(),
+  /** Auto Apply's bulk tailoring and form answers: cheaper than LLM_TAILOR_MODEL, as it runs up to 100 times a
+   * day per user. Default: claude-haiku-5-5, or anthropic/claude-haiku-5.5 when only OPENROUTER_API_KEY is set. */
+  LLM_BULK_MODEL: z.string().optional(),
+  /** Links in emails: the website and the Friday Jobs site. */
+  APP_URL: z.url().default('http://localhost:3100'),
+  JOBS_URL: z.url().default('http://localhost:3300'),
 
   // Brevo transactional SMTP. Without credentials (dev only) mail goes to the local Mailpit inbox.
   SMTP_HOST: z.string().default('smtp-relay.brevo.com'),

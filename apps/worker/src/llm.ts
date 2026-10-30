@@ -17,6 +17,10 @@ export const llmConfigured = () => anthropicConfigured() || Boolean(env.OPENROUT
 export const defaultModel = () =>
   anthropicConfigured() || !env.OPENROUTER_API_KEY ? 'claude-sonnet-5-5' : 'anthropic/claude-sonnet-5.5';
 
+/** The Haiku-tier default, for bulk work (Auto Apply). */
+export const bulkModel = () =>
+  env.LLM_BULK_MODEL ?? (anthropicConfigured() || !env.OPENROUTER_API_KEY ? 'claude-haiku-5-5' : 'anthropic/claude-haiku-5.5');
+
 /** A failure that retrying won't fix (bad key, rejected request). */
 export class PermanentError extends Error {}
 
