@@ -16,6 +16,7 @@ export interface TurnInfo {
   turn_index: number;
   transcript: string;
   end_of_turn_confidence?: number;
+  words?: { word: string; confidence: number }[];
 }
 
 interface FluxOptions {

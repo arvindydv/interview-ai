@@ -1,33 +1,39 @@
-import { Readable } from 'node:stream';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import {
-  NO_MINUTES_ERROR, NO_MINUTES_MESSAGE, PRACTICE_DIFFICULTIES, PRACTICE_LENGTHS, PRACTICE_LIMITS, ROUND_TYPES, speechStats,
-  type PracticeAnswer, type TrialBalance,
-  type PracticeDifficulty, type PracticeQuestion, type PracticeResult, type PracticeSession, type PracticeStatus,
-  type PracticeSummary, type RoundType,
+  NO_MINUTES_ERROR, NO_MINUTES_MESSAGE, NO_RESUME_ERROR, PRACTICE_DIFFICULTIES, PRACTICE_DURATIONS, PRACTICE_LIMITS, ROUND_TYPES,
+  parseMessage, renderResumeProfile,
+  type PracticeAnswer, type PracticeClientMessage, type PracticeDifficulty, type PracticeQuestion, type PracticeResult,
+  type PracticeServerMessage, type PracticeSession, type PracticeStatus, type PracticeSummary, type ResumeProfile, type RoundType,
+  type TrialBalance,
 } from '@parakeet/shared';
-import { env } from '../env.js';
-import { requireAuth } from '../lib/auth.js';
+import { AuthError, authenticate, requireAuth } from '../lib/auth.js';
 import { sql } from '../lib/db.js';
+import { llmConfigured, resolveModels } from '../lib/llm.js';
+import { PracticeRoom, type RoomStore } from '../lib/practiceRoom.js';
 import { practiceQueue } from '../lib/queues.js';
-import { chargeMinutes, minutesLeft, trialBalance } from '../lib/trial.js';
+import { getSettings } from '../lib/settings.js';
+import { sttConfigured } from '../lib/stt.js';
+import { minutesLeft, trialBalance } from '../lib/trial.js';
+import { ttsConfigured } from '../lib/tts.js';
 import { ensureUser } from '../lib/users.js';
 
-// Mock interviews (spec F1/F2). The worker writes the question plan and the debrief; the candidate's
-// answers are saved here one at a time, so a closed tab loses nothing.
+// Mock interviews (spec F1/F2). The interview itself runs live over WS /v1/practice/:id/live (see
+// lib/practiceRoom.ts): the candidate picks a length in minutes, and the interviewer asks questions
+// from their resume until the time is up. The worker writes the debrief.
 //
 // Practice spends session minutes like a live interview (lib/trial.ts): the free plan and minute packs
-// are metered, paid plans aren't. The clock runs on the server from when the candidate opens the
-// session (POST …/start) to each saved answer, so it can't be faked by the client. Planning and scoring
-// are free.
+// are metered, paid plans aren't. The clock starts when the candidate says they're ready, and is
+// measured on the server. The greeting before that, and the debrief, are free.
 
 interface SessionRow {
   id: string;
+  user_id: string;
   interview_id: string | null;
   title: string;
   round_type: RoundType;
   difficulty: PracticeDifficulty;
+  duration_minutes: number | null;
   question_count: number;
   status: PracticeStatus;
   error: string | null;
@@ -36,7 +42,9 @@ interface SessionRow {
   result: PracticeResult | null;
   score: number | null;
   seconds: number;
+  candidate_name: string;
   created_at: Date;
+  started_at: Date | null;
   completed_at: Date | null;
 }
 
@@ -48,11 +56,13 @@ const toSummary = (r: SessionRow): PracticeSummary => ({
   title: r.title,
   roundType: r.round_type,
   difficulty: r.difficulty,
+  durationMinutes: r.duration_minutes,
   questionCount: r.question_count,
   answered: answeredCount(r.answers),
   status: r.status,
   score: r.score,
   createdAt: r.created_at.toISOString(),
+  startedAt: r.started_at?.toISOString() ?? null,
   completedAt: r.completed_at?.toISOString() ?? null,
 });
 
@@ -65,27 +75,18 @@ const toSession = (r: SessionRow): PracticeSession => ({
   result: r.result,
 });
 
-const COLUMN_LIST = [
-  'id', 'interview_id', 'title', 'round_type', 'difficulty', 'question_count', 'status', 'error', 'questions', 'answers',
-  'result', 'score', 'seconds', 'created_at', 'completed_at',
-];
-const COLUMNS = sql.unsafe(COLUMN_LIST.join(', '));
-
-/** Time on one question that counts, at most: an answer left open while the candidate walks away isn't charged beyond this. */
-const MAX_METERED_S = PRACTICE_LIMITS.maxAnswerMs / 1000;
+const COLUMNS = sql.unsafe(
+  [
+    'id', 'user_id', 'interview_id', 'title', 'round_type', 'difficulty', 'duration_minutes', 'question_count', 'status', 'error',
+    'questions', 'answers', 'result', 'score', 'seconds', 'candidate_name', 'created_at', 'started_at', 'completed_at',
+  ].join(', '),
+);
 
 const setupBody = z.object({
   interviewId: z.uuid().nullable(),
   roundType: z.enum(ROUND_TYPES.map((r) => r.id) as [RoundType, ...RoundType[]]),
   difficulty: z.enum(PRACTICE_DIFFICULTIES.map((d) => d.id) as [PracticeDifficulty, ...PracticeDifficulty[]]),
-  questionCount: z.union(PRACTICE_LENGTHS.map((n) => z.literal(n)) as [z.ZodLiteral<number>, ...z.ZodLiteral<number>[]]),
-});
-
-const answerBody = z.object({
-  text: z.string().max(PRACTICE_LIMITS.maxAnswerChars).transform((s) => s.trim()),
-  mode: z.enum(['voice', 'text']),
-  durationMs: z.number().int().min(0).max(PRACTICE_LIMITS.maxAnswerMs),
-  skipped: z.boolean(),
+  durationMinutes: z.union(PRACTICE_DURATIONS.map((n) => z.literal(n)) as [z.ZodLiteral<number>, ...z.ZodLiteral<number>[]]),
 });
 
 const uuid = z.uuid();
@@ -93,210 +94,312 @@ const noMinutes = (reply: FastifyReply) => reply.code(402).send({ error: NO_MINU
 const isOut = (t: TrialBalance | null) => t !== null && minutesLeft(t) <= 0;
 const notFound = (reply: FastifyReply) => reply.code(404).send({ error: 'not_found', message: 'No such practice session' });
 
+const MAX_JD_CHARS = 8_000;
+const MAX_RESUME_CHARS = 12_000;
+/** The browser has this long after connecting to send its access token. */
+const AUTH_TIMEOUT_MS = 10_000;
+
+async function findOne(userId: string, id: string) {
+  const [row] = await sql<SessionRow[]>`select ${COLUMNS} from public.practice_sessions where id = ${id} and user_id = ${userId}`;
+  return row ?? null;
+}
+
+async function enqueueScore(id: string) {
+  await practiceQueue.add('practice.score', { sessionId: id }, { jobId: `practice.score-${id}-${Date.now()}` });
+}
+
+/** Ends a session and queues its debrief; one with no answers can't be scored and is marked failed. */
+async function finishSession(id: string, log: FastifyInstance['log']): Promise<SessionRow | null> {
+  const [row] = await sql<SessionRow[]>`
+    update public.practice_sessions
+    set status = case when exists (
+          select 1 from jsonb_array_elements(answers) a where a <> 'null'::jsonb and not coalesce((a ->> 'skipped')::boolean, false)
+        ) then 'scoring' else 'failed' end,
+        error = case when exists (
+          select 1 from jsonb_array_elements(answers) a where a <> 'null'::jsonb and not coalesce((a ->> 'skipped')::boolean, false)
+        ) then null else 'The interview ended before any question was answered.' end,
+        completed_at = now(), updated_at = now()
+    where id = ${id} and status = 'ready'
+    returning ${COLUMNS}`;
+  if (!row || row.status !== 'scoring') return row ?? null;
+  try {
+    await enqueueScore(row.id);
+  } catch (err) {
+    log.error({ err }, 'failed to enqueue practice scoring');
+    const error = 'Scoring is unavailable right now.';
+    await sql`update public.practice_sessions set status = 'failed', error = ${error} where id = ${row.id}`;
+    return { ...row, status: 'failed', error };
+  }
+  return row;
+}
+
+/** The candidate's resume and the target interview, for the interviewer model. Null without a resume. */
+async function interviewContext(row: SessionRow) {
+  const [c] = await sql<
+    { field: string | null; company: string | null; role: string | null; jd_text: string | null; resume_text: string | null; parsed_json: ResumeProfile | null }[]
+  >`
+    select i.field, i.company, i.role, i.jd_text, r.text as resume_text, r.parsed_json
+    from (select 1) one
+    left join public.interview_sessions i on i.id = ${row.interview_id} and i.user_id = ${row.user_id}
+    left join lateral (
+      select text, parsed_json from public.resumes where user_id = ${row.user_id} order by created_at desc limit 1
+    ) r on true`;
+  if (!c?.resume_text && !c?.parsed_json) return null;
+  const lines = [
+    '<candidate_context>',
+    (c.field || c.company || c.role || c.jd_text) && '<target_interview>',
+    c.field && `Field: ${c.field}`,
+    c.company && `Organisation: ${c.company}`,
+    c.role && `Role: ${c.role}`,
+    c.jd_text?.trim() && `Job description (for context only; ask about the resume):\n${c.jd_text.trim().slice(0, MAX_JD_CHARS)}`,
+    (c.field || c.company || c.role || c.jd_text) && '</target_interview>',
+    c.parsed_json && `<candidate_profile>\n${renderResumeProfile(c.parsed_json)}\n</candidate_profile>`,
+    c.resume_text && `<resume_text>\n${c.resume_text.slice(0, MAX_RESUME_CHARS)}\n</resume_text>`,
+    '</candidate_context>',
+  ];
+  const keyterms = [c.company, c.role, ...(c.parsed_json?.experience.map((e) => e.company) ?? []), ...(c.parsed_json?.skills.map((s) => s.name) ?? [])]
+    .filter((t): t is string => Boolean(t && t.length <= 40))
+    .slice(0, 50);
+  return { text: lines.filter(Boolean).join('\n'), keyterms: [...new Set(keyterms)] };
+}
+
+/** One open room per session, so a second tab takes over instead of running the interview twice. */
+const rooms = new Map<string, { room: PracticeRoom; close: () => void }>();
+
 export default async function practiceRoutes(app: FastifyInstance) {
-  app.addHook('preHandler', requireAuth);
+  // ---- REST --------------------------------------------------------------------------------------
+  await app.register(async (rest) => {
+    rest.addHook('preHandler', requireAuth);
 
-  async function findOne(userId: string, id: string) {
-    const [row] = await sql<SessionRow[]>`select ${COLUMNS} from public.practice_sessions where id = ${id} and user_id = ${userId}`;
-    return row ?? null;
-  }
+    rest.get('/v1/practice', async (req): Promise<{ sessions: PracticeSummary[] }> => {
+      const rows = await sql<SessionRow[]>`
+        select ${COLUMNS} from public.practice_sessions where user_id = ${req.user.id} order by created_at desc limit 100`;
+      return { sessions: rows.map(toSummary) };
+    });
 
-  async function enqueue(id: string, job: 'practice.plan' | 'practice.score') {
-    await practiceQueue.add(job, { sessionId: id }, { jobId: `${job}-${id}-${Date.now()}` });
-  }
-
-  app.get('/v1/practice', async (req): Promise<{ sessions: PracticeSummary[] }> => {
-    const rows = await sql<SessionRow[]>`
-      select ${COLUMNS} from public.practice_sessions where user_id = ${req.user.id} order by created_at desc limit 100`;
-    return { sessions: rows.map(toSummary) };
-  });
-
-  app.get<{ Params: { id: string } }>('/v1/practice/:id', async (req, reply): Promise<{ session: PracticeSession } | void> => {
-    if (!uuid.safeParse(req.params.id).success) return notFound(reply);
-    const row = await findOne(req.user.id, req.params.id);
-    return row ? { session: toSession(row) } : notFound(reply);
-  });
-
-  app.post('/v1/practice', async (req, reply): Promise<{ session: PracticeSession } | void> => {
-    const body = setupBody.safeParse(req.body);
-    if (!body.success) return reply.code(400).send({ error: 'bad_request', message: body.error.issues[0]?.message ?? 'Invalid setup' });
-    const { interviewId, roundType, difficulty, questionCount } = body.data;
-
-    if (isOut(await trialBalance(req.user.id))) return noMinutes(reply);
-
-    const [{ n }] = await sql<{ n: number }[]>`
-      select count(*)::int as n from public.practice_sessions
-      where user_id = ${req.user.id} and created_at >= date_trunc('day', now() at time zone 'utc') at time zone 'utc'`;
-    if (n >= PRACTICE_LIMITS.perDay) {
-      return reply.code(429).send({
-        error: 'daily_limit', message: `You've started ${PRACTICE_LIMITS.perDay} practice sessions today. More tomorrow (00:00 UTC).`,
-      });
-    }
-
-    let title = 'General practice';
-    if (interviewId) {
-      const [i] = await sql<{ role: string; company: string; field: string }[]>`
-        select role, company, field from public.interview_sessions where id = ${interviewId} and user_id = ${req.user.id}`;
-      if (!i) return reply.code(404).send({ error: 'not_found', message: 'No such interview' });
-      title = [i.role, i.company].filter(Boolean).join(' · ') || i.field || title;
-    }
-
-    await ensureUser(req);
-    const [row] = await sql<SessionRow[]>`
-      insert into public.practice_sessions (user_id, interview_id, title, round_type, difficulty, question_count)
-      values (${req.user.id}, ${interviewId}, ${title}, ${roundType}, ${difficulty}, ${questionCount})
-      returning ${COLUMNS}`;
-    try {
-      await enqueue(row.id, 'practice.plan');
-    } catch (err) {
-      req.log.error({ err }, 'failed to enqueue practice plan');
-      await sql`delete from public.practice_sessions where id = ${row.id}`;
-      return reply.code(503).send({ error: 'unavailable', message: 'Practice is unavailable right now. Try again in a minute.' });
-    }
-    return reply.code(201).send({ session: toSession(row) });
-  });
-
-  // Opening the session starts the clock. Reopening it keeps a running clock, unless it was left
-  // idle for longer than one answer can count.
-  app.post<{ Params: { id: string } }>(
-    '/v1/practice/:id/start',
-    async (req, reply): Promise<{ session: PracticeSession; trial: TrialBalance | null } | void> => {
+    rest.get<{ Params: { id: string } }>('/v1/practice/:id', async (req, reply): Promise<{ session: PracticeSession } | void> => {
       if (!uuid.safeParse(req.params.id).success) return notFound(reply);
-      const trial = await trialBalance(req.user.id);
-      if (isOut(trial)) return noMinutes(reply);
-      const [row] = await sql<SessionRow[]>`
-        update public.practice_sessions
-        set metered_at = case
-          when metered_at is null or metered_at < now() - make_interval(secs => ${MAX_METERED_S}) then now() else metered_at end
-        where id = ${req.params.id} and user_id = ${req.user.id} and status = 'ready'
-        returning ${COLUMNS}`;
-      if (!row) {
-        const current = await findOne(req.user.id, req.params.id);
-        if (!current) return notFound(reply);
-        return reply.code(409).send({ error: 'conflict', message: 'This session is no longer taking answers.' });
-      }
-      return { session: toSession(row), trial };
-    },
-  );
+      const row = await findOne(req.user.id, req.params.id);
+      return row ? { session: toSession(row) } : notFound(reply);
+    });
 
-  app.put<{ Params: { id: string; index: string } }>(
-    '/v1/practice/:id/answers/:index',
-    { bodyLimit: PRACTICE_LIMITS.maxAnswerChars * 4 + 1024 },
-    async (req, reply): Promise<{ session: PracticeSession; trial: TrialBalance | null } | void> => {
-      if (!uuid.safeParse(req.params.id).success) return notFound(reply);
-      const index = Number(req.params.index);
-      if (!Number.isInteger(index) || index < 0 || index >= 10) return reply.code(400).send({ error: 'bad_request', message: 'Invalid question' });
-      const body = answerBody.safeParse(req.body);
-      if (!body.success) return reply.code(400).send({ error: 'bad_request', message: body.error.issues[0]?.message ?? 'Invalid answer' });
-      const { text, mode, durationMs } = body.data;
-      const skipped = body.data.skipped || !text;
-      const answer: PracticeAnswer = { text, mode, durationMs, skipped, ...speechStats(text, durationMs, mode) };
+    rest.post('/v1/practice', async (req, reply): Promise<{ session: PracticeSession } | void> => {
+      const body = setupBody.safeParse(req.body);
+      if (!body.success) return reply.code(400).send({ error: 'bad_request', message: body.error.issues[0]?.message ?? 'Invalid setup' });
+      const { interviewId, roundType, difficulty, durationMinutes } = body.data;
 
       if (isOut(await trialBalance(req.user.id))) return noMinutes(reply);
-      // The time since the clock last moved (start, or the previous answer) is what this answer used.
-      const [row] = await sql<(SessionRow & { charged: number })[]>`
-        with prev as (
-          select id, least(greatest(extract(epoch from now() - coalesce(metered_at, created_at)), 0), ${MAX_METERED_S})::int as charged
-          from public.practice_sessions
-          where id = ${req.params.id} and user_id = ${req.user.id} and status = 'ready' and ${index} < jsonb_array_length(questions)
-          for update
-        )
-        update public.practice_sessions p
-        set answers = jsonb_set(p.answers, ${[String(index)]}, ${sql.json(answer as never)}),
-            seconds = p.seconds + prev.charged, metered_at = now(), updated_at = now()
-        from prev where p.id = prev.id
-        returning ${sql.unsafe(COLUMN_LIST.map((c) => `p.${c}`).join(', '))}, prev.charged`;
-      if (!row) {
-        const current = await findOne(req.user.id, req.params.id);
-        if (!current) return notFound(reply);
-        return reply.code(409).send({ error: 'conflict', message: 'This session is no longer taking answers.' });
+
+      const [resume] = await sql<{ name: string | null }[]>`
+        select parsed_json ->> 'name' as name from public.resumes where user_id = ${req.user.id} order by created_at desc limit 1`;
+      if (!resume) {
+        return reply.code(409).send({
+          error: NO_RESUME_ERROR, message: 'Upload your resume first. The interviewer asks about your own experience.',
+        });
       }
-      // The answer is saved either way; if the charge can't be recorded, don't fail the candidate.
-      const trial = await chargeMinutes(req.user.id, row.charged).catch((err) => {
-        req.log.warn({ err, sessionId: row.id }, 'could not charge practice minutes');
-        return null;
-      });
-      return { session: toSession(row), trial };
-    },
-  );
 
-  // The interviewer's voice: one question read aloud by Deepgram Aura. Browser text-to-speech has no
-  // voices at all on many Linux setups and sounds robotic elsewhere, so the site plays this instead
-  // (and falls back to the browser only when this returns 503).
-  app.get<{ Params: { id: string; index: string } }>('/v1/practice/:id/questions/:index/speech', async (req, reply) => {
-    if (!uuid.safeParse(req.params.id).success) return notFound(reply);
-    const index = Number(req.params.index);
-    if (!Number.isInteger(index) || index < 0 || index >= 10) return reply.code(400).send({ error: 'bad_request', message: 'Invalid question' });
-    if (!env.DEEPGRAM_API_KEY) return reply.code(503).send({ error: 'tts_unavailable', message: 'Voice is not set up on the server.' });
-    const [row] = await sql<{ question: string | null }[]>`
-      select questions -> ${index}::int ->> 'question' as question
-      from public.practice_sessions where id = ${req.params.id} and user_id = ${req.user.id}`;
-    if (!row) return notFound(reply);
-    if (!row.question) return reply.code(404).send({ error: 'not_found', message: 'No such question' });
+      const [{ n }] = await sql<{ n: number }[]>`
+        select count(*)::int as n from public.practice_sessions
+        where user_id = ${req.user.id} and created_at >= date_trunc('day', now() at time zone 'utc') at time zone 'utc'`;
+      if (n >= PRACTICE_LIMITS.perDay) {
+        return reply.code(429).send({
+          error: 'daily_limit', message: `You've started ${PRACTICE_LIMITS.perDay} practice sessions today. More tomorrow (00:00 UTC).`,
+        });
+      }
 
-    const url = `https://api.deepgram.com/v1/speak?${new URLSearchParams({ model: env.DEEPGRAM_TTS_MODEL })}`;
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { authorization: `Token ${env.DEEPGRAM_API_KEY}`, 'content-type': 'application/json' },
-      // Aura reads at most 2000 characters per request; questions are far shorter.
-      body: JSON.stringify({ text: row.question.slice(0, 2000) }),
-      signal: AbortSignal.timeout(15_000),
-    }).catch((err: Error) => {
-      req.log.warn({ err: err.message }, 'text-to-speech unreachable');
-      return null;
+      let title = 'General practice';
+      if (interviewId) {
+        const [i] = await sql<{ role: string; company: string; field: string }[]>`
+          select role, company, field from public.interview_sessions where id = ${interviewId} and user_id = ${req.user.id}`;
+        if (!i) return reply.code(404).send({ error: 'not_found', message: 'No such interview' });
+        title = [i.role, i.company].filter(Boolean).join(' · ') || i.field || title;
+      }
+
+      await ensureUser(req);
+      const name = (req.user.name || resume.name || '').slice(0, 80);
+      const [row] = await sql<SessionRow[]>`
+        insert into public.practice_sessions (user_id, interview_id, title, round_type, difficulty, duration_minutes, candidate_name, status)
+        values (${req.user.id}, ${interviewId}, ${title}, ${roundType}, ${difficulty}, ${durationMinutes}, ${name}, 'ready')
+        returning ${COLUMNS}`;
+      return reply.code(201).send({ session: toSession(row) });
     });
-    if (!res?.ok || !res.body) {
-      if (res) req.log.warn({ status: res.status, body: (await res.text().catch(() => '')).slice(0, 200) }, 'text-to-speech failed');
-      return reply.code(502).send({ error: 'tts_failed', message: 'Could not read the question aloud.' });
-    }
-    // Streamed through as it is synthesised. A question never changes, so the browser may keep it.
-    return reply
-      .header('content-type', res.headers.get('content-type') ?? 'audio/mpeg')
-      .header('cache-control', 'private, max-age=86400')
-      .send(Readable.fromWeb(res.body as import('node:stream/web').ReadableStream));
+
+    // Ends a session that is no longer live (e.g. the tab was closed mid-interview) and starts the debrief.
+    rest.post<{ Params: { id: string } }>('/v1/practice/:id/finish', async (req, reply): Promise<{ session: PracticeSession } | void> => {
+      if (!uuid.safeParse(req.params.id).success) return notFound(reply);
+      const current = await findOne(req.user.id, req.params.id);
+      if (!current) return notFound(reply);
+      if (current.status !== 'ready') return reply.code(409).send({ error: 'conflict', message: 'This session has already ended.' });
+      if (!answeredCount(current.answers)) {
+        return reply.code(400).send({ error: 'no_answers', message: 'Answer at least one question to get feedback.' });
+      }
+      rooms.get(current.id)?.close();
+      // Questions asked but never answered aren't part of the interview.
+      while (current.questions.length && !current.answers[current.questions.length - 1]) {
+        current.questions.pop();
+        current.answers.pop();
+      }
+      await sql`
+        update public.practice_sessions
+        set questions = ${sql.json(current.questions as never)}, answers = ${sql.json(current.answers as never)},
+            question_count = ${current.questions.length}
+        where id = ${current.id}`;
+      const row = await finishSession(current.id, req.log);
+      if (!row) return reply.code(409).send({ error: 'conflict', message: 'This session has already ended.' });
+      return { session: toSession(row) };
+    });
+
+    // A failed debrief: run it again.
+    rest.post<{ Params: { id: string } }>('/v1/practice/:id/retry', async (req, reply): Promise<{ session: PracticeSession } | void> => {
+      if (!uuid.safeParse(req.params.id).success) return notFound(reply);
+      const current = await findOne(req.user.id, req.params.id);
+      if (!current) return notFound(reply);
+      if (current.status !== 'failed' || !answeredCount(current.answers)) {
+        return reply.code(409).send({ error: 'conflict', message: 'Nothing to retry.' });
+      }
+      const [row] = await sql<SessionRow[]>`
+        update public.practice_sessions set status = 'scoring', error = null, updated_at = now()
+        where id = ${current.id} and status = 'failed' returning ${COLUMNS}`;
+      await enqueueScore(row.id);
+      return { session: toSession(row) };
+    });
+
+    rest.delete<{ Params: { id: string } }>('/v1/practice/:id', async (req, reply) => {
+      if (!uuid.safeParse(req.params.id).success) return notFound(reply);
+      rooms.get(req.params.id)?.close();
+      const res = await sql`delete from public.practice_sessions where id = ${req.params.id} and user_id = ${req.user.id}`;
+      if (!res.count) return notFound(reply);
+      return { ok: true };
+    });
   });
 
-  // Ends the session (unanswered questions count as skipped) and starts the debrief.
-  app.post<{ Params: { id: string } }>('/v1/practice/:id/finish', async (req, reply): Promise<{ session: PracticeSession } | void> => {
-    if (!uuid.safeParse(req.params.id).success) return notFound(reply);
-    const current = await findOne(req.user.id, req.params.id);
-    if (!current) return notFound(reply);
-    if (current.status !== 'ready') return reply.code(409).send({ error: 'conflict', message: 'This session has already ended.' });
-    if (!answeredCount(current.answers)) {
-      return reply.code(400).send({ error: 'no_answers', message: 'Answer at least one question to get feedback.' });
-    }
-    const [row] = await sql<SessionRow[]>`
-      update public.practice_sessions set status = 'scoring', completed_at = now(), updated_at = now()
-      where id = ${current.id} and status = 'ready' returning ${COLUMNS}`;
-    if (!row) return reply.code(409).send({ error: 'conflict', message: 'This session has already ended.' });
-    try {
-      await enqueue(row.id, 'practice.score');
-    } catch (err) {
-      req.log.error({ err }, 'failed to enqueue practice scoring');
-      await sql`update public.practice_sessions set status = 'failed', error = 'Scoring is unavailable right now.' where id = ${row.id}`;
-      return { session: toSession({ ...row, status: 'failed', error: 'Scoring is unavailable right now.' }) };
-    }
-    return { session: toSession(row) };
-  });
+  // ---- the live interview ------------------------------------------------------------------------
+  // Authenticated by the first message rather than a header, which browsers can't set on a WebSocket.
+  app.get<{ Params: { id: string } }>('/v1/practice/:id/live', { websocket: true }, (socket, req) => {
+    const sessionId = req.params.id;
+    let room: PracticeRoom | null = null;
+    let authed = false;
+    const send = (m: PracticeServerMessage) => {
+      if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(m));
+    };
+    const fail = (code: string, message: string, closeCode = 4000) => {
+      send({ type: 'error', code, message });
+      socket.close(closeCode, code);
+    };
+    const authTimer = setTimeout(() => !authed && fail('unauthorized', 'No access token', 4001), AUTH_TIMEOUT_MS);
 
-  // A failed plan or debrief: run that step again.
-  app.post<{ Params: { id: string } }>('/v1/practice/:id/retry', async (req, reply): Promise<{ session: PracticeSession } | void> => {
-    if (!uuid.safeParse(req.params.id).success) return notFound(reply);
-    const current = await findOne(req.user.id, req.params.id);
-    if (!current) return notFound(reply);
-    if (current.status !== 'failed') return reply.code(409).send({ error: 'conflict', message: 'Nothing to retry.' });
-    const step = current.questions.length ? 'scoring' : 'planning';
-    const [row] = await sql<SessionRow[]>`
-      update public.practice_sessions set status = ${step}, error = null, updated_at = now()
-      where id = ${current.id} and status = 'failed' returning ${COLUMNS}`;
-    await enqueue(row.id, step === 'scoring' ? 'practice.score' : 'practice.plan');
-    return { session: toSession(row) };
-  });
+    const open = async (token: string, hour: number) => {
+      if (!uuid.safeParse(sessionId).success) return fail('not_found', 'No such practice session', 4004);
+      let user;
+      try {
+        user = await authenticate(token, req.log);
+      } catch (err) {
+        if (err instanceof AuthError) return fail(err.code, err.message, 4001);
+        throw err;
+      }
+      const row = await findOne(user.id, sessionId);
+      if (!row) return fail('not_found', 'No such practice session', 4004);
+      if (row.status !== 'ready' || !row.duration_minutes) return fail('conflict', 'This session is no longer live.', 4009);
+      if (isOut(await trialBalance(user.id))) return fail(NO_MINUTES_ERROR, NO_MINUTES_MESSAGE, 4002);
+      if (!llmConfigured()) return fail('unavailable', 'Practice needs the AI model to be configured on the server.', 4003);
+      const context = await interviewContext(row);
+      if (!context) return fail(NO_RESUME_ERROR, 'Upload your resume first. The interviewer asks about your own experience.', 4009);
+      if (socket.readyState !== socket.OPEN) return;
 
-  app.delete<{ Params: { id: string } }>('/v1/practice/:id', async (req, reply) => {
-    if (!uuid.safeParse(req.params.id).success) return notFound(reply);
-    const res = await sql`delete from public.practice_sessions where id = ${req.params.id} and user_id = ${req.user.id}`;
-    if (!res.count) return notFound(reply);
-    return { ok: true };
+      const settings = await getSettings().catch(() => null);
+      rooms.get(sessionId)?.close();
+      const store: RoomStore = {
+        addQuestion: async (q) => {
+          await sql`
+            update public.practice_sessions
+            set questions = questions || jsonb_build_array(${sql.json(q as never)}::jsonb), answers = answers || '[null]'::jsonb,
+                question_count = question_count + 1, updated_at = now()
+            where id = ${sessionId}`;
+        },
+        setAnswer: async (index, answer) => {
+          await sql`
+            update public.practice_sessions
+            set answers = jsonb_set(answers, ${[String(index)]}, ${sql.json(answer as never)}), updated_at = now()
+            where id = ${sessionId}`;
+        },
+        dropLastQuestion: async () => {
+          await sql`
+            update public.practice_sessions
+            set questions = questions - (-1), answers = answers - (-1), question_count = greatest(question_count - 1, 0)
+            where id = ${sessionId}`;
+        },
+        start: async () => {
+          await sql`update public.practice_sessions set started_at = coalesce(started_at, now()), updated_at = now() where id = ${sessionId}`;
+        },
+        addSeconds: async (seconds) => {
+          await sql`update public.practice_sessions set seconds = seconds + ${seconds}, updated_at = now() where id = ${sessionId}`;
+        },
+        finish: async () => {
+          const done = await finishSession(sessionId, req.log);
+          if (!done) throw new Error('practice session was not live');
+          return toSession(done);
+        },
+        load: async () => toSession((await findOne(user.id, sessionId))!),
+      };
+      room = new PracticeRoom({
+        userId: user.id,
+        session: toSession(row),
+        candidateName: row.candidate_name,
+        context: context.text,
+        keyterms: context.keyterms,
+        model: resolveModels({ fast: settings?.fastModel }).fast,
+        hour,
+        store,
+        send,
+        sendAudio: (pcm) => socket.readyState === socket.OPEN && socket.send(pcm, { binary: true }),
+        close: () => socket.close(1000, 'done'),
+        log: req.log,
+      });
+      const entry = { room, close: () => socket.close(4010, 'opened elsewhere') };
+      rooms.set(sessionId, entry);
+      socket.on('close', () => rooms.get(sessionId) === entry && rooms.delete(sessionId));
+      send({ type: 'ready', stt: sttConfigured(), tts: ttsConfigured(), session: toSession(row) });
+      room.hello();
+      req.log.info({ userId: user.id, sessionId }, 'practice room opened');
+    };
+
+    socket.on('message', (raw, isBinary) => {
+      if (isBinary) return room?.audio(Buffer.isBuffer(raw) ? raw : Buffer.concat(raw as Buffer[]));
+      const msg = parseMessage<PracticeClientMessage>(raw.toString());
+      if (!msg) return;
+      if (!authed) {
+        if (msg.type !== 'auth' || typeof msg.token !== 'string') return fail('unauthorized', 'No access token', 4001);
+        authed = true;
+        clearTimeout(authTimer);
+        const hour = Number.isInteger(msg.hour) && msg.hour >= 0 && msg.hour < 24 ? msg.hour : new Date().getHours();
+        open(msg.token, hour).catch((err) => {
+          req.log.error({ err }, 'could not open practice room');
+          fail('internal', 'Could not start the interview. Try again.');
+        });
+        return;
+      }
+      if (!room) return;
+      switch (msg.type) {
+        case 'join':
+          return void room.join().catch((err) => req.log.error({ err }, 'practice join failed'));
+        case 'said':
+          return room.said(String(msg.id));
+        case 'done':
+          return room.done();
+        case 'repeat':
+          return void room.repeat();
+        case 'text':
+          return typeof msg.text === 'string' ? room.text(msg.text) : undefined;
+        case 'test':
+          return void room.test();
+        case 'end':
+          return void room.endEarly();
+      }
+    });
+
+    socket.on('close', () => {
+      clearTimeout(authTimer);
+      room?.close();
+    });
   });
 }

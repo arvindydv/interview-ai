@@ -42,8 +42,9 @@ const csp = [
   "style-src 'self' 'unsafe-inline'",
   `img-src 'self' data: blob: ${META_IMG}`,
   "font-src 'self' data:",
-  // Practice questions are read aloud from audio fetched with the user's token and played as a blob.
-  "media-src 'self' blob:",
+  // The practice interviewer's voice arrives over the WebSocket and plays as a blob; data: is the
+  // silent clip that unlocks audio playback on the Join click.
+  "media-src 'self' blob: data:",
   `connect-src ${connectSources()} ${RAZORPAY_CONNECT} ${META_CONNECT}`,
   `frame-src ${RAZORPAY_FRAMES} ${TURNSTILE}`,
   "frame-ancestors 'none'",
