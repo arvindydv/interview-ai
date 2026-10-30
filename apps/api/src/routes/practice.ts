@@ -12,6 +12,7 @@ import { sql } from '../lib/db.js';
 import { llmConfigured, resolveModels } from '../lib/llm.js';
 import { PracticeRoom, type RoomStore } from '../lib/practiceRoom.js';
 import { practiceQueue } from '../lib/queues.js';
+import { resumeName } from '../lib/resumeName.js';
 import { getSettings } from '../lib/settings.js';
 import { sttConfigured } from '../lib/stt.js';
 import { minutesLeft, trialBalance } from '../lib/trial.js';
@@ -145,6 +146,7 @@ async function interviewContext(row: SessionRow) {
       select text, parsed_json from public.resumes where user_id = ${row.user_id} order by created_at desc limit 1
     ) r on true`;
   if (!c?.resume_text && !c?.parsed_json) return null;
+  const name = resumeName(c.parsed_json?.name ?? null, c.resume_text ?? '');
   const lines = [
     '<candidate_context>',
     (c.field || c.company || c.role || c.jd_text) && '<target_interview>',
@@ -160,7 +162,8 @@ async function interviewContext(row: SessionRow) {
   const keyterms = [c.company, c.role, ...(c.parsed_json?.experience.map((e) => e.company) ?? []), ...(c.parsed_json?.skills.map((s) => s.name) ?? [])]
     .filter((t): t is string => Boolean(t && t.length <= 40))
     .slice(0, 50);
-  return { text: lines.filter(Boolean).join('\n'), keyterms: [...new Set(keyterms)] };
+  if (name) keyterms.unshift(...name.split(' ').filter((w) => w.length > 2));
+  return { text: lines.filter(Boolean).join('\n'), keyterms: [...new Set(keyterms)].slice(0, 50), name };
 }
 
 /** One open room per session, so a second tab takes over instead of running the interview twice. */
@@ -190,8 +193,8 @@ export default async function practiceRoutes(app: FastifyInstance) {
 
       if (isOut(await trialBalance(req.user.id))) return noMinutes(reply);
 
-      const [resume] = await sql<{ name: string | null }[]>`
-        select parsed_json ->> 'name' as name from public.resumes where user_id = ${req.user.id} order by created_at desc limit 1`;
+      const [resume] = await sql<{ name: string | null; text: string }[]>`
+        select parsed_json ->> 'name' as name, text from public.resumes where user_id = ${req.user.id} order by created_at desc limit 1`;
       if (!resume) {
         return reply.code(409).send({
           error: NO_RESUME_ERROR, message: 'Upload your resume first. The interviewer asks about your own experience.',
@@ -216,7 +219,8 @@ export default async function practiceRoutes(app: FastifyInstance) {
       }
 
       await ensureUser(req);
-      const name = (req.user.name || resume.name || '').slice(0, 80);
+      // The interviewer addresses the candidate as their resume does; the account name is a fallback.
+      const name = (resumeName(resume.name, resume.text) || req.user.name || '').slice(0, 80);
       const [row] = await sql<SessionRow[]>`
         insert into public.practice_sessions (user_id, interview_id, title, round_type, difficulty, duration_minutes, candidate_name, status)
         values (${req.user.id}, ${interviewId}, ${title}, ${roundType}, ${difficulty}, ${durationMinutes}, ${name}, 'ready')
@@ -344,7 +348,8 @@ export default async function practiceRoutes(app: FastifyInstance) {
       room = new PracticeRoom({
         userId: user.id,
         session: toSession(row),
-        candidateName: row.candidate_name,
+        // The resume may have been uploaded or analysed since the session was created.
+        candidateName: context.name || row.candidate_name,
         context: context.text,
         keyterms: context.keyterms,
         model: resolveModels({ fast: settings?.fastModel }).fast,

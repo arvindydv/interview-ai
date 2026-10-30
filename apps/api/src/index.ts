@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import sensible from '@fastify/sensible';
 import websocket from '@fastify/websocket';
+import { Agent, setGlobalDispatcher } from 'undici';
 import { env } from './env.js';
 import { sql } from './lib/db.js';
 import { redis } from './lib/redis.js';
@@ -22,6 +23,10 @@ import adminAuthRoutes from './routes/admin/auth.js';
 import adminOverviewRoutes from './routes/admin/overview.js';
 import adminUserRoutes from './routes/admin/users.js';
 import adminReportRoutes from './routes/admin/reports.js';
+
+// Keep HTTPS connections (Deepgram, OpenRouter, Claude) open between requests. With the default 4 s,
+// every practice interviewer turn paid a fresh TLS handshake (about 1 s from Mumbai) on each service.
+setGlobalDispatcher(new Agent({ keepAliveTimeout: 60_000, keepAliveMaxTimeout: 10 * 60_000 }));
 
 const app = Fastify({
   logger: { level: env.NODE_ENV === 'production' ? 'info' : 'debug' },
