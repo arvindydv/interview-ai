@@ -12,7 +12,7 @@ import { useJobs } from '@/lib/jobs';
 const ACCEPT = '.pdf,.docx,.txt,.md,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown';
 const EXTENSIONS = ['pdf', 'docx', 'txt', 'md'];
 
-function fileProblem(file: File) {
+export function fileProblem(file: File) {
   const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
   if (!RESUME_TYPES[file.type] && !EXTENSIONS.includes(ext)) {
     return ext === 'doc' ? 'Old .doc files aren’t supported. Save it as .docx or PDF and try again.' : 'Upload a PDF, DOCX or TXT file.';
@@ -22,7 +22,7 @@ function fileProblem(file: File) {
   return null;
 }
 
-async function toUpload(file: File): Promise<Upload> {
+export async function toUpload(file: File): Promise<Upload> {
   const data = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result).replace(/^data:[^,]*,/, ''));

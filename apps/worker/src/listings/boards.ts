@@ -49,6 +49,11 @@ export async function fetchBoard(provider: ListingProvider, board: string, { det
       return ashby(await getJson(`https://api.ashbyhq.com/posting-api/job-board/${slug}?includeCompensation=true`));
     case 'workable':
       return workable(await getJson(`https://apply.workable.com/api/v1/widget/accounts/${slug}?details=true`));
+    case 'smartrecruiters':
+      // Discovery asks for a few postings; a sync reads up to each board's own cap.
+      return smartRecruiters(board, detailPages === DETAIL_PAGES_MAX ? SMARTRECRUITERS_MAX : detailPages);
+    case 'workday':
+      return workday(board, detailPages === DETAIL_PAGES_MAX ? WORKDAY_MAX : detailPages);
     case 'keka':
       return keka(board);
     case 'freshteam':
@@ -187,6 +192,110 @@ function workable(body: any): Posting[] {
 }
 
 const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Postings read per sync from the boards that need a request per job for its description. */
+const SMARTRECRUITERS_MAX = 150;
+const WORKDAY_MAX = 100;
+
+/**
+ * SmartRecruiters (board = the company identifier, e.g. "ServiceNow"): its public Posting API, newest
+ * first; each posting's description is a separate request.
+ */
+async function smartRecruiters(board: string, max: number): Promise<Posting[]> {
+  if (!/^[A-Za-z0-9_-]{2,80}$/.test(board)) throw new BoardNotFoundError(`Invalid board "${board}"`);
+  const base = `https://api.smartrecruiters.com/v1/companies/${board}/postings`;
+  const list: any[] = [];
+  for (let offset = 0; list.length < max; offset += 100) {
+    const page = await getJson(`${base}?limit=100&offset=${offset}`);
+    list.push(...(page.content ?? []));
+    if (!page.content?.length || offset + 100 >= (page.totalFound ?? 0)) break;
+  }
+  if (!list.length) throw new BoardNotFoundError(`${board}: no SmartRecruiters postings`);
+  const out: Posting[] = [];
+  for (const item of list.slice(0, max)) {
+    const d = await getJson(`${base}/${encodeURIComponent(item.id)}`).catch(() => null);
+    if (!d?.jobAd) continue;
+    const sections = d.jobAd.sections ?? {};
+    const html = sanitize(
+      ['jobDescription', 'qualifications', 'additionalInformation']
+        .map((k) => sections[k]?.text && `<h3>${sections[k].title ?? ''}</h3>${sections[k].text}`)
+        .filter(Boolean)
+        .join(''),
+    );
+    const loc = d.location ?? {};
+    out.push({
+      externalId: String(d.id),
+      title: clean(d.name),
+      department: clean(d.department?.label) || null,
+      // fullLocation leaves empty parts in ("Hyderabad, , India").
+      location: clean((loc.fullLocation ?? [loc.city, loc.region, loc.country?.toUpperCase()].filter(Boolean).join(', ')).replace(/(,\s*)+,/g, ',')),
+      workplace: loc.remote ? 'remote' : loc.hybrid ? 'hybrid' : null,
+      employmentType: clean(d.typeOfEmployment?.label) || null,
+      salary: null,
+      descriptionHtml: html,
+      descriptionText: toText(html),
+      applyUrl: d.postingUrl ?? d.applyUrl,
+      postedAt: date(d.releasedDate),
+    });
+    await pause(150);
+  }
+  return out;
+}
+
+/**
+ * Workday (board = "<tenant>.<wdN>/<site>", e.g. "nvidia.wd5/NVIDIAExternalCareerSite"): the JSON its
+ * public career site loads, allowed by each site's robots.txt. The newest postings, each with a detail
+ * request for its description.
+ */
+async function workday(board: string, max: number): Promise<Posting[]> {
+  const m = /^([a-z0-9-]+)\.(wd\d{1,3})\/([A-Za-z0-9_-]+)$/.exec(board);
+  if (!m) throw new BoardNotFoundError(`Invalid board "${board}"`);
+  const [, tenant, dc, site] = m;
+  const origin = `https://${tenant}.${dc}.myworkdayjobs.com`;
+  const api = `${origin}/wday/cxs/${tenant}/${site}`;
+  const list: any[] = [];
+  for (let offset = 0; list.length < max; offset += 20) {
+    const res = await fetch(`${api}/jobs`, {
+      method: 'POST',
+      headers: { 'user-agent': USER_AGENT, 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify({ appliedFacets: {}, limit: 20, offset, searchText: '' }),
+      redirect: 'manual',
+      signal: AbortSignal.timeout(60_000),
+    });
+    // Workday redirects to its maintenance page during upgrades: try again at the next sync.
+    if (res.status >= 300 && res.status < 400) throw new Error(`${board}: Workday redirected to ${res.headers.get('location')}`);
+    if (res.status === 404 || res.status === 422) throw new BoardNotFoundError(`${board}: HTTP ${res.status}`);
+    if (res.status === 429) throw new RateLimitedError(`${board}: HTTP 429`);
+    if (!res.ok) throw new Error(`${board}: HTTP ${res.status}`);
+    const page: any = await res.json();
+    list.push(...(page.jobPostings ?? []));
+    if (!page.jobPostings?.length || offset + 20 >= (page.total ?? 0)) break;
+    await pause(150);
+  }
+  const out: Posting[] = [];
+  for (const item of list.filter((j) => j.externalPath).slice(0, max)) {
+    const d = await getJson(`${api}${item.externalPath}`).catch(() => null);
+    const info = d?.jobPostingInfo;
+    if (!info?.title) continue;
+    const html = sanitize(info.jobDescription ?? '');
+    const remote = /remote/i.test(`${info.remoteType ?? ''} ${info.location ?? ''}`);
+    out.push({
+      externalId: String(info.jobReqId ?? info.id ?? item.externalPath),
+      title: clean(info.title),
+      department: null,
+      location: clean([info.location, ...(info.additionalLocations ?? [])].filter(Boolean).join(' · ')),
+      workplace: remote ? 'remote' : null,
+      employmentType: clean(info.timeType) || null,
+      salary: null,
+      descriptionHtml: html,
+      descriptionText: toText(html),
+      applyUrl: info.externalUrl ?? `${origin}/${site}${item.externalPath}`,
+      postedAt: date(info.startDate),
+    });
+    await pause(150);
+  }
+  return out;
+}
 
 /** Subdomain boards (Keka, Freshteam): one DNS label. */
 const label = (board: string) => {

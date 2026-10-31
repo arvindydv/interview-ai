@@ -43,26 +43,52 @@ export type AutoApplyReason =
   | 'expired'
   | 'removed_by_user';
 
-/** Job boards whose forms Auto Apply can prepare and the extension can submit. */
-export const AUTO_APPLY_PROVIDERS = ['greenhouse', 'lever', 'ashby'] as const;
+/**
+ * Job boards whose forms Auto Apply can prepare and the extension can submit. Greenhouse, Lever, Ashby
+ * and Workable forms are read in advance; SmartRecruiters and Workday forms only when the extension
+ * opens them (their questions aren't public), and Workday asks the user to sign in to each employer.
+ */
+export const AUTO_APPLY_PROVIDERS = ['greenhouse', 'lever', 'ashby', 'workable', 'smartrecruiters', 'workday'] as const;
 export type AutoApplyProvider = (typeof AUTO_APPLY_PROVIDERS)[number];
+
+/** The page the extension opens to apply. */
+export function autoApplyUrl(provider: AutoApplyProvider, board: string, externalId: string, listingUrl: string) {
+  switch (provider) {
+    case 'workable':
+      return `https://apply.workable.com/${encodeURIComponent(board)}/j/${encodeURIComponent(externalId)}/apply/`;
+    // The posting page; the extension presses its Apply button.
+    case 'smartrecruiters':
+      return listingUrl;
+    case 'workday':
+      return `${listingUrl.replace(/\/$/, '')}/apply/applyManually`;
+    // Greenhouse's own hosted form, also used when a company embeds it in its careers site.
+    case 'greenhouse':
+      return `https://boards.greenhouse.io/embed/job_app?for=${encodeURIComponent(board)}&token=${encodeURIComponent(externalId)}`;
+    case 'lever':
+      return `https://jobs.lever.co/${encodeURIComponent(board)}/${encodeURIComponent(externalId)}/apply`;
+    case 'ashby':
+      return `https://jobs.ashbyhq.com/${encodeURIComponent(board)}/${encodeURIComponent(externalId)}/application`;
+  }
+}
+
 
 export const AUTO_APPLY_LIMITS = {
   minScore: 50,
   maxScore: 90,
   defaultScore: 70,
-  maxPerDay: 100,
-  /** Prepared applications waiting to be submitted; preparation pauses at this many (saves model cost). */
-  maxBacklog: 100,
+  /** The highest daily limit of any plan (jobsPlans.ts); each plan caps it lower. */
+  maxPerDay: 500,
   /** Prepared applications not submitted within this many days are skipped as expired. */
   expireDays: 7,
 } as const;
 
 export interface AutoApplySettings {
   enabled: boolean;
+  /** auto: Friday picks the jobs. review: only jobs the user swipes right on. */
+  mode: 'auto' | 'review';
   /** Lowest match score (50–90) a job needs to be applied to. */
   minScore: number;
-  /** At most 100. */
+  /** At most the plan's daily applications. */
   dailyLimit: number;
   /** IANA zone the daily limit resets in, e.g. "Asia/Kolkata". */
   timezone: string;
@@ -159,7 +185,7 @@ export interface PreparedAnswer {
   /** Option labels for select fields; null when left blank. */
   value: string | string[] | null;
   /** Where the answer came from. */
-  source: 'profile' | 'resume' | 'ai' | 'user' | 'declined' | 'file';
+  source: 'profile' | 'resume' | 'ai' | 'user' | 'declined' | 'file' | 'cover_letter';
 }
 
 export interface AutoApplication {
@@ -192,6 +218,9 @@ export interface AutoApplicationDetail extends AutoApplication {
 /** GET /v1/auto-apply */
 export interface AutoApplyOverview {
   settings: AutoApplySettings;
+  /** The user's Friday Jobs plan, which caps the daily limit. */
+  plan: import('./jobsPlans.js').JobsPlan;
+  planExpiresAt: string | null;
   profile: ApplicationProfile;
   /** What's still needed before Auto Apply can be turned on. */
   blockers: string[];
@@ -214,6 +243,9 @@ export interface AutoApplyTask {
   /** GET this with the user's token for the tailored resume file. */
   resumePath: string;
   resumeFileName: string;
+  /** The cover letter PDF, when one was written. */
+  coverLetterPath: string | null;
+  coverLetterFileName: string | null;
   /** Claim lease: report back before this, or the application returns to Prepared. */
   leaseUntil: string;
 }
@@ -226,4 +258,57 @@ export interface AutoApplyReport {
   /** For needs_answers: the required fields the extension couldn't fill. */
   unanswered?: string[];
   message?: string;
+}
+
+/** GET /v1/swipe: a matched job to decide on. Right is apply, left is skip. */
+export interface SwipeCard {
+  listingId: string;
+  title: string;
+  company: string;
+  companyWebsite: string | null;
+  companyLogo: string | null;
+  location: string;
+  workplace: string | null;
+  salary: string | null;
+  postedAt: string | null;
+  score: number;
+  matchedSkills: string[];
+  /** The start of the description, as text. */
+  summary: string;
+  provider: AutoApplyProvider;
+}
+
+export interface SwipeResult {
+  decision: 'apply' | 'skip';
+  /** For apply: the application Auto Apply is now preparing. */
+  applicationId?: string;
+  /** Applications counted against today's limit, and the limit. */
+  today: number;
+  limit: number;
+}
+
+/** GET /v1/jobs-analytics?days=30: how the user's applications are doing. */
+export interface JobsAnalytics {
+  days: number;
+  totals: {
+    applied: number;
+    /** Sent by Auto Apply (confirmed by the job board) vs by the user. */
+    auto: number;
+    manual: number;
+    /** Any reply the user recorded: interviewing, offer or not selected. */
+    responses: number;
+    interviews: number;
+    offers: number;
+    rejected: number;
+    /** responses / applied, 0–1. */
+    responseRate: number;
+  };
+  /** One row per day in the period, oldest first. */
+  daily: { day: string; applied: number; responses: number }[];
+  /** Best response rate first. */
+  bySource: { source: string; label: string; applied: number; responses: number; interviews: number; rate: number }[];
+  /** Applications by how well the job matched. */
+  byScore: { band: string; applied: number; responses: number; rate: number }[];
+  /** Auto Apply applications in the period by status. */
+  autoApply: Record<AutoApplyStatus, number>;
 }

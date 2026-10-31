@@ -1,7 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import {
-  AUTO_APPLY_LIMITS, AUTO_APPLY_STATUSES, EMPTY_APPLICATION_PROFILE, missingProfileFields, type ApplicationProfile,
+  AUTO_APPLY_LIMITS, AUTO_APPLY_PROVIDERS, AUTO_APPLY_STATUSES, EMPTY_APPLICATION_PROFILE, JOBS_PLANS, activeJobsPlan, autoApplyUrl,
+  missingProfileFields, type ApplicationProfile, type JobsAnalytics, type JobsPlan, type JobsPlanStatus, type SwipeCard, type SwipeResult,
   type AutoApplication, type AutoApplicationDetail, type AutoApplyOverview, type AutoApplyProvider, type AutoApplyReason,
   type AutoApplySettings, type AutoApplyStatus, type AutoApplyTask, type FormQuestion, type PreparedAnswer,
 } from '@parakeet/shared';
@@ -21,16 +22,21 @@ const MAX_SUBMIT_ATTEMPTS = 3;
 
 interface SettingsRow {
   enabled: boolean;
+  mode: 'auto' | 'review';
   min_score: number;
   daily_limit: number;
   timezone: string;
   consented_at: Date | null;
 }
 
-const toSettings = (r: SettingsRow | undefined): AutoApplySettings => ({
+const SETTINGS_COLUMNS = sql`enabled, mode, min_score, daily_limit, timezone, consented_at`;
+
+const toSettings = (r: SettingsRow | undefined, plan: JobsPlan): AutoApplySettings => ({
   enabled: r?.enabled ?? false,
+  mode: r?.mode ?? 'auto',
   minScore: r?.min_score ?? AUTO_APPLY_LIMITS.defaultScore,
-  dailyLimit: r?.daily_limit ?? AUTO_APPLY_LIMITS.maxPerDay,
+  // Never more than the plan allows, also after a plan runs out.
+  dailyLimit: Math.min(r?.daily_limit ?? plan.dailyApplications, plan.dailyApplications),
   timezone: r?.timezone ?? 'Asia/Kolkata',
   consentedAt: r?.consented_at?.toISOString() ?? null,
 });
@@ -79,6 +85,7 @@ const text = (max: number) => z.string().trim().max(max);
 
 const settingsBody = z.object({
   enabled: z.boolean().optional(),
+  mode: z.enum(['auto', 'review']).optional(),
   minScore: z.number().int().min(AUTO_APPLY_LIMITS.minScore).max(AUTO_APPLY_LIMITS.maxScore).optional(),
   dailyLimit: z.number().int().min(1).max(AUTO_APPLY_LIMITS.maxPerDay).optional(),
   timezone: z
@@ -150,6 +157,19 @@ const CONFIRMATION: Record<AutoApplyProvider, { url: RegExp; text: RegExp }> = {
     url: /ashbyhq\.com\/.*(submitted|confirmation)/i,
     text: /application (was )?(successfully )?submitted|thank(s| you) for (applying|submitting)|we('ve| have) received your application/i,
   },
+  // Not yet seen live on these three; a miss only means the user is asked to confirm.
+  workable: {
+    url: /workable\.com\/.*(success|thank|submitted)/i,
+    text: /thank(s| you) for (applying|your application)|application (has been |was )?(successfully )?(submitted|received)/i,
+  },
+  smartrecruiters: {
+    url: /smartrecruiters\.com\/.*(success|thank|confirmation)/i,
+    text: /thank(s| you) for (applying|your application)|application (has been |was )?(successfully )?(submitted|received)/i,
+  },
+  workday: {
+    url: /myworkdayjobs\.com\/.*(applicationSubmitted|submitted)/i,
+    text: /application submitted|thank(s| you) for applying|your application (has been|was) (submitted|received)/i,
+  },
 };
 
 export function verifySubmission(provider: AutoApplyProvider, evidence: { url: string; text: string } | undefined) {
@@ -164,6 +184,24 @@ async function event(applicationId: string, userId: string, kind: string, messag
   await sql`
     insert into public.auto_apply_events (application_id, user_id, kind, message, detail)
     values (${applicationId}, ${userId}, ${kind}, ${message}, ${detail === undefined ? null : sql.json(detail as never)})`;
+}
+
+/** The user's Friday Jobs plan (free once a paid one runs out). */
+async function userPlan(userId: string): Promise<{ plan: JobsPlan; expiresAt: Date | null }> {
+  const [u] = await sql<{ jobs_plan: string | null; jobs_plan_expires_at: Date | null }[]>`
+    select jobs_plan, jobs_plan_expires_at from public.users where id = ${userId}`;
+  const plan = activeJobsPlan(u?.jobs_plan, u?.jobs_plan_expires_at);
+  return { plan, expiresAt: plan.id === 'free' ? null : (u?.jobs_plan_expires_at ?? null) };
+}
+
+/** Applications counted against the user's day so far (skipped ones don't count). */
+async function usedToday(userId: string) {
+  const [{ n }] = await sql<{ n: number }[]>`
+    select count(*)::int as n from public.auto_applications a
+    left join public.auto_apply_settings s on s.user_id = a.user_id
+    where a.user_id = ${userId} and a.status <> 'skipped'
+      and a.plan_day = (now() at time zone coalesce(s.timezone, 'Asia/Kolkata'))::date`;
+  return n;
 }
 
 async function loadProfile(userId: string): Promise<ApplicationProfile> {
@@ -190,8 +228,8 @@ export default async function autoApplyRoutes(app: FastifyInstance) {
 
   app.get('/v1/auto-apply', async (req): Promise<AutoApplyOverview> => {
     const userId = req.user.id;
-    const [[settingsRow], profile, counts] = await Promise.all([
-      sql<SettingsRow[]>`select enabled, min_score, daily_limit, timezone, consented_at from public.auto_apply_settings where user_id = ${userId}`,
+    const [[settingsRow], profile, counts, { plan, expiresAt }] = await Promise.all([
+      sql<SettingsRow[]>`select ${SETTINGS_COLUMNS} from public.auto_apply_settings where user_id = ${userId}`,
       loadProfile(userId),
       sql<{ status: AutoApplyStatus; n: number; today: number; needs: number }[]>`
         select a.status, count(*)::int as n,
@@ -200,12 +238,15 @@ export default async function autoApplyRoutes(app: FastifyInstance) {
         from public.auto_applications a
         left join public.auto_apply_settings s on s.user_id = a.user_id
         where a.user_id = ${userId} group by a.status`,
+      userPlan(userId),
     ]);
-    const settings = toSettings(settingsRow);
+    const settings = toSettings(settingsRow, plan);
     // Prefill the profile from the account and resume the first time.
     if (!profile.email && req.user.email) profile.email = req.user.email;
     return {
       settings,
+      plan,
+      planExpiresAt: expiresAt?.toISOString() ?? null,
       profile,
       blockers: await blockers(userId, profile, settings),
       today: counts.filter((c) => c.status !== 'skipped').reduce((n, c) => n + c.today, 0),
@@ -219,32 +260,42 @@ export default async function autoApplyRoutes(app: FastifyInstance) {
     if (!body.success) return reply.code(400).send({ error: 'bad_request', message: body.error.issues[0]?.message ?? 'Invalid settings' });
     const userId = req.user.id;
     await ensureUser(req);
-    const { enabled, minScore, dailyLimit, timezone, consent } = body.data;
+    const { enabled, mode, minScore, dailyLimit, timezone, consent } = body.data;
+    const { plan } = await userPlan(userId);
+    if (dailyLimit !== undefined && dailyLimit > plan.dailyApplications) {
+      return reply.code(402).send({
+        error: 'plan_limit',
+        message: `Your ${plan.name} plan allows ${plan.dailyApplications} applications a day. Upgrade for more.`,
+      });
+    }
     const [row] = await sql<SettingsRow[]>`
-      insert into public.auto_apply_settings (user_id, min_score, daily_limit, timezone, consented_at)
-      values (${userId}, ${minScore ?? AUTO_APPLY_LIMITS.defaultScore}, ${dailyLimit ?? AUTO_APPLY_LIMITS.maxPerDay},
+      insert into public.auto_apply_settings (user_id, mode, min_score, daily_limit, timezone, consented_at)
+      values (${userId}, ${mode ?? 'auto'}, ${minScore ?? AUTO_APPLY_LIMITS.defaultScore}, ${dailyLimit ?? plan.dailyApplications},
               ${timezone ?? 'Asia/Kolkata'}, ${consent ? sql`now()` : null})
       on conflict (user_id) do update set
+        mode = coalesce(${mode ?? null}, auto_apply_settings.mode),
         min_score = coalesce(${minScore ?? null}, auto_apply_settings.min_score),
         daily_limit = coalesce(${dailyLimit ?? null}, auto_apply_settings.daily_limit),
         timezone = coalesce(${timezone ?? null}, auto_apply_settings.timezone),
         consented_at = coalesce(auto_apply_settings.consented_at, ${consent ? sql`now()` : null}),
         updated_at = now()
-      returning enabled, min_score, daily_limit, timezone, consented_at`;
+      returning ${SETTINGS_COLUMNS}`;
     if (enabled !== undefined && enabled !== row.enabled) {
       if (enabled) {
-        const missing = await blockers(userId, await loadProfile(userId), toSettings(row));
+        const missing = await blockers(userId, await loadProfile(userId), toSettings(row, plan));
         if (missing.length) return reply.code(409).send({ error: 'not_ready', message: missing.join('. ') });
       }
       const [updated] = await sql<SettingsRow[]>`
         update public.auto_apply_settings set enabled = ${enabled}, updated_at = now() where user_id = ${userId}
-        returning enabled, min_score, daily_limit, timezone, consented_at`;
+        returning ${SETTINGS_COLUMNS}`;
       if (enabled) await queueAutoApply('autoapply.plan', { userId }, req.log);
-      return toSettings(updated);
+      return toSettings(updated, plan);
     }
-    // A higher limit or lower score may make room for more today.
-    if (row.enabled && (minScore !== undefined || dailyLimit !== undefined)) await queueAutoApply('autoapply.plan', { userId }, req.log);
-    return toSettings(row);
+    // A higher limit, lower score or switch to auto may make room for more today.
+    if (row.enabled && (minScore !== undefined || dailyLimit !== undefined || mode === 'auto')) {
+      await queueAutoApply('autoapply.plan', { userId }, req.log);
+    }
+    return toSettings(row, plan);
   });
 
   app.put('/v1/auto-apply/profile', async (req, reply): Promise<ApplicationProfile | void> => {
@@ -411,6 +462,185 @@ export default async function autoApplyRoutes(app: FastifyInstance) {
     return { status: 'submitted' };
   });
 
+
+  // ---- Plans and swipe review --------------------------------------------------------------------
+
+  app.get('/v1/jobs-plan', async (req): Promise<JobsPlanStatus> => {
+    const { plan, expiresAt } = await userPlan(req.user.id);
+    return { plan, expiresAt: expiresAt?.toISOString() ?? null, plans: Object.values(JOBS_PLANS) };
+  });
+
+  // Matched jobs Auto Apply can apply to that the user hasn't decided on, best first.
+  app.get<{ Querystring: { limit?: string } }>('/v1/swipe', async (req): Promise<{ cards: SwipeCard[] }> => {
+    const userId = req.user.id;
+    const limit = Math.max(1, Math.min(30, Number(req.query.limit) || 15));
+    const rows = await sql<(Omit<SwipeCard, 'postedAt' | 'summary'> & { posted_at: Date | null; summary: string })[]>`
+      select l.id as "listingId", l.title, l.company, s.website as "companyWebsite", l.company_logo as "companyLogo",
+             l.location, l.workplace, l.salary, l.posted_at, m.score, m.matched_skills as "matchedSkills",
+             left(l.description_text, 600) as summary, s.provider
+      from public.job_matches m
+      join public.job_listings l on l.id = m.listing_id
+      join public.job_sources s on s.id = l.source_id
+      where m.user_id = ${userId} and m.score >= ${AUTO_APPLY_LIMITS.minScore}
+        and l.closed_at is null and l.duplicate_of is null
+        and s.provider in ${sql(AUTO_APPLY_PROVIDERS as unknown as string[])}
+        and not exists (select 1 from public.job_swipes w where w.user_id = ${userId} and w.listing_id = l.id)
+        and not exists (select 1 from public.auto_applications a where a.user_id = ${userId} and a.listing_id = l.id)
+        and not exists (select 1 from public.job_applications j where j.user_id = ${userId} and j.listing_id = l.id and j.status <> 'saved')
+      order by m.score desc, l.posted_at desc nulls last
+      limit ${limit}`;
+    return { cards: rows.map(({ posted_at, ...r }) => ({ ...r, postedAt: posted_at?.toISOString() ?? null })) };
+  });
+
+  const swipeBody = z.object({ listingId: z.uuid(), decision: z.enum(['apply', 'skip']) });
+
+  // Right swipe: applied to through Auto Apply now (counts against today's limit). Left: never applied to.
+  app.post('/v1/swipe', async (req, reply): Promise<SwipeResult | void> => {
+    const body = swipeBody.safeParse(req.body);
+    if (!body.success) return reply.code(400).send({ error: 'bad_request', message: 'Invalid swipe.' });
+    const userId = req.user.id;
+    const { listingId, decision } = body.data;
+    await ensureUser(req);
+    const { plan } = await userPlan(userId);
+    const [settingsRow] = await sql<SettingsRow[]>`select ${SETTINGS_COLUMNS} from public.auto_apply_settings where user_id = ${userId}`;
+    const settings = toSettings(settingsRow, plan);
+
+    if (decision === 'skip') {
+      await sql`
+        insert into public.job_swipes (user_id, listing_id, decision) values (${userId}, ${listingId}, 'skip')
+        on conflict (user_id, listing_id) do update set decision = 'skip', created_at = now()`;
+      return { decision, today: await usedToday(userId), limit: settings.dailyLimit };
+    }
+
+    const missing = await blockers(userId, await loadProfile(userId), settings);
+    if (!settings.enabled) missing.push('Turn on Auto Apply');
+    if (missing.length) return reply.code(409).send({ error: 'not_ready', message: missing.join('. ') });
+    const today = await usedToday(userId);
+    if (today >= settings.dailyLimit) {
+      return reply.code(429).send({
+        error: 'daily_limit',
+        message: `You’ve used today’s ${settings.dailyLimit} applications. ${plan.id === 'premium' ? 'More tomorrow.' : 'Upgrade for more, or swipe again tomorrow.'}`,
+      });
+    }
+    const [job] = await sql<{ id: string; title: string; company: string; provider: AutoApplyProvider; board: string; external_id: string; apply_url: string; score: number | null }[]>`
+      select l.id, l.title, l.company, s.provider, s.board, l.external_id, l.apply_url, m.score
+      from public.job_listings l join public.job_sources s on s.id = l.source_id
+      left join public.job_matches m on m.user_id = ${userId} and m.listing_id = l.id
+      where l.id = ${listingId} and l.closed_at is null`;
+    if (!job) return reply.notFound('This job is no longer available.');
+    if (!(AUTO_APPLY_PROVIDERS as readonly string[]).includes(job.provider)) {
+      return reply.code(409).send({ error: 'unsupported', message: 'Auto Apply can’t apply on this job board yet.' });
+    }
+    await sql`
+      insert into public.job_swipes (user_id, listing_id, decision) values (${userId}, ${listingId}, 'apply')
+      on conflict (user_id, listing_id) do update set decision = 'apply', created_at = now()`;
+    const [created] = await sql<{ id: string }[]>`
+      insert into public.auto_applications (user_id, listing_id, provider, apply_url, title, company, score, plan_day)
+      values (${userId}, ${job.id}, ${job.provider}, ${autoApplyUrl(job.provider, job.board, job.external_id, job.apply_url)},
+              ${job.title}, ${job.company}, ${job.score},
+              (now() at time zone ${settings.timezone})::date)
+      on conflict (user_id, listing_id) do nothing
+      returning id`;
+    if (created) {
+      await event(created.id, userId, 'planned', `You swiped right: ${job.title} at ${job.company}`);
+      await queueAutoApply('autoapply.prepare', { applicationId: created.id }, req.log);
+    }
+    return { decision, applicationId: created?.id, today: today + (created ? 1 : 0), limit: settings.dailyLimit };
+  });
+
+  // Undo the last swipe: forgets it, and drops the application if it hasn't been sent.
+  app.delete<{ Params: { listingId: string } }>('/v1/swipe/:listingId', async (req, reply) => {
+    if (!z.uuid().safeParse(req.params.listingId).success) return reply.notFound('No such job.');
+    const userId = req.user.id;
+    await sql`delete from public.job_swipes where user_id = ${userId} and listing_id = ${req.params.listingId}`;
+    await sql`
+      delete from public.auto_applications
+      where user_id = ${userId} and listing_id = ${req.params.listingId} and status in ('preparing', 'prepared')`;
+    return { ok: true };
+  });
+
+
+  // ---- Analytics ---------------------------------------------------------------------------------
+
+  const PROVIDER_LABELS: Record<string, string> = {
+    greenhouse: 'Greenhouse', lever: 'Lever', ashby: 'Ashby', workable: 'Workable', smartrecruiters: 'SmartRecruiters',
+    workday: 'Workday', keka: 'Keka', freshteam: 'Freshteam', zohorecruit: 'Zoho Recruit', himalayas: 'Himalayas',
+    remoteok: 'Remote OK', jobicy: 'Jobicy', adzuna: 'Adzuna', jooble: 'Jooble', unknown: 'Closed listings',
+  };
+
+  app.get<{ Querystring: { days?: string } }>('/v1/jobs-analytics', async (req): Promise<JobsAnalytics> => {
+    const userId = req.user.id;
+    const days = [7, 30, 90].includes(Number(req.query.days)) ? Number(req.query.days) : 30;
+    // Every application in the period (the tracker), with its source, channel and match score.
+    const rows = await sql<{ day: string; status: string; source: string; auto: boolean; score: number | null }[]>`
+      select to_char(coalesce(j.applied_at, j.created_at)::date, 'YYYY-MM-DD') as day, j.status,
+             coalesce(src.provider, 'unknown') as source,
+             exists (select 1 from public.auto_applications a where a.user_id = j.user_id and a.listing_id = j.listing_id and a.status = 'submitted') as auto,
+             coalesce((select a.score from public.auto_applications a where a.user_id = j.user_id and a.listing_id = j.listing_id),
+                      (select m.score from public.job_matches m where m.user_id = j.user_id and m.listing_id = j.listing_id)) as score
+      from public.job_applications j
+      left join public.job_listings l on l.id = j.listing_id
+      left join public.job_sources src on src.id = l.source_id
+      where j.user_id = ${userId} and j.status <> 'saved'
+        and coalesce(j.applied_at, j.created_at) >= now() - make_interval(days => ${days})`;
+    const statusRows = await sql<{ status: AutoApplyStatus; n: number }[]>`
+      select status, count(*)::int as n from public.auto_applications
+      where user_id = ${userId} and created_at >= now() - make_interval(days => ${days}) group by status`;
+
+    const responded = (s: string) => s === 'interviewing' || s === 'offer' || s === 'rejected';
+    const rate = (r: number, a: number) => (a ? Math.round((r / a) * 1000) / 1000 : 0);
+    const applied = rows.length;
+    const responses = rows.filter((r) => responded(r.status)).length;
+
+    const dayMap = new Map<string, { applied: number; responses: number }>();
+    for (let i = days - 1; i >= 0; i--) dayMap.set(new Date(Date.now() - i * 86_400_000).toISOString().slice(0, 10), { applied: 0, responses: 0 });
+    for (const r of rows) {
+      const d = dayMap.get(r.day);
+      if (!d) continue;
+      d.applied++;
+      if (responded(r.status)) d.responses++;
+    }
+
+    const sources = new Map<string, { applied: number; responses: number; interviews: number }>();
+    for (const r of rows) {
+      const s = sources.get(r.source) ?? { applied: 0, responses: 0, interviews: 0 };
+      s.applied++;
+      if (responded(r.status)) s.responses++;
+      if (r.status === 'interviewing' || r.status === 'offer') s.interviews++;
+      sources.set(r.source, s);
+    }
+
+    const bands = [
+      { band: '90–100', min: 90, max: 101 },
+      { band: '80–89', min: 80, max: 90 },
+      { band: '70–79', min: 70, max: 80 },
+      { band: 'Under 70', min: -1, max: 70 },
+    ];
+    return {
+      days,
+      totals: {
+        applied,
+        auto: rows.filter((r) => r.auto).length,
+        manual: rows.filter((r) => !r.auto).length,
+        responses,
+        interviews: rows.filter((r) => r.status === 'interviewing').length,
+        offers: rows.filter((r) => r.status === 'offer').length,
+        rejected: rows.filter((r) => r.status === 'rejected').length,
+        responseRate: rate(responses, applied),
+      },
+      daily: [...dayMap].map(([day, v]) => ({ day, ...v })),
+      bySource: [...sources]
+        .map(([source, v]) => ({ source, label: PROVIDER_LABELS[source] ?? source, ...v, rate: rate(v.responses, v.applied) }))
+        .sort((a, b) => b.rate - a.rate || b.applied - a.applied),
+      byScore: bands.map(({ band, min, max }) => {
+        const inBand = rows.filter((r) => (r.score ?? -1) >= min && (r.score ?? -1) < max);
+        const resp = inBand.filter((r) => responded(r.status)).length;
+        return { band, applied: inBand.length, responses: resp, rate: rate(resp, inBand.length) };
+      }),
+      autoApply: Object.fromEntries(AUTO_APPLY_STATUSES.map((s) => [s, statusRows.find((r) => r.status === s)?.n ?? 0])) as Record<AutoApplyStatus, number>,
+    };
+  });
+
   // ---- The Friday extension ----------------------------------------------------------------------
 
   // Hands the extension the next prepared application, leased to it for CLAIM_LEASE_MIN minutes.
@@ -420,7 +650,7 @@ export default async function autoApplyRoutes(app: FastifyInstance) {
     const userId = req.user.id;
     const [settings] = await sql<{ enabled: boolean }[]>`select enabled from public.auto_apply_settings where user_id = ${userId}`;
     if (!settings?.enabled) return { task: null };
-    const [row] = await sql<(AppRow & { answers: PreparedAnswer[]; file_name: string | null })[]>`
+    const [row] = await sql<(AppRow & { answers: PreparedAnswer[]; file_name: string | null; has_cover: boolean })[]>`
       update public.auto_applications a
       set status = 'pending', reason_code = 'submitting', reason = 'Being submitted from your browser',
           claimed_by = ${body.data.device}, claimed_at = now(), updated_at = now()
@@ -433,7 +663,8 @@ export default async function autoApplyRoutes(app: FastifyInstance) {
       where a.id = next.id
       returning a.id, a.listing_id, a.title, a.company, a.provider, a.apply_url, a.score, a.status, a.reason_code, a.reason,
                 a.form, a.missing, a.attempts, a.submitted_at, a.created_at, a.updated_at, a.answers,
-                (select t.file_name from public.tailored_resumes t where t.id = a.tailored_resume_id) as file_name`;
+                (select t.file_name from public.tailored_resumes t where t.id = a.tailored_resume_id) as file_name,
+                exists (select 1 from public.tailored_resumes t where t.id = a.tailored_resume_id and t.cover_letter_file is not null) as has_cover`;
     if (!row) return { task: null };
     await event(row.id, userId, 'claimed', 'Your browser started submitting it', { device: body.data.device });
     return {
@@ -447,6 +678,8 @@ export default async function autoApplyRoutes(app: FastifyInstance) {
         form: row.form ?? [],
         resumePath: `/v1/auto-apply/applications/${row.id}/resume`,
         resumeFileName: row.file_name ?? 'Resume.pdf',
+        coverLetterPath: row.has_cover ? `/v1/auto-apply/applications/${row.id}/cover-letter` : null,
+        coverLetterFileName: row.has_cover ? (row.file_name ?? 'Resume.pdf').replace(/Resume/, 'Cover Letter').replace(/\.docx$/i, '.pdf') : null,
         leaseUntil: new Date(Date.now() + CLAIM_LEASE_MIN * 60_000).toISOString(),
       },
     };
@@ -465,6 +698,16 @@ export default async function autoApplyRoutes(app: FastifyInstance) {
       .header('cache-control', 'private, no-store')
       .header('content-disposition', `attachment; filename="${name.replace(/[^\w\- .]/g, '')}"; filename*=UTF-8''${encodeURIComponent(name)}`)
       .send(row.file);
+  });
+
+  app.get<{ Params: { id: string } }>('/v1/auto-apply/applications/:id/cover-letter', async (req, reply) => {
+    if (!z.uuid().safeParse(req.params.id).success) return reply.notFound('No such application.');
+    const [row] = await sql<{ file: Buffer | null }[]>`
+      select t.cover_letter_file as file
+      from public.auto_applications a join public.tailored_resumes t on t.id = a.tailored_resume_id
+      where a.id = ${req.params.id} and a.user_id = ${req.user.id}`;
+    if (!row?.file) return reply.notFound('No cover letter for this application.');
+    return reply.type('application/pdf').header('cache-control', 'private, no-store').send(row.file);
   });
 
   // The extension reports what happened. Submitted only counts when the job board's confirmation is seen.

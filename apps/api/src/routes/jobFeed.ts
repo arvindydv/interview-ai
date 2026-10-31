@@ -222,11 +222,12 @@ interface TailoredRow {
   status: TailorStatus;
   content: TailoredResume | null;
   file_name: string | null;
+  cover_letter: string | null;
   error: string | null;
   updated_at: Date;
 }
 
-const TAILORED_COLUMNS = sql`id, listing_id, title, company, status, content, file_name, error, updated_at`;
+const TAILORED_COLUMNS = sql`id, listing_id, title, company, status, content, file_name, cover_letter, error, updated_at`;
 
 const toTailored = (r: TailoredRow): TailoredResumeRecord => ({
   id: r.id,
@@ -236,6 +237,7 @@ const toTailored = (r: TailoredRow): TailoredResumeRecord => ({
   status: r.status,
   content: r.content,
   fileName: r.file_name,
+  coverLetter: r.cover_letter,
   error: r.error,
   updatedAt: r.updated_at.toISOString(),
 });
@@ -516,6 +518,20 @@ export default async function jobFeedRoutes(app: FastifyInstance) {
     const name = row.file_name ?? `Resume.${row.format ?? 'pdf'}`;
     return reply
       .type(type)
+      .header('cache-control', 'private, no-store')
+      .header('content-disposition', `attachment; filename="${name.replace(/[^\w\- .]/g, '')}"; filename*=UTF-8''${encodeURIComponent(name)}`)
+      .send(row.file);
+  });
+
+  app.get<{ Params: { id: string } }>('/v1/job-feed/:id/cover-letter', async (req, reply) => {
+    if (!z.uuid().safeParse(req.params.id).success) return reply.notFound('No such job.');
+    const [row] = await sql<{ file: Buffer | null; file_name: string | null }[]>`
+      select cover_letter_file as file, file_name from public.tailored_resumes
+      where user_id = ${req.user.id} and listing_id = ${req.params.id} and status = 'ready'`;
+    if (!row?.file) return reply.notFound('No cover letter for this job yet.');
+    const name = (row.file_name ?? 'Resume.pdf').replace(/Resume/, 'Cover Letter').replace(/\.docx$/i, '.pdf');
+    return reply
+      .type('application/pdf')
       .header('cache-control', 'private, no-store')
       .header('content-disposition', `attachment; filename="${name.replace(/[^\w\- .]/g, '')}"; filename*=UTF-8''${encodeURIComponent(name)}`)
       .send(row.file);

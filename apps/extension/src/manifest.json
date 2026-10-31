@@ -9,7 +9,10 @@
     "https://job-boards.greenhouse.io/*",
     "https://jobs.lever.co/*",
     "https://jobs.eu.lever.co/*",
-    "https://jobs.ashbyhq.com/*"
+    "https://jobs.ashbyhq.com/*",
+    "https://apply.workable.com/*",
+    "https://jobs.smartrecruiters.com/*",
+    "https://*.myworkdayjobs.com/*"
   ],
   "background": { "service_worker": "background.js", "type": "module" },
   "action": { "default_popup": "popup.html", "default_title": "Friday Auto Apply" },

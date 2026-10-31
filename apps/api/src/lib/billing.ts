@@ -50,6 +50,14 @@ export async function fulfilOrder(orderId: string, paymentId: string, amount: nu
       const seconds = product.minutes * 60;
       await tx`update public.users set trial_seconds = trial_seconds + ${seconds} where id = ${p.user_id}`;
       await tx`update public.payments set granted_seconds = ${seconds} where id = ${p.id}`;
+    } else if (product.kind === 'jobs_plan') {
+      // Friday Jobs plans: the bought tier from now, extending the days left on the current one.
+      await tx`
+        update public.users set
+          jobs_plan = ${product.plan},
+          jobs_plan_expires_at = greatest(now(), coalesce(jobs_plan_expires_at, now())) + make_interval(days => ${product.days})
+        where id = ${p.user_id}`;
+      await tx`update public.payments set granted_days = ${product.days} where id = ${p.id}`;
     } else {
       // Extends a running plan (paid days are never lost). A running yearly plan keeps its name when
       // monthly time is added to it; both are unlimited.
@@ -77,7 +85,7 @@ export async function markOrderFailed(orderId: string) {
  */
 export async function revokeRefunded(paymentId: string, orderId: string | null): Promise<boolean> {
   return sql.begin(async (tx) => {
-    const [p] = await tx<{ user_id: string; granted_seconds: number; granted_days: number; was_paid: boolean }[]>`
+    const [p] = await tx<{ user_id: string; granted_seconds: number; granted_days: number; was_paid: boolean; product: string }[]>`
       with target as (
         select id, status from public.payments
         where (razorpay_payment_id = ${paymentId} and status = 'paid')
@@ -87,14 +95,18 @@ export async function revokeRefunded(paymentId: string, orderId: string | null):
       update public.payments p
       set status = 'refunded', refunded_at = now(), razorpay_payment_id = ${paymentId}
       from target t where p.id = t.id
-      returning p.user_id, p.granted_seconds, p.granted_days, t.status = 'paid' as was_paid`;
+      returning p.user_id, p.granted_seconds, p.granted_days, t.status = 'paid' as was_paid, p.product`;
     if (!p?.was_paid) return false;
     if (p.granted_seconds > 0) {
       await tx`
         update public.users set trial_seconds = greatest(trial_seconds - ${p.granted_seconds}, trial_used_seconds)
         where id = ${p.user_id}`;
     }
-    if (p.granted_days > 0) {
+    if (p.granted_days > 0 && p.product.startsWith('jobs_')) {
+      await tx`
+        update public.users set jobs_plan_expires_at = jobs_plan_expires_at - make_interval(days => ${p.granted_days})
+        where id = ${p.user_id} and jobs_plan_expires_at is not null`;
+    } else if (p.granted_days > 0) {
       await tx`
         update public.users set plan_expires_at = plan_expires_at - make_interval(days => ${p.granted_days})
         where id = ${p.user_id} and plan_expires_at is not null`;

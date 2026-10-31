@@ -138,6 +138,31 @@ export default function TailoredResumePage({ params }: { params: Promise<{ id: s
               </ul>
             </div>
 
+            {record?.coverLetter && (
+              <div className="card p-4">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="font-semibold">Cover letter</p>
+                  <button
+                    onClick={async () => {
+                      const blob = await apiFile(`/v1/job-feed/${id}/cover-letter`);
+                      const a = document.createElement('a');
+                      a.href = URL.createObjectURL(blob);
+                      a.download = (record.fileName ?? 'Resume.pdf').replace('Resume', 'Cover Letter').replace(/\.docx$/i, '.pdf');
+                      a.click();
+                      URL.revokeObjectURL(a.href);
+                    }}
+                    className="btn btn-ghost !px-2 !py-1 !text-xs"
+                  >
+                    <Download size={13} /> PDF
+                  </button>
+                </div>
+                <p className="mt-2 max-h-72 overflow-y-auto text-sm leading-relaxed whitespace-pre-line text-muted">{record.coverLetter}</p>
+                <button onClick={() => navigator.clipboard.writeText(record.coverLetter ?? '')} className="btn btn-secondary mt-3 !py-1.5 !text-xs">
+                  Copy text
+                </button>
+              </div>
+            )}
+
             {content.edits.length > 0 && (
               <div className="card p-4">
                 <p className="font-semibold">Rewritten lines</p>

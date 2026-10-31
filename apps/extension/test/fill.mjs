@@ -21,10 +21,14 @@ for (const t of tasks) {
     await page.setContent(html, { waitUntil: 'domcontentloaded' });
     await page.evaluate((p) => (window.__fridayProvider = p), t.provider);
     await page.addScriptTag({ content: filler });
-    const r = await page.evaluate(([task, resume]) => window.__fridayFill(task, resume, false), [{ form: t.form, answers: t.answers }, t.resume]);
+    const r = await page.evaluate(
+      ([task, resume, cover]) => window.__fridayFill(task, resume, false, cover),
+      [{ form: t.form, answers: t.answers }, t.resume, t.coverLetter ?? null],
+    );
+    r.files = await page.evaluate(() => [...document.querySelectorAll('input[type=file]')].map((f) => `${f.id || f.name}: ${f.files?.[0]?.name ?? '-'}`));
     await page.screenshot({ path: `${outDir}/${t.id}.png`, fullPage: true });
     results.push({ id: t.id, company: t.company, url: page.url(), ...r });
-    console.log(`${t.company.padEnd(22)} filled ${r.filled}/${r.tried}  unplaced: ${JSON.stringify(r.unplaced)}  empty required: ${JSON.stringify(r.empty)}`);
+    console.log(`${t.company.padEnd(22)} filled ${r.filled}/${r.tried}  unplaced: ${JSON.stringify(r.unplaced)}  files: ${JSON.stringify(r.files)}`);
     for (const x of r.results ?? []) if (!x.ok) console.log(`   ✗ ${x.label.slice(0, 90)}`);
   } catch (err) {
     console.log(`${t.company.padEnd(22)} ERROR ${err.message.split('\n')[0]}`);

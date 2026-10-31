@@ -56,6 +56,7 @@ function successNotice(product: Product, after: BillingOverview): Notice {
   if (product.kind === 'minutes') {
     return { tone: 'ok', title: 'Payment successful', text: `${product.minutes} minutes were added to your account.` };
   }
+  if (product.kind === 'jobs_plan') return { tone: 'ok', title: 'Payment successful', text: `${product.name} is active for 30 days.` };
   const until = after.planExpiresAt ? ` until ${longDate(after.planExpiresAt)}` : '';
   return { tone: 'ok', title: 'Payment successful', text: `Your ${planLabel(product.plan)} plan is active${until}.` };
 }
@@ -340,7 +341,7 @@ function Billing() {
   const [notice, setNotice] = useState<Notice | null>(null);
   const [minutes, setMinutes] = useState(String(wanted?.kind === 'minutes' ? wanted.minutes : DEFAULT_MINUTES));
   const [highlight, setHighlight] = useState<'minutes' | 'monthly' | 'yearly' | null>(
-    wanted ? (wanted.kind === 'minutes' ? 'minutes' : wanted.plan) : null,
+    wanted ? (wanted.kind === 'minutes' ? 'minutes' : wanted.kind === 'plan' ? wanted.plan : null) : null,
   );
   const noticeRef = useRef<HTMLDivElement>(null);
   const mounted = useRef(true);

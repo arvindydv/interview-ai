@@ -1,4 +1,4 @@
-import type { AutoApplyProvider, FormFieldType, FormQuestion } from '@parakeet/shared';
+import { autoApplyUrl as submitUrl, type AutoApplyProvider, type FormFieldType, type FormQuestion } from '@parakeet/shared';
 
 // Application forms, read the way the job board's own page reads them, normalised to FormQuestion.
 // Greenhouse: its public Job Board API. Lever: the apply page's HTML. Ashby: the public GraphQL its
@@ -13,19 +13,6 @@ async function get(url: string, init?: RequestInit) {
   if (res.status === 404 || res.status === 410) throw new FormUnavailableError(`Form not found (${res.status})`);
   if (!res.ok) throw new Error(`${url} → HTTP ${res.status}`);
   return res;
-}
-
-/** The page the extension opens to apply. */
-export function submitUrl(provider: AutoApplyProvider, board: string, externalId: string) {
-  switch (provider) {
-    // Greenhouse's own hosted form, also used when a company embeds it in its careers site.
-    case 'greenhouse':
-      return `https://boards.greenhouse.io/embed/job_app?for=${encodeURIComponent(board)}&token=${encodeURIComponent(externalId)}`;
-    case 'lever':
-      return `https://jobs.lever.co/${encodeURIComponent(board)}/${encodeURIComponent(externalId)}/apply`;
-    case 'ashby':
-      return `https://jobs.ashbyhq.com/${encodeURIComponent(board)}/${encodeURIComponent(externalId)}/application`;
-  }
 }
 
 const decode = (s: string) =>
@@ -165,7 +152,7 @@ const LEVER_TYPES: Record<string, FormFieldType> = {
 };
 
 async function lever(board: string, id: string): Promise<FormQuestion[]> {
-  const html = await (await get(submitUrl('lever', board, id))).text();
+  const html = await (await get(submitUrl('lever', board, id, ''))).text();
   const form: FormQuestion[] = [{ key: 'resume', label: 'Resume/CV', type: 'file', required: true, options: [], kind: 'resume' }];
   // Each field sits in an <li class="application-question">; a required one is marked in that block.
   const blocks = html.split(/<li class="application-question/).slice(1);
@@ -277,9 +264,89 @@ async function ashby(board: string, id: string): Promise<FormQuestion[]> {
   return [...read(posting.applicationForm.sections), ...(posting.surveyForms ?? []).flatMap((f) => read(f.sections, 'eeo'))];
 }
 
+// ---- Workable --------------------------------------------------------------------------------------
+
+interface WorkableField {
+  id: string;
+  label: string;
+  type: string;
+  required?: boolean;
+  choices?: { id: string; body?: string; name?: string; label?: string }[];
+  options?: { id: string; body?: string; name?: string; label?: string }[];
+  fields?: WorkableField[];
+}
+
+const WORKABLE_TYPES: Record<string, FormFieldType> = {
+  text: 'text',
+  email: 'text',
+  phone: 'text',
+  number: 'number',
+  paragraph: 'textarea',
+  file: 'file',
+  date: 'date',
+  boolean: 'select',
+  dropdown: 'select',
+  multiple: 'select',
+  checkboxes: 'multiselect',
+};
+const WORKABLE_STANDARD = new Set(['firstname', 'lastname', 'email', 'phone', 'address', 'headline']);
+
+/** Workable: the public form definition its apply page loads. */
+async function workable(shortcode: string): Promise<FormQuestion[]> {
+  const sections = (await (await get(`https://apply.workable.com/api/v1/jobs/${encodeURIComponent(shortcode)}/form`)).json()) as {
+    fields: WorkableField[];
+  }[];
+  const form: FormQuestion[] = [];
+  const add = (f: WorkableField, key = f.id) => {
+    const type = WORKABLE_TYPES[f.type] ?? 'text';
+    const options = f.type === 'boolean' ? ['Yes', 'No'] : (f.choices ?? f.options ?? []).map((c) => decode(c.body ?? c.name ?? c.label ?? ''));
+    form.push({
+      key,
+      label: decode(f.label),
+      type,
+      required: Boolean(f.required),
+      options,
+      kind: f.id === 'resume' ? 'resume' : WORKABLE_STANDARD.has(f.id) ? 'standard' : 'custom',
+    });
+  };
+  for (const section of sections) {
+    for (const f of section.fields) {
+      // Education and experience entries: only when required, and then the most recent one.
+      if (f.type === 'group') {
+        if (f.required) for (const sub of f.fields ?? []) add(sub, `${f.id}.${sub.id}`);
+        continue;
+      }
+      add(f);
+    }
+  }
+  return form;
+}
+
+/**
+ * SmartRecruiters and Workday don't publish their application questions. These standard fields are
+ * prepared in advance; anything else the extension finds on the form is asked of the user once and
+ * remembered.
+ */
+const STANDARD_FORM: FormQuestion[] = [
+  { key: 'firstName', label: 'First name', type: 'text', required: true, options: [], kind: 'standard' },
+  { key: 'lastName', label: 'Last name', type: 'text', required: true, options: [], kind: 'standard' },
+  { key: 'email', label: 'Email', type: 'text', required: true, options: [], kind: 'standard' },
+  { key: 'phone', label: 'Phone', type: 'text', required: true, options: [], kind: 'standard' },
+  { key: 'city', label: 'City', type: 'text', required: false, options: [], kind: 'standard' },
+  { key: 'country', label: 'Country', type: 'select', required: false, options: [], kind: 'standard' },
+  { key: 'linkedin', label: 'LinkedIn', type: 'text', required: false, options: [], kind: 'standard' },
+  { key: 'resume', label: 'Resume', type: 'file', required: true, options: [], kind: 'resume' },
+  { key: 'cover_letter', label: 'Cover letter', type: 'file', required: false, options: [], kind: 'custom' },
+];
+
 /** The listing's application form. Throws FormUnavailableError when the posting is gone. */
 export function fetchForm(provider: AutoApplyProvider, board: string, externalId: string): Promise<FormQuestion[]> {
   switch (provider) {
+    case 'workable':
+      return workable(externalId);
+    case 'smartrecruiters':
+    case 'workday':
+      return Promise.resolve(STANDARD_FORM.map((q) => ({ ...q })));
     case 'greenhouse':
       return greenhouse(board, externalId);
     case 'lever':

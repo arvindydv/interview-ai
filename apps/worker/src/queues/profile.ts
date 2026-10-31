@@ -54,7 +54,18 @@ Rules:
 
 const profileModel = () => env.LLM_PROFILE_MODEL ?? defaultModel();
 
-async function finish(resumeId: string, status: 'ready' | 'failed', profile: ResumeProfile | null, error: string | null) {
+/** Main resumes (public.resumes) or role-specific ones for job applications (public.job_resumes). */
+type ResumeTable = 'resumes' | 'job_resumes';
+
+async function finish(resumeId: string, status: 'ready' | 'failed', profile: ResumeProfile | null, error: string | null, table: ResumeTable = 'resumes') {
+  if (table === 'job_resumes') {
+    await sql`
+      update public.job_resumes
+      set status = ${status}, parsed_json = coalesce(${profile ? sql.json(profile as never) : null}, parsed_json), error = ${error},
+          updated_at = now()
+      where id = ${resumeId}`;
+    return;
+  }
   // A failed re-analysis keeps the profile the candidate already has (possibly hand-edited).
   if (!profile) {
     await sql`update public.resumes set status = ${status}, error = ${error}, updated_at = now() where id = ${resumeId}`;
@@ -67,13 +78,13 @@ async function finish(resumeId: string, status: 'ready' | 'failed', profile: Res
     where id = ${resumeId}`;
 }
 
-async function parseResume(job: Job<{ resumeId: string }>) {
+async function parseResume(job: Job<{ resumeId: string }>, table: ResumeTable = 'resumes') {
   const { resumeId } = job.data;
-  const [row] = await sql<{ text: string }[]>`select text from public.resumes where id = ${resumeId}`;
+  const [row] = await sql<{ text: string }[]>`select text from ${sql('public.' + table)} where id = ${resumeId}`;
   if (!row) return { skipped: 'resume deleted' };
 
   if (!llmConfigured()) {
-    await finish(resumeId, 'ready', null, 'Detailed analysis needs the AI model to be configured.');
+    await finish(resumeId, 'ready', null, 'Detailed analysis needs the AI model to be configured.', table);
     return { skipped: 'no LLM credentials' };
   }
 
@@ -89,18 +100,18 @@ async function parseResume(job: Job<{ resumeId: string }>) {
       effort: 'medium',
     });
     if (!profile) {
-      await finish(resumeId, 'failed', null, "We couldn't analyse this resume in detail.");
+      await finish(resumeId, 'failed', null, "We couldn't analyse this resume in detail.", table);
       return { failed: stop };
     }
-    await finish(resumeId, 'ready', profile, null);
+    await finish(resumeId, 'ready', profile, null, table);
     return { model, skills: profile.skills.length, projects: profile.projects.length, stories: profile.stories.length, usage };
   } catch (err) {
     // Bad credentials or a request the API rejects won't succeed on retry.
     if (err instanceof PermanentError) {
-      await finish(resumeId, 'failed', null, 'Detailed analysis is unavailable right now.');
+      await finish(resumeId, 'failed', null, 'Detailed analysis is unavailable right now.', table);
       throw new UnrecoverableError(err.message);
     }
-    if (isLastAttempt) await finish(resumeId, 'failed', null, 'Detailed analysis is unavailable right now.');
+    if (isLastAttempt) await finish(resumeId, 'failed', null, 'Detailed analysis is unavailable right now.', table);
     throw err;
   }
 }
@@ -110,8 +121,10 @@ export function startProfileWorker() {
   const worker = new Worker<{ resumeId: string }>(
     PROFILE_QUEUE,
     async (job) => {
-      if (job.name !== 'resume.parse') throw new UnrecoverableError(`No processor for job "${job.name}"`);
-      return parseResume(job);
+      if (job.name === 'resume.parse') return parseResume(job);
+      // Friday Jobs role-specific resumes; data.resumeId is a job_resumes id.
+      if (job.name === 'job-resume.parse') return parseResume(job, 'job_resumes');
+      throw new UnrecoverableError(`No processor for job "${job.name}"`);
     },
     { connection: { url: env.REDIS_URL }, concurrency: 3 },
   );

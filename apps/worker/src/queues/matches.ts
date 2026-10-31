@@ -49,9 +49,12 @@ async function refresh(job: Job<{ userId?: string }>) {
     select parsed_json from public.resumes where user_id = ${userId} order by created_at desc limit 1`;
   const parsed = resume?.parsed_json ?? null;
 
+  // Role-specific resumes widen the search to their target roles and skills.
+  const extra = await sql<{ target_roles: string[]; parsed_json: ResumeProfile | null }[]>`
+    select target_roles, parsed_json from public.job_resumes where user_id = ${userId} and status = 'ready'`;
   const profile: MatchProfile = {
-    roles: prefs.roles.length ? prefs.roles : resumeRoles(parsed),
-    skills: (parsed?.skills ?? []).map((s) => s.name),
+    roles: [...new Set([...(prefs.roles.length ? prefs.roles : resumeRoles(parsed)), ...extra.flatMap((r) => r.target_roles)])],
+    skills: [...new Set([...(parsed?.skills ?? []), ...extra.flatMap((r) => r.parsed_json?.skills ?? [])].map((s) => s.name))],
     years: parsed?.totalYearsExperience ?? null,
   };
 

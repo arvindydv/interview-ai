@@ -1,15 +1,15 @@
 import { Queue, UnrecoverableError, Worker, type Job } from 'bullmq';
 import type { EmailJob } from '@parakeet/emails';
 import {
-  AUTO_APPLY_LIMITS, AUTO_APPLY_PROVIDERS, EMPTY_APPLICATION_PROFILE, missingProfileFields, type ApplicationProfile,
+  AUTO_APPLY_LIMITS, AUTO_APPLY_PROVIDERS, EMPTY_APPLICATION_PROFILE, activeJobsPlan, autoApplyUrl, missingProfileFields, type ApplicationProfile,
   type AutoApplyProvider, type AutoApplyReason, type FormQuestion, type PreparedAnswer, type ResumeProfile,
 } from '@parakeet/shared';
 import { sql } from '../db.js';
 import { env } from '../env.js';
 import { bulkModel } from '../llm.js';
 import { answerForm } from '../autoapply/answers.js';
-import { FormUnavailableError, fetchForm, submitUrl } from '../autoapply/forms.js';
-import { createTailoring, runTailoring } from './tailor.js';
+import { FormUnavailableError, fetchForm } from '../autoapply/forms.js';
+import { createTailoring, pickResume, runTailoring } from './tailor.js';
 
 // Friday Jobs Auto Apply, prepared on the server so it carries on while the user's computer is off.
 //
@@ -123,11 +123,18 @@ async function tick() {
 // ---- plan ----------------------------------------------------------------------------------------
 
 export async function planUser(userId: string) {
-  const [settings] = await sql<{ enabled: boolean; consented_at: Date | null; min_score: number; daily_limit: number; timezone: string; today: string }[]>`
-    select enabled, consented_at, min_score, daily_limit, timezone,
-           to_char((now() at time zone timezone)::date, 'YYYY-MM-DD') as today
-    from public.auto_apply_settings where user_id = ${userId}`;
+  const [settings] = await sql<{
+    enabled: boolean; consented_at: Date | null; min_score: number; daily_limit: number; mode: 'auto' | 'review'; today: string;
+    jobs_plan: string | null; jobs_plan_expires_at: Date | null;
+  }[]>`
+    select s.enabled, s.consented_at, s.min_score, s.daily_limit, s.mode, u.jobs_plan, u.jobs_plan_expires_at,
+           to_char((now() at time zone s.timezone)::date, 'YYYY-MM-DD') as today
+    from public.auto_apply_settings s join public.users u on u.id = s.user_id
+    where s.user_id = ${userId}`;
   if (!settings?.enabled || !settings.consented_at) return { skipped: 'off' };
+  // Review mode: only the jobs the user swipes right on (queued by the API as they swipe).
+  if (settings.mode === 'review') return { skipped: 'review mode' };
+  const limit = Math.min(settings.daily_limit, activeJobsPlan(settings.jobs_plan, settings.jobs_plan_expires_at).dailyApplications);
 
   const [profileRow] = await sql<{ data: Partial<ApplicationProfile> }[]>`
     select data from public.application_profiles where user_id = ${userId}`;
@@ -141,16 +148,17 @@ export async function planUser(userId: string) {
     select count(*) filter (where plan_day = ${settings.today}::date and status <> 'skipped')::int as used,
            count(*) filter (where status in ('preparing', 'prepared'))::int as backlog
     from public.auto_applications where user_id = ${userId}`;
-  const room = Math.min(settings.daily_limit - used, AUTO_APPLY_LIMITS.maxBacklog - backlog);
+  // Never more prepared-but-unsent than a day's worth: preparing costs model calls.
+  const room = Math.min(limit - used, limit - backlog);
   if (room <= 0) {
     await sql`update public.auto_apply_settings set planned_at = now() where user_id = ${userId}`;
-    return { skipped: used >= settings.daily_limit ? 'daily limit reached' : 'backlog full', used, backlog };
+    return { skipped: used >= limit ? 'daily limit reached' : 'backlog full', used, backlog, limit };
   }
 
   // Best matches first. Never the same job twice, nor the same role at the same company (reposts,
   // several locations), nor anything the user already applied to themselves.
-  const picks = await sql<{ id: string; title: string; company: string; provider: AutoApplyProvider; board: string; external_id: string; score: number }[]>`
-    select l.id, l.title, l.company, s.provider, s.board, l.external_id, m.score
+  const picks = await sql<{ id: string; title: string; company: string; provider: AutoApplyProvider; board: string; external_id: string; apply_url: string; score: number }[]>`
+    select l.id, l.title, l.company, s.provider, s.board, l.external_id, l.apply_url, m.score
     from public.job_matches m
     join public.job_listings l on l.id = m.listing_id
     join public.job_sources s on s.id = l.source_id
@@ -161,6 +169,7 @@ export async function planUser(userId: string) {
         select 1 from public.auto_applications a
         where a.user_id = ${userId}
           and (a.listing_id = l.id or (lower(a.company) = lower(l.company) and lower(a.title) = lower(l.title))))
+      and not exists (select 1 from public.job_swipes w where w.user_id = ${userId} and w.listing_id = l.id and w.decision = 'skip')
       and not exists (
         select 1 from public.job_applications j
         where j.user_id = ${userId} and j.status <> 'saved'
@@ -181,7 +190,7 @@ export async function planUser(userId: string) {
             user_id: userId,
             listing_id: p.id,
             provider: p.provider,
-            apply_url: submitUrl(p.provider, p.board, p.external_id),
+            apply_url: autoApplyUrl(p.provider, p.board, p.external_id, p.apply_url),
             title: p.title,
             company: p.company,
             score: p.score,
@@ -196,7 +205,7 @@ export async function planUser(userId: string) {
     await prepareJob(a.id);
   }
   await sql`update public.auto_apply_settings set planned_at = now() where user_id = ${userId}`;
-  return { planned: created.length, used, backlog, room };
+  return { planned: created.length, used, backlog, room, limit };
 }
 
 // ---- prepare -------------------------------------------------------------------------------------
@@ -243,10 +252,12 @@ async function prepare(job: Job<{ applicationId: string }>) {
 
     // 1. The resume, tailored to this job (reused if it was already tailored from the current resume).
     let tailoredId = app.tailored_resume_id;
+    const source = await pickResume(userId, app.title);
     const [existing] = await sql<{ id: string; status: string }[]>`
       select t.id, t.status from public.tailored_resumes t
       where t.user_id = ${userId} and t.listing_id = ${app.listing_id}
-        and t.resume_id = (select id from public.resumes where user_id = ${userId} order by created_at desc limit 1)`;
+        and t.resume_id is not distinct from ${source.resumeId} and t.job_resume_id is not distinct from ${source.jobResumeId}
+        and t.cover_letter is not null`;
     if (existing?.status === 'ready') {
       tailoredId = existing.id;
     } else {
@@ -278,18 +289,27 @@ async function prepare(job: Job<{ applicationId: string }>) {
     }
 
     // 3. The answers.
-    const [ctx] = await sql<{ profile: Partial<ApplicationProfile> | null; resume_profile: ResumeProfile | null; resume_text: string; file_name: string | null }[]>`
-      select p.data as profile, r.parsed_json as resume_profile, r.text as resume_text, t.file_name
-      from public.resumes r
-      left join public.application_profiles p on p.user_id = r.user_id
-      left join public.tailored_resumes t on t.id = ${tailoredId}
-      where r.user_id = ${userId} order by r.created_at desc limit 1`;
+    // Answered from the same resume the tailoring used.
+    const [ctx] = await sql<{
+      profile: Partial<ApplicationProfile> | null; resume_profile: ResumeProfile | null; resume_text: string; file_name: string | null;
+      cover_letter: string | null;
+    }[]>`
+      select p.data as profile, coalesce(j.parsed_json, r.parsed_json) as resume_profile, coalesce(j.text, r.text) as resume_text,
+             t.file_name, t.cover_letter
+      from public.tailored_resumes t
+      left join public.resumes r on r.id = t.resume_id
+      left join public.job_resumes j on j.id = t.job_resume_id
+      left join public.application_profiles p on p.user_id = t.user_id
+      where t.id = ${tailoredId}`;
     const { answers, missing, usage } = await answerForm(form, {
       profile: { ...EMPTY_APPLICATION_PROFILE, ...ctx.profile },
       resume: ctx.resume_profile,
       resumeText: ctx.resume_text,
       job: { title: app.title, company: app.company, location: app.location ?? '', description: app.description ?? '' },
       resumeFileName: ctx.file_name ?? 'Resume.pdf',
+      coverLetter: ctx.cover_letter
+        ? { text: ctx.cover_letter, fileName: (ctx.file_name ?? 'Resume.pdf').replace(/Resume/, 'Cover Letter').replace(/\.docx$/i, '.pdf') }
+        : null,
       model,
     });
     await sql`

@@ -17,9 +17,13 @@
     greenhouse: { url: /greenhouse\.io\/.*(confirmation|thank)/i, text: /thank you for applying|application (has been )?(received|submitted)|we('ve| have) received your application/i },
     lever: { url: /lever\.co\/[^/]+\/[^/]+\/thanks/i, text: /application submitted|thank(s| you) for applying|we('ve| have) received your application/i },
     ashby: { url: /ashbyhq\.com\/.*(submitted|confirmation)/i, text: /application (was )?(successfully )?submitted|thank(s| you) for (applying|submitting)|we('ve| have) received your application/i },
+    workable: { url: /workable\.com\/.*(success|thank|submitted)/i, text: /thank(s| you) for (applying|your application)|application (has been |was )?(successfully )?(submitted|received)/i },
+    smartrecruiters: { url: /smartrecruiters\.com\/.*(success|thank|confirmation)/i, text: /thank(s| you) for (applying|your application)|application (has been |was )?(successfully )?(submitted|received)/i },
+    workday: { url: /myworkdayjobs\.com\/.*(applicationSubmitted|submitted)/i, text: /application submitted|thank(s| you) for applying|your application (has been|was) (submitted|received)/i },
   };
   // Tests set __fridayProvider for saved copies of a form.
-  const provider = window.__fridayProvider ?? (location.host.includes('lever.co') ? 'lever' : location.host.includes('ashbyhq.com') ? 'ashby' : 'greenhouse');
+  const HOSTS = [['lever.co', 'lever'], ['ashbyhq.com', 'ashby'], ['workable.com', 'workable'], ['smartrecruiters.com', 'smartrecruiters'], ['myworkdayjobs.com', 'workday']];
+  const provider = window.__fridayProvider ?? HOSTS.find(([h]) => location.host.includes(h))?.[1] ?? 'greenhouse';
 
   const CONTROL = 'input:not([type=hidden]):not([type=submit]):not([type=button]), textarea, select, [role=combobox]';
 
@@ -174,8 +178,17 @@
     return files.find((f) => /resume|cv/i.test(`${f.name} ${f.id} ${labelOf(f)} ${textOf(f.closest('div, li, fieldset'))}`)) ?? files[0] ?? null;
   }
 
-  async function fillOne(q, answer, resume) {
+  async function fillOne(q, answer, resume, coverLetter) {
     const values = Array.isArray(answer.value) ? answer.value : [answer.value];
+    if (answer.source === 'cover_letter') {
+      const direct = byKey(q.key);
+      const files = [...document.querySelectorAll('input[type=file]')];
+      const input =
+        (direct?.type === 'file' ? direct : null) ??
+        files.find((f) => /cover/i.test(`${f.name} ${f.id} ${labelOf(f)} ${textOf(f.closest('div, li, fieldset'))}`));
+      if (input && coverLetter) return attachFile(input, coverLetter);
+      return false;
+    }
     if (q.type === 'file' || answer.source === 'file') {
       // A required text alternative (e.g. a cover letter written out) goes in the paste box when there is one.
       if (answer.source !== 'file') {
@@ -190,6 +203,14 @@
     if (!found) return false;
     const { el, box } = found;
     if (el instanceof HTMLSelectElement) return values.every((v) => pickNative(el, v));
+    const listbox = box?.querySelector('button[aria-haspopup=listbox]');
+    if (!(el instanceof HTMLSelectElement) && listbox) {
+      listbox.click();
+      const option = await waitFor(() => [...document.querySelectorAll('[role=option]')].find((o) => visible(o) && same(textOf(o), values[0])), 2500);
+      if (!option) return false;
+      option.click();
+      return true;
+    }
     if (el?.getAttribute('role') === 'combobox' || el?.getAttribute('aria-autocomplete') || el?.closest('[class*=select__control], [class*=Select]')) {
       const other = /^(school|discipline)--/.test(q.key);
       for (const v of values) if (!(await pickCombobox(el, v, other))) return false;
@@ -251,8 +272,8 @@
   function submitButton() {
     const buttons = [...document.querySelectorAll('button, input[type=submit]')].filter(visible);
     return (
-      buttons.find((b) => /submit application|submit your application|send application|apply now|^submit$|^apply$/i.test((b.value || textOf(b)).trim())) ??
-      buttons.find((b) => b.type === 'submit') ??
+      buttons.find((b) => /submit application|submit your application|send application|apply now|^submit$|^apply$|^send$/i.test((b.value || textOf(b)).trim())) ??
+      (nextButton() ? null : buttons.find((b) => b.type === 'submit')) ??
       null
     );
   }
@@ -287,37 +308,77 @@
 
   // ---- entry -------------------------------------------------------------------------------------
 
-  async function fill(task, resume, submit) {
-    // Some boards show the job description first, with an Apply button that opens the form.
+  function nextButton() {
+    const buttons = [...document.querySelectorAll('button, input[type=submit], [role=button]')].filter(visible);
+    return buttons.find((b) => /^(next|continue|save and continue|review|review application)$/i.test((b.value || textOf(b)).trim())) ?? null;
+  }
+
+  /** Fills every prepared answer whose field is on the current page. */
+  async function fillPage(task, resume, coverLetter, done) {
+    const byKey = new Map(task.form.map((q) => [q.key, q]));
+    const results = [];
+    for (const a of task.answers) {
+      if (done.has(a.key) || a.value === null || a.value === undefined || (Array.isArray(a.value) && !a.value.length)) continue;
+      const q = byKey.get(a.key) ?? { key: a.key, label: a.label, type: 'text', required: false, options: [], kind: 'custom' };
+      // Only fields on this step: multi-step forms show the rest later.
+      const isFile = q.type === 'file' || a.source === 'file' || a.source === 'cover_letter';
+      if (!isFile && !findControl(q)) continue;
+      let ok = false;
+      try {
+        ok = await fillOne(q, a, resume, coverLetter);
+      } catch {
+        ok = false;
+      }
+      if (ok) done.add(a.key);
+      results.push({ key: a.key, label: a.label, required: q.required, ok });
+      await sleep(120 + Math.random() * 180);
+    }
+    return results;
+  }
+
+  async function fill(task, resume, submit, coverLetter = null) {
+    // Boards that show the job first: press its Apply / I'm interested button.
     if (!document.querySelector('input[type=file], form input:not([type=hidden])')) {
-      const apply = [...document.querySelectorAll('a, button')].find((b) => visible(b) && /^apply( for this job| now)?$/i.test(textOf(b)));
+      const apply = [...document.querySelectorAll('a, button')].find((b) => visible(b) && /^(apply( for this job| now| manually)?|i'?m interested)$/i.test(textOf(b)));
       apply?.click();
+    }
+    await sleep(1500);
+    // Workday and others may ask the user to sign in to the employer's site first.
+    if (loginShown()) {
+      if (!submit) return { outcome: 'login_required' };
+      chrome.runtime?.sendMessage({ type: 'needs-user', reason: 'login_required' });
+      const signedIn = await waitFor(() => !loginShown(), 11 * 60_000, 2000);
+      if (!signedIn) return { outcome: 'login_required', message: 'Waited for you to sign in' };
+      await sleep(2000);
     }
     const ready = await waitFor(() => document.querySelector('input[type=file], form input:not([type=hidden]), input[name], textarea'), 25_000);
     if (!ready) return { outcome: 'failed', message: 'The application form didn’t load' };
     await sleep(800);
 
-    const byKey = new Map(task.form.map((q) => [q.key, q]));
+    const done = new Set();
     const results = [];
-    for (const a of task.answers) {
-      if (a.value === null || a.value === undefined || (Array.isArray(a.value) && !a.value.length)) continue;
-      const q = byKey.get(a.key) ?? { key: a.key, label: a.label, type: 'text', required: false, options: [], kind: 'custom' };
-      let ok = false;
-      try {
-        ok = await fillOne(q, a, resume);
-      } catch {
-        ok = false;
+    for (let step = 0; step < 8; step++) {
+      results.push(...(await fillPage(task, resume, coverLetter, done)));
+      await sleep(600);
+      const empty = emptyRequired();
+      const next = nextButton();
+      if (!submit) {
+        const unplaced = results.filter((r) => !r.ok && r.required).map((r) => r.label);
+        return { outcome: 'dry_run', filled: results.filter((r) => r.ok).length, tried: results.length, unplaced, empty, results };
       }
-      results.push({ key: a.key, label: a.label, required: q.required, ok });
-      await sleep(120 + Math.random() * 180);
+      if (empty.length) return { outcome: 'needs_answers', unanswered: empty, message: 'The form asks questions that weren’t prepared' };
+      if (!next) break;
+      const before = location.href + textOf(document.body).slice(0, 300);
+      next.click();
+      await waitFor(() => location.href + textOf(document.body).slice(0, 300) !== before, 15_000, 400);
+      await sleep(1200);
+      const errs = errorsShown();
+      if (errs.fields.length) return { outcome: 'needs_answers', unanswered: errs.fields, message: errs.messages.join(' · ').slice(0, 900) };
     }
-    await sleep(600);
-    const unplaced = results.filter((r) => !r.ok && r.required).map((r) => r.label);
-    const empty = emptyRequired();
-    const summary = { filled: results.filter((r) => r.ok).length, tried: results.length, unplaced, empty, results };
-    if (!submit) return { outcome: 'dry_run', ...summary };
+    const unplaced = task.answers
+      .filter((a) => a.value !== null && !done.has(a.key) && task.form.find((q) => q.key === a.key)?.required)
+      .map((a) => a.label);
     if (unplaced.length) return { outcome: 'failed', message: `Couldn’t fill: ${unplaced.slice(0, 5).join('; ')}` };
-    if (empty.length) return { outcome: 'needs_answers', unanswered: empty, message: 'The form asks questions that weren’t prepared' };
 
     const button = submitButton();
     if (!button) return { outcome: 'failed', message: 'No submit button found' };
@@ -329,7 +390,7 @@
 
   chrome.runtime?.onMessage?.addListener((msg) => {
     if (msg.type !== 'fill') return;
-    fill(msg.task, msg.resume, msg.submit !== false).then((report) => {
+    fill(msg.task, msg.resume, msg.submit !== false, msg.coverLetter).then((report) => {
       const { outcome, evidence, unanswered, message } = report;
       chrome.runtime.sendMessage({ type: 'result', report: { outcome: outcome === 'dry_run' ? 'failed' : outcome, evidence, unanswered, message } });
     });

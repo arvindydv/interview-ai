@@ -4,8 +4,8 @@ import type { ResumeProfile } from './profile.js';
 // served publicly by GET /v1/listings and GET /v1/listings/:id.
 
 export const LISTING_PROVIDERS = [
-  'greenhouse', 'lever', 'ashby', 'workable', 'keka', 'freshteam', 'zohorecruit', 'himalayas', 'remoteok', 'jobicy',
-  'adzuna', 'jooble',
+  'greenhouse', 'lever', 'ashby', 'workable', 'smartrecruiters', 'workday', 'keka', 'freshteam', 'zohorecruit', 'himalayas',
+  'remoteok', 'jobicy', 'adzuna', 'jooble',
 ] as const;
 export type ListingProvider = (typeof LISTING_PROVIDERS)[number];
 
@@ -436,6 +436,8 @@ export interface TailoredResumeRecord {
   content: TailoredResume | null;
   /** The tailored file's name, once it's ready (GET /v1/job-feed/:id/resume/file). */
   fileName: string | null;
+  /** The cover letter written for the job (PDF: GET /v1/job-feed/:id/cover-letter). */
+  coverLetter: string | null;
   error: string | null;
   updatedAt: string;
 }

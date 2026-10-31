@@ -5,6 +5,10 @@
         each with the character range a rewrite must fit in. Units marked fixed (names, headings, titles,
         dates, links) are context only.
 
+    resume_doc.py coverletter <letter.json> <out.pdf>
+        letter: {"name", "contact": [..], "date", "body": "paragraphs separated by blank lines"}. Writes a
+        plain one-page A4 letter.
+
     resume_doc.py render <file> <pdf|docx> <plan.json> <out>
         plan: {"edits": {unit id: new text}, "bold": [terms]}. Writes the edited file to <out>: each
         edited unit's text replaced in the same place, font, size and colour, with the bold terms in bold.
@@ -651,8 +655,49 @@ def public(units):
     return [{k: v for k, v in u.items() if not k.startswith("_")} for u in units]
 
 
+def render_cover_letter(letter, out):
+    """A plain, ATS-friendly letter: name and contact line, date, then the body."""
+    import html
+    import pymupdf
+
+    esc = lambda t: html.escape(t or "")
+    paras = [p.strip() for p in re.split(r"\n\s*\n", letter.get("body", "")) if p.strip()]
+    body = "".join(f"<p>{esc(p).replace(chr(10), '<br>')}</p>" for p in paras)
+    contact = " &middot; ".join(esc(c) for c in letter.get("contact", []) if c)
+    doc_html = (
+        f"<h1>{esc(letter.get('name', ''))}</h1>"
+        + (f"<div class='contact'>{contact}</div>" if contact else "")
+        + f"<div class='date'>{esc(letter.get('date', ''))}</div>"
+        + body
+    )
+    css = """
+      * { font-family: sans-serif; }
+      h1 { font-size: 17pt; margin: 0 0 2pt 0; }
+      .contact { font-size: 9.5pt; color: #444; margin-bottom: 18pt; }
+      .date { font-size: 10pt; margin-bottom: 14pt; }
+      p { font-size: 10.5pt; line-height: 1.45; margin: 0 0 9pt 0; text-align: left; }
+    """
+    story = pymupdf.Story(html=doc_html, user_css=css)
+    writer = pymupdf.DocumentWriter(out)
+    page = pymupdf.paper_rect("a4")
+    where = page + (56, 56, -56, -56)
+    more = True
+    while more:
+        dev = writer.begin_page(page)
+        more, _ = story.place(where)
+        story.draw(dev)
+        writer.end_page()
+    writer.close()
+    return {"ok": True}
+
+
 def main():
-    cmd, path, fmt = sys.argv[1], sys.argv[2], sys.argv[3]
+    cmd, path = sys.argv[1], sys.argv[2]
+    if cmd == "coverletter":
+        with open(path) as f:
+            print(json.dumps(render_cover_letter(json.load(f), sys.argv[3])))
+        return
+    fmt = sys.argv[3]
     if cmd == "extract":
         if fmt == "pdf":
             import pymupdf

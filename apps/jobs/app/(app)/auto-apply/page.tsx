@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { AlertCircle, ChevronDown, Puzzle, ShieldCheck, Zap } from 'lucide-react';
 import {
   AUTO_APPLY_LIMITS, AUTO_APPLY_STATUS_LABELS, type AutoApplyOverview, type AutoApplySettings, type AutoApplyStatus,
@@ -13,6 +14,7 @@ const CONSENT = [
   'Friday may send job applications in my name to jobs that match my settings, with my tailored resume and the answers it prepares from my resume and application profile.',
   'Friday never makes up qualifications or personal details. Questions it can’t answer truthfully wait for me.',
   'Where a form requires it, Friday confirms I’ve read the employer’s privacy notice and that my details are accurate.',
+  'Each application carries a cover letter Friday writes from my resume for that job.',
   'Applications are submitted from my own browser through the Friday extension. Friday doesn’t get past CAPTCHAs or other checks for me; when a job board asks for one, the application waits for me.',
   'I can turn Auto Apply off at any time.',
 ];
@@ -126,18 +128,52 @@ export default function AutoApplyPage() {
           <label className="block">
             <span className="text-sm font-medium">Applications a day</span>
             <input
+              key={settings.dailyLimit}
               type="number"
               min={1}
-              max={AUTO_APPLY_LIMITS.maxPerDay}
+              max={data.plan.dailyApplications}
               defaultValue={settings.dailyLimit}
               onBlur={(e) => {
-                const v = Math.max(1, Math.min(AUTO_APPLY_LIMITS.maxPerDay, Number(e.target.value) || 1));
+                const v = Math.max(1, Math.min(data.plan.dailyApplications, Number(e.target.value) || 1));
                 if (v !== settings.dailyLimit) update({ dailyLimit: v });
               }}
-              className="input mt-1.5 !w-32"
+              className="input mt-1.5 block !w-32"
             />
-            <span className="mt-1 block text-xs text-muted">Up to {AUTO_APPLY_LIMITS.maxPerDay}. Resets at midnight ({settings.timezone}).</span>
+            <span className="mt-1 block text-xs text-muted">
+              Up to {data.plan.dailyApplications} on {data.plan.name}
+              {data.plan.id !== 'premium' && (
+                <>
+                  {' '}(<Link href="/plans" className="underline underline-offset-2">more with a plan</Link>)
+                </>
+              )}
+              . Resets at midnight ({settings.timezone}).
+            </span>
           </label>
+        </div>
+
+        <div className="mt-6 border-t border-line pt-5">
+          <p className="text-sm font-medium">Which jobs</p>
+          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+            {([
+              ['auto', 'Friday picks', 'Your best matches above the minimum, every day, up to your limit.'],
+              ['review', 'I pick by swiping', 'Only jobs you swipe right on. Nothing is sent that you didn’t choose.'],
+            ] as const).map(([mode, title, hint]) => (
+              <button
+                key={mode}
+                onClick={() => update({ mode })}
+                disabled={busy}
+                className={`rounded-xl border p-3 text-left text-sm transition ${settings.mode === mode ? 'border-brand/50 bg-brand/5' : 'border-line-strong hover:border-line'}`}
+              >
+                <span className="font-medium">{title}</span>
+                <span className="mt-0.5 block text-xs text-muted">{hint}</span>
+              </button>
+            ))}
+          </div>
+          {settings.mode === 'review' && (
+            <Link href="/swipe" className="btn btn-secondary mt-3 !py-1.5 !text-xs">
+              Open Swipe
+            </Link>
+          )}
         </div>
 
         {!settings.enabled && data.blockers.length > 0 && (

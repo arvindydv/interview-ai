@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { Bookmark, Globe, LogOut, Menu, Search, Send, Sparkles, Target, UserRound, X, Zap } from 'lucide-react';
+import { BarChart3, Bookmark, Crown, FileStack, Globe, Layers, LogOut, Menu, Search, Send, Sparkles, Target, UserRound, X, Zap } from 'lucide-react';
 import { Logo } from './Logo';
 import { Spinner } from './ui';
 import { JobsProvider, useJobs } from '@/lib/jobs';
@@ -11,6 +11,7 @@ import { timeAgo } from '@/lib/format';
 
 const NAV = [
   { href: '/recommended', label: 'Recommended', icon: Sparkles, count: 'recommended' },
+  { href: '/swipe', label: 'Swipe', icon: Layers, count: null },
   { href: '/top', label: 'Top matches', icon: Target, count: 'top' },
   { href: '/remote', label: 'Remote jobs', icon: Globe, count: null },
   { href: '/search', label: 'All jobs', icon: Search, count: null },
@@ -20,6 +21,9 @@ const MINE = [
   { href: '/saved', label: 'Saved', icon: Bookmark, count: 'saved' },
   { href: '/applied', label: 'Applied', icon: Send, count: 'applied' },
   { href: '/auto-apply', label: 'Auto Apply', icon: Zap, count: null },
+  { href: '/analytics', label: 'Analytics', icon: BarChart3, count: null },
+  { href: '/resumes', label: 'Resumes', icon: FileStack, count: null },
+  { href: '/plans', label: 'Plans', icon: Crown, count: null },
 ] as const;
 
 function NavLink({ href, label, icon: Icon, count, onNavigate }: {

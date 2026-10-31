@@ -97,10 +97,15 @@ async function step() {
     return;
   }
   const resume = await (await api(task.resumePath)).arrayBuffer();
+  const cover = task.coverLetterPath ? await (await api(task.coverLetterPath)).arrayBuffer().catch(() => null) : null;
   const tab = await chrome.tabs.create({ url: task.applyUrl, active: false });
   const job = { taskId: task.id, tabId: tab.id, startedAt: Date.now(), title: task.title, company: task.company };
   await store.set('running', job);
-  await store.set(`task:${tab.id}`, { task, resume: { name: task.resumeFileName, base64: toBase64(resume) } });
+  await store.set(`task:${tab.id}`, {
+    task,
+    resume: { name: task.resumeFileName, base64: toBase64(resume) },
+    coverLetter: cover ? { name: task.coverLetterFileName, base64: toBase64(cover) } : null,
+  });
   await setStatus({ running: { title: task.title, company: task.company }, error: null, idle: false });
 }
 

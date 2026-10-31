@@ -2,6 +2,7 @@
 // The API charges exactly these amounts; the pricing and billing pages display them.
 
 import type { TrialBalance } from './api.js';
+import { JOBS_PLANS, JOBS_PLAN_DAYS, isJobsPlanId, type JobsPlanId } from './jobsPlans.js';
 
 /** Live session price for minute packs, in rupees. */
 export const PRICE_PER_MINUTE = 10;
@@ -14,12 +15,26 @@ export const MAX_MINUTES = 1000;
 /** Amounts offered as one-click choices on the billing page. */
 export const MINUTE_PRESETS = [30, 60, 120] as const;
 
-/** `minutes_<n>` buys n minutes (MIN_MINUTES..MAX_MINUTES); `monthly` and `yearly` are plans. */
-export type ProductId = 'monthly' | 'yearly' | `minutes_${number}`;
+/**
+ * `minutes_<n>` buys n minutes (MIN_MINUTES..MAX_MINUTES); `monthly` and `yearly` are plans;
+ * `jobs_<plan>` is a Friday Jobs plan (jobsPlans.ts).
+ */
+export type ProductId = 'monthly' | 'yearly' | `minutes_${number}` | `jobs_${JobsPlanId}`;
 
 export type Product =
   | { id: ProductId; kind: 'minutes'; name: string; /** paise */ amount: number; minutes: number }
-  | { id: ProductId; kind: 'plan'; name: string; /** paise */ amount: number; plan: 'monthly' | 'yearly'; days: number };
+  | { id: ProductId; kind: 'plan'; name: string; /** paise */ amount: number; plan: 'monthly' | 'yearly'; days: number }
+  | { id: ProductId; kind: 'jobs_plan'; name: string; /** paise */ amount: number; plan: JobsPlanId; days: number };
+
+/** A Friday Jobs plan for JOBS_PLAN_DAYS days. */
+export const jobsPlanProduct = (plan: JobsPlanId): Product => ({
+  id: `jobs_${plan}`,
+  kind: 'jobs_plan',
+  name: `Friday Jobs ${JOBS_PLANS[plan].name}`,
+  amount: JOBS_PLANS[plan].amount,
+  plan,
+  days: JOBS_PLAN_DAYS,
+});
 
 export const isValidMinutes = (n: number) => Number.isInteger(n) && n >= MIN_MINUTES && n <= MAX_MINUTES;
 
@@ -42,6 +57,7 @@ export const PLANS = {
 /** The product an id names, or null if it names none (unknown id, or minutes out of range). */
 export function productById(id: unknown): Product | null {
   if (id === 'monthly' || id === 'yearly') return PLANS[id];
+  if (typeof id === 'string' && id.startsWith('jobs_') && isJobsPlanId(id.slice(5))) return jobsPlanProduct(id.slice(5) as JobsPlanId);
   const m = typeof id === 'string' ? /^minutes_([1-9]\d{0,5})$/.exec(id) : null;
   return m && isValidMinutes(Number(m[1])) ? minutesProduct(Number(m[1])) : null;
 }

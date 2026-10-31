@@ -16,7 +16,15 @@ function standardAnswer(q: FormQuestion, p: ApplicationProfile, resume: ResumePr
   const currentJob = resume?.experience.find((e) => /present|current|now/i.test(e.period ?? '')) ?? null;
   const values: Record<string, string> = {
     first_name: p.firstName,
+    firstname: p.firstName,
+    firstName: p.firstName,
     last_name: p.lastName,
+    lastname: p.lastName,
+    lastName: p.lastName,
+    city: p.city,
+    address: [p.city, p.country].filter(Boolean).join(', '),
+    headline: resume?.headline ?? '',
+    linkedin: p.linkedin,
     preferred_name: p.firstName,
     name: fullName,
     _systemfield_name: fullName,
@@ -104,6 +112,8 @@ export interface AnswerContext {
   resumeText: string;
   job: { title: string; company: string; location: string; description: string };
   resumeFileName: string;
+  /** The cover letter written for this job, if any. */
+  coverLetter: { text: string; fileName: string } | null;
   model: string;
 }
 
@@ -128,6 +138,15 @@ export async function answerForm(form: FormQuestion[], ctx: AnswerContext): Prom
     }
     if (q.kind === 'eeo') {
       answers.set(q.key, eeoAnswer(q, ctx.profile));
+      continue;
+    }
+    if (/cover letter|covering letter|motivation letter/i.test(`${q.key} ${q.label}`) && ctx.coverLetter) {
+      answers.set(
+        q.key,
+        q.type === 'file'
+          ? { key: q.key, label: q.label, value: ctx.coverLetter.fileName, source: 'cover_letter' }
+          : { key: q.key, label: q.label, value: ctx.coverLetter.text, source: 'ai' },
+      );
       continue;
     }
     const reuse = saved.get(norm(q.label));
