@@ -63,23 +63,7 @@ jobs:
           echo "kernel.apparmor_restrict_unprivileged_userns=$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || echo n/a)"
           # The browser container's AppArmor profile, loaded as deploy/deploy.sh does on the server.
           sudo apparmor_parser -r -W deploy/apparmor/parakeet-chromium
-          docker run --rm --read-only --tmpfs /tmp --tmpfs /home/node --security-opt seccomp=deploy/chromium-seccomp.json \
+          docker run --rm --read-only --tmpfs /tmp:uid=1000,gid=1000,mode=0700 --tmpfs /home/node:uid=1000,gid=1000,mode=0700 \
+            --security-opt seccomp=deploy/chromium-seccomp.json \
             --security-opt apparmor=parakeet-chromium --security-opt no-new-privileges:true \
             -v "$PWD/apps/worker/test:/smoke:ro" parakeet-worker:ci node /smoke/image-smoke.mjs
-      # Why the sandbox didn't start: Chromium's own error, AppArmor's denials, and which settings work.
-      - name: Auto Apply browser sandbox diagnostics
-        if: failure() && matrix.app == 'worker'
-        run: |
-          try() {
-            echo "=== $1"
-            shift
-            docker run --rm --tmpfs /tmp --tmpfs /home/node "$@" parakeet-worker:ci \
-              timeout 30 chromium --headless --disable-gpu --dump-dom 'data:text/html,<p>sandbox-ok</p>' 2>&1 | grep -E 'sandbox-ok|FATAL|sandbox|denied|Operation' | head -5 || true
-          }
-          try "seccomp profile + parakeet-chromium" --security-opt seccomp=deploy/chromium-seccomp.json --security-opt apparmor=parakeet-chromium
-          try "seccomp profile + parakeet-chromium, no no-new-privileges" --security-opt seccomp=deploy/chromium-seccomp.json --security-opt apparmor=parakeet-chromium
-          try "seccomp profile + apparmor unconfined" --security-opt seccomp=deploy/chromium-seccomp.json --security-opt apparmor=unconfined
-          try "seccomp unconfined + parakeet-chromium" --security-opt seccomp=unconfined --security-opt apparmor=parakeet-chromium
-          echo "=== AppArmor denials"
-          sudo dmesg | grep -iE 'apparmor="DENIED"|userns' | tail -15 || true
-          sudo aa-status 2>/dev/null | grep -E 'parakeet|profiles are loaded' || true

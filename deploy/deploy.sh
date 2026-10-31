@@ -45,6 +45,8 @@ write_env worker
 if [[ ,${COMPOSE_PROFILES:-}, == *,cloud-apply,* ]]; then
   write_env applier
   write_env browser
+  # The browser container's AppArmor profile (docker-default plus user namespaces for Chrome's sandbox).
+  apparmor_parser -r -W "$RELEASE/apparmor/parakeet-chromium"
 fi
 
 cd "$RELEASE"

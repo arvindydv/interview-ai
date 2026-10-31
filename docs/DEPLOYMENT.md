@@ -175,9 +175,10 @@ requests for up to 10 seconds instead of returning errors. Desktop apps on a liv
 Friday Jobs can submit applications from the server (`apps/worker/src/applier.ts`) as well as from users'
 browsers. It is two extra containers, started only with the `cloud-apply` compose profile:
 
-- `browser`: Chromium only, with its sandbox on (Docker's default seccomp profile plus `clone`, `unshare` and
-  `setns`: `deploy/chromium-seccomp.json`), read-only, no secrets, on its own network (internet, not the API,
-  Redis or the other containers). CI checks the sandbox starts under this profile on Ubuntu 24.04.
+- `browser`: Chromium only, with its sandbox on, read-only, no secrets, on its own network (internet, not the
+  API, Redis or the other containers). Ubuntu 24.04 blocks the user namespaces Chrome's sandbox needs, so the
+  container gets Docker's default seccomp and AppArmor profiles each plus only that (`deploy/chromium-seccomp.json`,
+  `deploy/apparmor/parakeet-chromium`, loaded by `deploy.sh`). CI checks the sandbox starts with exactly these.
 - `applier`: drives the browser and talks only to the API with one token that works only on `/v1/applier/*`,
   and only for applications it has claimed. No database, Redis or other credentials.
 

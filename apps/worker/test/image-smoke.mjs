@@ -1,9 +1,11 @@
 // Smoke test of the worker image's Auto Apply browser, run inside the built image by CI
-// (.github/workflows/ci.yml): Chromium is there and starts with its sandbox under the seccomp profile
-// the browser container gets (deploy/chromium-seccomp.json), the extension's filler is packaged where
+// (.github/workflows/ci.yml): Chromium is there and starts with its sandbox under the seccomp and
+// AppArmor profiles the browser container gets (deploy/), the extension's filler is packaged where
 // autoapply/cloud.ts reads it, and it fills a form in a sandboxed tab. Nothing leaves the machine.
 //
-//   docker run --rm --security-opt seccomp=deploy/chromium-seccomp.json -v "$PWD/apps/worker/test:/smoke:ro" \
+//   sudo apparmor_parser -r -W deploy/apparmor/parakeet-chromium   # Ubuntu
+//   docker run --rm --security-opt seccomp=deploy/chromium-seccomp.json --security-opt apparmor=parakeet-chromium \
+//     --tmpfs /tmp:uid=1000,gid=1000 --tmpfs /home/node:uid=1000,gid=1000 -v "$PWD/apps/worker/test:/smoke:ro" \
 //     parakeet-worker node /smoke/image-smoke.mjs
 import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';

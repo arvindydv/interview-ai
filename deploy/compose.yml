@@ -92,12 +92,14 @@ services:
     command: ["node", "dist/browserServer.js"]
     env_file: ${PARAKEET_HOME:-/opt/parakeet}/env/browser.env
     networks: [browser]
-    # Docker's default seccomp profile plus the three calls Chrome's sandbox needs.
+    # Docker's default seccomp and AppArmor profiles, each plus only what Chrome's sandbox needs (user
+    # namespaces); deploy.sh loads the AppArmor one. CI checks the sandbox starts with exactly these.
     security_opt:
       - seccomp=./chromium-seccomp.json
+      - apparmor=parakeet-chromium
       - no-new-privileges:true
     read_only: true
-    tmpfs: ["/tmp:size=256m", "/home/node:size=64m"]
+    tmpfs: ["/tmp:size=256m,uid=1000,gid=1000,mode=0700", "/home/node:size=64m,uid=1000,gid=1000,mode=0700"]
     shm_size: 512m
     mem_limit: 1024m
     stop_grace_period: 30s
