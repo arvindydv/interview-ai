@@ -14,25 +14,22 @@ jobs:
       - uses: actions/checkout@v4
       - run: |
           for p in deploy/apparmor/*; do sudo apparmor_parser -r -W "$p"; done
-          # Debian's Chromium, as in the worker image.
-          docker build -q -t probe - <<'DOCKER'
-          FROM node:24-bookworm-slim
-          RUN apt-get update && apt-get install -y --no-install-recommends chromium && rm -rf /var/lib/apt/lists/*
-          USER node
-          DOCKER
+          printf 'FROM node:24-bookworm-slim\nRUN apt-get update && apt-get install -y --no-install-recommends chromium && rm -rf /var/lib/apt/lists/*\nUSER node\n' | docker build -q -t probe -
           S=deploy/chromium-seccomp.json
+          run() {
+            docker run --rm --tmpfs /tmp --tmpfs /home/node "$@" 2>&1 | grep -vE 'dbus|Fontconfig|^[[:space:]]*$' | cut -c1-220 | tail -6 || true
+          }
           try() {
             echo "::group::$1"; shift
-            docker run --rm --tmpfs /tmp --tmpfs /home/node "$@" probe \
-              timeout 40 /usr/lib/chromium/chromium --headless --disable-gpu --dump-dom 'data:text/html,<p>sandbox-ok</p>' 2>&1 | grep -oE 'sandbox-ok|No usable sandbox|FATAL:[a-z_.]*\([0-9]*\)[^\n]{0,160}' | sort | uniq -c
-            echo "--- via the wrapper /usr/bin/chromium"
-            docker run --rm --tmpfs /tmp --tmpfs /home/node "$@" probe \
-              timeout 40 chromium --headless --disable-gpu --dump-dom 'data:text/html,<p>sandbox-ok</p>' 2>&1 | grep -oE 'sandbox-ok|No usable sandbox|FATAL:[a-z_.]*\([0-9]*\)[^\n]{0,160}' | sort | uniq -c
+            echo "--- /usr/lib/chromium/chromium"
+            run "$@" probe timeout 40 /usr/lib/chromium/chromium --headless --disable-gpu --dump-dom 'data:text/html,<p>sandbox-ok</p>'
+            echo "--- wrapper /usr/bin/chromium"
+            run "$@" probe timeout 40 chromium --headless --disable-gpu --dump-dom 'data:text/html,<p>sandbox-ok</p>'
             echo "::endgroup::"
           }
           try "A docker-default+userns" --security-opt seccomp=$S --security-opt apparmor=parakeet-chromium
-          try "A + read-only + no-new-privileges (as in compose)" --security-opt seccomp=$S --security-opt apparmor=parakeet-chromium --read-only --security-opt no-new-privileges:true
+          try "A + read-only + no-new-privileges" --security-opt seccomp=$S --security-opt apparmor=parakeet-chromium --read-only --security-opt no-new-privileges:true
           try "B unconfined+userns" --security-opt seccomp=$S --security-opt apparmor=parakeet-chromium-userns
           try "B + read-only + no-new-privileges" --security-opt seccomp=$S --security-opt apparmor=parakeet-chromium-userns --read-only --security-opt no-new-privileges:true
-          try "control: Docker defaults (expect no sandbox)"
-          echo "::group::denials"; sudo dmesg | grep 'apparmor="DENIED"' | sed 's/.*apparmor=/apparmor=/' | sed 's/ pid=[0-9]*//' | cut -c1-200 | sort | uniq -c | tail -20; echo "::endgroup::"
+          try "control: Docker defaults"
+          echo "::group::denials"; sudo dmesg | grep 'apparmor="DENIED"' | sed 's/.*apparmor=/apparmor=/; s/ pid=[0-9]*//' | cut -c1-200 | sort | uniq -c | tail -20; echo "::endgroup::"
