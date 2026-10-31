@@ -17,7 +17,7 @@ jobs:
           printf 'FROM node:24-bookworm-slim\nRUN apt-get update && apt-get install -y --no-install-recommends chromium && rm -rf /var/lib/apt/lists/*\nUSER node\n' | docker build -q -t probe -
           S=deploy/chromium-seccomp.json
           run() {
-            docker run --rm --tmpfs /tmp --tmpfs /home/node "$@" 2>&1 | grep -vE 'dbus|Fontconfig|^[[:space:]]*$' | cut -c1-220 | tail -6 || true
+            docker run --rm --tmpfs /tmp:uid=1000,gid=1000,mode=0700 --tmpfs /home/node:uid=1000,gid=1000,mode=0700 "$@" 2>&1 | grep -vE 'dbus|Fontconfig|^[[:space:]]*$' | cut -c1-220 | tail -6 || true
           }
           try() {
             echo "::group::$1"; shift
