@@ -1,0 +1,6 @@
+# Candidate (probe): Ubuntu's own approach for Chrome, no AppArmor confinement beyond allowing userns.
+abi <abi/4.0>,
+include <tunables/global>
+profile parakeet-chromium-userns flags=(unconfined) {
+  userns,
+}
