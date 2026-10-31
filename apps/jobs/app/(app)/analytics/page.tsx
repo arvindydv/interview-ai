@@ -169,6 +169,19 @@ export default function AnalyticsPage() {
                 </div>
               ))}
             </div>
+            <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+              {([
+                ['Sent by Friday', data.autoApplyChannels.submitted.cloud],
+                ['Sent from your browser', data.autoApplyChannels.submitted.browser],
+                ['Passed to your browser', data.autoApplyChannels.handedToBrowser],
+                ['Waited for you', data.autoApplyChannels.waitedForUser + data.autoApplyChannels.submitted.user],
+              ] as const).map(([label, n]) => (
+                <div key={label} className="rounded-xl bg-surface-2/60 p-3">
+                  <p className="text-xs text-muted">{label}</p>
+                  <p className="mt-0.5 text-lg font-semibold tabular-nums">{n}</p>
+                </div>
+              ))}
+            </div>
           </section>
         </div>
       )}

@@ -1,12 +1,13 @@
 'use client';
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { AlertCircle, ChevronDown, Puzzle, ShieldCheck, Zap } from 'lucide-react';
+import { AlertCircle, ChevronDown, ShieldCheck, Zap } from 'lucide-react';
 import {
-  AUTO_APPLY_LIMITS, AUTO_APPLY_STATUS_LABELS, type AutoApplyOverview, type AutoApplySettings, type AutoApplyStatus,
+  AUTO_APPLY_LIMITS, AUTO_APPLY_STATUS_LABELS, commonQuestions, type AutoApplyOverview, type AutoApplySettings, type AutoApplyStatus,
 } from '@parakeet/shared';
 import { AutoApplyList, TABS } from '@/components/AutoApplyList';
 import { AutoApplyProfile } from '@/components/AutoApplyProfile';
+import { ExtensionStatus } from '@/components/ExtensionStatus';
 import { Spinner } from '@/components/ui';
 import { api } from '@/lib/api';
 
@@ -15,7 +16,8 @@ const CONSENT = [
   'Friday never makes up qualifications or personal details. Questions it can’t answer truthfully wait for me.',
   'Where a form requires it, Friday confirms I’ve read the employer’s privacy notice and that my details are accurate.',
   'Each application carries a cover letter Friday writes from my resume for that job.',
-  'Applications are submitted from my own browser through the Friday extension. Friday doesn’t get past CAPTCHAs or other checks for me; when a job board asks for one, the application waits for me.',
+  'Unless I turn it off, Friday’s servers submit applications on job boards that allow it (Greenhouse, Lever, Ashby, Workable, SmartRecruiters); the rest are submitted from my own browser through the Friday extension.',
+  'Friday doesn’t get past CAPTCHAs, sign-ins or other checks for me; when a job board asks for one, the application goes to my browser or waits for me.',
   'I can turn Auto Apply off at any time.',
 ];
 
@@ -60,6 +62,7 @@ export default function AutoApplyPage() {
   const { settings, counts } = data;
   const needsConsent = !settings.consentedAt;
   const otherBlockers = data.blockers.filter((b) => !b.startsWith('Agree'));
+  const unanswered = commonQuestions(data.profile).filter((q) => !q.answered).length;
 
   return (
     <div className="mx-auto max-w-4xl px-4 pt-8 pb-16 sm:px-8">
@@ -69,8 +72,8 @@ export default function AutoApplyPage() {
             <Zap size={24} className="text-violet-600" /> Auto Apply
           </h1>
           <p className="mt-1 text-muted">
-            Every day Friday picks your best new matches, tailors your resume to each and fills in the application. It keeps
-            going while your computer is off; your browser sends them when it&rsquo;s open.
+            Every day Friday picks your best new matches, tailors your resume to each and submits the application, also
+            while your computer is off. Anything a job board wants you for goes to your browser.
           </p>
         </div>
         <button
@@ -176,6 +179,26 @@ export default function AutoApplyPage() {
           )}
         </div>
 
+        <div className="mt-6 border-t border-line pt-5">
+          <p className="text-sm font-medium">Who submits them</p>
+          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+            {([
+              [true, 'Friday, then my browser', 'Friday’s servers send what they can, any time. A CAPTCHA or sign-in goes to your browser.'],
+              [false, 'Only my browser', 'Everything waits for your browser with the Friday extension to be open.'],
+            ] as const).map(([cloudSubmit, title, hint]) => (
+              <button
+                key={title}
+                onClick={() => update({ cloudSubmit })}
+                disabled={busy}
+                className={`rounded-xl border p-3 text-left text-sm transition ${settings.cloudSubmit === cloudSubmit ? 'border-brand/50 bg-brand/5' : 'border-line-strong hover:border-line'}`}
+              >
+                <span className="font-medium">{title}</span>
+                <span className="mt-0.5 block text-xs text-muted">{hint}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
         {!settings.enabled && data.blockers.length > 0 && (
           <div className="mt-5 rounded-xl border border-line bg-surface-2/60 p-4 text-sm">
             <p className="font-medium">Before you turn it on</p>
@@ -203,20 +226,20 @@ export default function AutoApplyPage() {
           </div>
         )}
 
-        <div className="mt-5 flex items-start gap-3 rounded-xl border border-line p-4 text-sm">
-          <Puzzle size={18} className="mt-0.5 shrink-0 text-faint" />
-          <p className="text-muted">
-            <span className="font-medium text-fg">Submitting needs the Friday extension for Chrome.</span> It sends your prepared
-            applications whenever your browser is open, and stops for you if a job board asks for a CAPTCHA or a sign-in.
-          </p>
-        </div>
+        {/* With Friday submitting, prepared ones aren't waiting on a browser. */}
+        <ExtensionStatus devices={data.devices} enabled={settings.enabled} prepared={settings.cloudSubmit ? 0 : counts.prepared} onChange={() => load()} />
       </section>
 
-      <section className="card mt-6">
+      <section id="application-profile" className="card mt-6 scroll-mt-6">
         <button onClick={() => setProfileOpen(!profileOpen)} className="flex w-full items-center justify-between p-5 text-left sm:px-6">
           <div>
             <h2 className="font-semibold">Application profile</h2>
             <p className="text-sm text-muted">What forms ask that your resume doesn&rsquo;t say. Friday answers only from this and your resume.</p>
+            {unanswered > 0 && (
+              <p className="mt-1.5 text-xs font-medium text-amber-700">
+                {unanswered} common question{unanswered === 1 ? '' : 's'} unanswered: applications that ask {unanswered === 1 ? 'it' : 'them'} wait for you
+              </p>
+            )}
           </div>
           <ChevronDown size={18} className={`shrink-0 text-faint transition ${profileOpen ? 'rotate-180' : ''}`} />
         </button>
@@ -244,7 +267,14 @@ export default function AutoApplyPage() {
           ))}
         </div>
         <p className="px-5 pt-3 text-xs text-muted">{TABS.find((t) => t.id === tab)?.hint}</p>
-        <AutoApplyList status={tab} onChange={() => load()} />
+        <AutoApplyList
+          status={tab}
+          onChange={() => load()}
+          onOpenProfile={() => {
+            setProfileOpen(true);
+            document.getElementById('application-profile')?.scrollIntoView({ behavior: 'smooth' });
+          }}
+        />
       </section>
     </div>
   );

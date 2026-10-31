@@ -257,7 +257,8 @@ async function ashby(board: string, id: string): Promise<FormQuestion[]> {
           label: decode(field.title ?? field.path),
           type: ASHBY_TYPES[field.type] ?? 'text',
           required: isRequired,
-          options: (field.selectableValues ?? []).map((v) => decode(v.label)),
+          // Ashby shows a yes/no question as two buttons.
+          options: field.type === 'Boolean' ? ['Yes', 'No'] : (field.selectableValues ?? []).map((v) => decode(v.label)),
           kind: kind ?? (field.path === '_systemfield_resume' ? 'resume' : field.path.startsWith('_systemfield_') ? 'standard' : 'custom'),
         })),
     );
@@ -271,8 +272,9 @@ interface WorkableField {
   label: string;
   type: string;
   required?: boolean;
-  choices?: { id: string; body?: string; name?: string; label?: string }[];
-  options?: { id: string; body?: string; name?: string; label?: string }[];
+  // Dropdowns list { name: <option id>, value: <label> }; other choice lists carry body or label.
+  choices?: { id?: string; body?: string; name?: string; label?: string; value?: string }[];
+  options?: { id?: string; body?: string; name?: string; label?: string; value?: string }[];
   fields?: WorkableField[];
 }
 
@@ -299,7 +301,7 @@ async function workable(shortcode: string): Promise<FormQuestion[]> {
   const form: FormQuestion[] = [];
   const add = (f: WorkableField, key = f.id) => {
     const type = WORKABLE_TYPES[f.type] ?? 'text';
-    const options = f.type === 'boolean' ? ['Yes', 'No'] : (f.choices ?? f.options ?? []).map((c) => decode(c.body ?? c.name ?? c.label ?? ''));
+    const options = f.type === 'boolean' ? ['Yes', 'No'] : (f.choices ?? f.options ?? []).map((c) => decode(c.body ?? c.label ?? c.value ?? c.name ?? ''));
     form.push({
       key,
       label: decode(f.label),

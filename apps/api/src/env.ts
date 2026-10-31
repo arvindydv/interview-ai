@@ -12,6 +12,11 @@ const schema = z.object({
   // Only needed if the Supabase project still signs tokens with the legacy shared secret (HS256).
   SUPABASE_JWT_SECRET: z.string().optional(),
   DATABASE_URL: z.url(),
+  /**
+   * Auto Apply from Friday's servers: sha256 (hex) of the applier's token (apps/worker/src/applier.ts,
+   * APPLIER_TOKEN there). Unset: the applier's routes refuse everything.
+   */
+  APPLIER_TOKEN_SHA256: z.string().regex(/^[0-9a-f]{64}$/).optional(),
   REDIS_URL: z.url(),
   // LLM. Model ids with a "/" (e.g. openai/gpt-oss-120b:nitro) go through OpenRouter; claude-* ids go
   // straight to the Claude API. With neither key set, the live channel streams a labelled sample.

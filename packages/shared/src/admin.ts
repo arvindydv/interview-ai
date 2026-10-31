@@ -74,6 +74,8 @@ export interface AdminOverview {
     turnStatus: Breakdown[];
   };
   funnel: Breakdown[];
+  /** Friday Jobs Auto Apply in the last 30 days, all users. */
+  autoApply: import('./autoApply.js').AutoApplyChannels;
 }
 
 export interface AdminUserRow {

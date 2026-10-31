@@ -88,6 +88,7 @@ jobs:
             NEXT_PUBLIC_META_PIXEL_ID=${{ vars.NEXT_PUBLIC_META_PIXEL_ID }}
             NEXT_PUBLIC_JOBS_SITE_URL=${{ vars.JOBS_URL }}
             NEXT_PUBLIC_WEB_URL=${{ vars.WEB_URL }}
+            NEXT_PUBLIC_EXTENSION_URL=${{ vars.NEXT_PUBLIC_EXTENSION_URL }}
 
   deploy:
     name: Deploy to production

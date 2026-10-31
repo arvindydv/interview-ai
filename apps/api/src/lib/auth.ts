@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { createRemoteJWKSet, decodeProtectedHeader, jwtVerify, type JWTPayload } from 'jose';
 import { env } from '../env.js';
@@ -14,6 +15,8 @@ export interface AuthUser {
 declare module 'fastify' {
   interface FastifyRequest {
     user: AuthUser;
+    /** Set when the request came from the Friday extension with its device token. */
+    deviceId?: string;
   }
 }
 
@@ -101,6 +104,29 @@ async function accountStatus(userId: string) {
   // Don't cache "unconfirmed": the user is about to enter their code and shouldn't wait 15 s.
   if (entry.confirmed) statusCache.set(userId, entry);
   return entry;
+}
+
+// ---- Friday extension devices (public.auto_apply_devices) ----------------------------------------
+
+/** Device tokens start with this, so they're never mistaken for a Supabase JWT. */
+export const DEVICE_TOKEN_PREFIX = 'fdx_';
+
+export const hashDeviceToken = (token: string) => createHash('sha256').update(token).digest('hex');
+
+/** The user and device behind an extension device token; throws AuthError when it's unknown or revoked. */
+export async function authenticateDevice(token: string): Promise<AuthUser & { deviceId: string }> {
+  const [row] = await sql<{ id: string; user_id: string; email: string | null; provider: string | null; last_seen_at: Date | null }[]>`
+    select d.id, d.user_id, a.email, a.raw_app_meta_data->>'provider' as provider, d.last_seen_at
+    from public.auto_apply_devices d join auth.users a on a.id = d.user_id
+    where d.token_hash = ${hashDeviceToken(token)} and d.revoked_at is null`;
+  if (!row) throw new AuthError(401, 'unauthorized', 'This browser was disconnected. Open Friday Jobs to connect it again.');
+  const status = await accountStatus(row.user_id);
+  if (status.suspended) throw new AuthError(403, 'suspended', 'This account has been suspended. Contact support.');
+  // "Last seen" for the Auto Apply page, written at most once a minute.
+  if (!row.last_seen_at || Date.now() - row.last_seen_at.getTime() > 60_000) {
+    await sql`update public.auto_apply_devices set last_seen_at = now() where id = ${row.id}`;
+  }
+  return { id: row.user_id, email: row.email ?? '', provider: row.provider ?? 'email', name: '', deviceId: row.id };
 }
 
 export function forgetUserStatus(userId: string) {

@@ -65,6 +65,16 @@ export default function OverviewPage() {
             </Card>
           </div>
 
+          {/* Friday Jobs Auto Apply: how much Friday's servers send alone, and how much needs a browser. */}
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+            <Stat label="Sent by Friday’s servers (30d)" value={d.autoApply.submitted.cloud} hint={`${pct(d.autoApply.cloudShare)} finished without a browser`} />
+            <Stat label="Sent from browsers (30d)" value={d.autoApply.submitted.browser} hint={`${d.autoApply.submitted.user} confirmed by users`} />
+            <Stat label="Handed to a browser" value={d.autoApply.handedToBrowser} hint="CAPTCHA or sign-in on the servers" />
+            <Stat label="Waited for the user" value={d.autoApply.waitedForUser} hint="a check, no browser connected" />
+            <Stat label="Unverified" value={d.autoApply.unverified.cloud + d.autoApply.unverified.browser} hint={`${d.autoApply.unverified.cloud} from the servers`} />
+            <Stat label="Server failures" value={d.autoApply.cloudFailures} hint="tries, retried or failed" />
+          </div>
+
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
             <Stat label="Input tokens (30d)" value={d.kpis.tokensIn30d} />
             <Stat label="Output tokens (30d)" value={d.kpis.tokensOut30d} />

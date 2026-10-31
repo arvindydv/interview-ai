@@ -46,8 +46,20 @@ jobs:
           context: .
           target: ${{ matrix.app }}
           push: false
+          # The worker image is loaded so the Auto Apply browser can be checked inside it.
+          load: ${{ matrix.app == 'worker' }}
+          tags: parakeet-${{ matrix.app }}:ci
           cache-from: type=gha,scope=${{ matrix.app }}
           build-args: |
             NEXT_PUBLIC_API_URL=https://api.example.com
             NEXT_PUBLIC_SUPABASE_URL=https://example.supabase.co
             NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_ci
+      # Auto Apply from Friday's servers: Chromium starts with its sandbox under the browser container's
+      # seccomp profile (deploy/chromium-seccomp.json) on Ubuntu 24.04, as on the server, and the
+      # extension's filler is packaged where the applier reads it.
+      - name: Auto Apply browser smoke test
+        if: matrix.app == 'worker'
+        run: |
+          echo "kernel.apparmor_restrict_unprivileged_userns=$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || echo n/a)"
+          docker run --rm --read-only --tmpfs /tmp --tmpfs /home/node --security-opt seccomp=deploy/chromium-seccomp.json \
+            --security-opt no-new-privileges:true -v "$PWD/apps/worker/test:/smoke:ro" parakeet-worker:ci node /smoke/image-smoke.mjs

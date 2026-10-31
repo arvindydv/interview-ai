@@ -5,18 +5,20 @@
 #
 #   infra/scripts/push-secrets.sh api    ~/parakeet-secrets/api.env
 #   infra/scripts/push-secrets.sh worker ~/parakeet-secrets/worker.env
+#   infra/scripts/push-secrets.sh applier ~/parakeet-secrets/applier.env   # APPLIER_TOKEN, AUTO_APPLY_BROWSER_WS
+#   infra/scripts/push-secrets.sh browser ~/parakeet-secrets/browser.env   # BROWSER_WS_PATH
 #
 # Keep those env files outside the repo. Empty values are skipped. To remove a variable:
 #   aws ssm delete-parameter --name /parakeet/prod/<service>/<NAME>
 # Needs AWS CLI v2. Env: AWS_REGION (default: your CLI's region), SSM_PREFIX (default /parakeet/prod).
 set -euo pipefail
 
-service=${1:?usage: push-secrets.sh <api|worker> <env-file>}
-file=${2:?usage: push-secrets.sh <api|worker> <env-file>}
+service=${1:?usage: push-secrets.sh <api|worker|applier|browser> <env-file>}
+file=${2:?usage: push-secrets.sh <api|worker|applier|browser> <env-file>}
 prefix=${SSM_PREFIX:-/parakeet/prod}
 region=${AWS_REGION:-$(aws configure get region)}
 
-[[ $service == api || $service == worker ]] || { echo "service must be api or worker" >&2; exit 1; }
+[[ $service =~ ^(api|worker|applier|browser)$ ]] || { echo "service must be api, worker, applier or browser" >&2; exit 1; }
 
 count=0
 while IFS= read -r line || [[ -n $line ]]; do

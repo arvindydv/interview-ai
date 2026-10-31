@@ -1,6 +1,8 @@
 // Fills one prepared application on a job board's own form, submits it, and reports what the job
-// board said (to background.js). Injected into the form's tab. It types into the page like a person
-// would and never touches a CAPTCHA: if a job board shows a challenge, the user is asked to finish it.
+// board said (to background.js). Injected into the form's tab on every page load: phase "fill" fills
+// and submits, phase "check" (a page loaded after submitting) only looks for the confirmation. It
+// types into the page like a person would and never touches a CAPTCHA: if a job board shows a
+// challenge, the user is asked to finish it.
 //
 // Fields are found by their name or id on the job board first, then by the question's label, so the
 // same code works across Greenhouse, Lever and Ashby. Exposed as window.__fridayFill for tests.
@@ -24,6 +26,12 @@
   // Tests set __fridayProvider for saved copies of a form.
   const HOSTS = [['lever.co', 'lever'], ['ashbyhq.com', 'ashby'], ['workable.com', 'workable'], ['smartrecruiters.com', 'smartrecruiters'], ['myworkdayjobs.com', 'workday']];
   const provider = window.__fridayProvider ?? HOSTS.find(([h]) => location.host.includes(h))?.[1] ?? 'greenhouse';
+
+  /** How long a tab left with the user (CAPTCHA, sign-in) is watched for them finishing it. */
+  const USER_WAIT_MS = 45 * 60_000;
+  // Friday's servers run this file too (apps/worker/src/autoapply/cloud.ts), and listen through __fridayCloudSend.
+  const send = (msg) =>
+    (window.__fridayCloudSend ? window.__fridayCloudSend(msg) : globalThis.chrome?.runtime?.sendMessage?.(msg))?.catch?.(() => {});
 
   const CONTROL = 'input:not([type=hidden]):not([type=submit]):not([type=button]), textarea, select, [role=combobox]';
 
@@ -259,6 +267,15 @@
     });
   }
 
+  /** A CAPTCHA checkbox the form wants ticked before it can be sent ("I'm not a robot"). */
+  function captchaCheckboxShown() {
+    return [...document.querySelectorAll('iframe')].some((f) => {
+      const src = f.src || '';
+      const r = f.getBoundingClientRect();
+      return /recaptcha\/(api2|enterprise)\/anchor|hcaptcha\.com.*frame=checkbox|challenges\.cloudflare\.com\/.*turnstile/.test(src) && r.width > 50 && r.height > 30 && visible(f);
+    });
+  }
+
   function loginShown() {
     return /sign in to (continue|apply)|log in to apply/i.test(textOf(document.body).slice(0, 3000)) && Boolean(document.querySelector('input[type=password]'));
   }
@@ -286,9 +303,10 @@
       if (ok) return report({ outcome: 'submitted', evidence: ok });
       if (challengeShown() || loginShown()) {
         const reason = loginShown() ? 'login_required' : 'captcha';
-        chrome.runtime?.sendMessage({ type: 'needs-user', reason });
-        // The user finishes it (or submits themselves); watch for the confirmation a while longer.
-        const done = await waitFor(confirmed, 11 * 60_000, 2000);
+        await send({ type: 'needs-user', reason });
+        // The user finishes it (or submits themselves); watch for the confirmation a while longer. If
+        // the page changes, the next page is checked for it too (phase "check").
+        const done = await waitFor(confirmed, USER_WAIT_MS, 2000);
         return report(done ? { outcome: 'submitted', evidence: done } : { outcome: reason, message: 'Waited for you to finish the check' });
       }
       if (Date.now() > end - 55_000) {
@@ -337,6 +355,9 @@
   }
 
   async function fill(task, resume, submit, coverLetter = null) {
+    // Never fill a page that already says the application went through.
+    const already = confirmed();
+    if (already) return { outcome: 'submitted', evidence: already };
     // Boards that show the job first: press its Apply / I'm interested button.
     if (!document.querySelector('input[type=file], form input:not([type=hidden])')) {
       const apply = [...document.querySelectorAll('a, button')].find((b) => visible(b) && /^(apply( for this job| now| manually)?|i'?m interested)$/i.test(textOf(b)));
@@ -346,8 +367,8 @@
     // Workday and others may ask the user to sign in to the employer's site first.
     if (loginShown()) {
       if (!submit) return { outcome: 'login_required' };
-      chrome.runtime?.sendMessage({ type: 'needs-user', reason: 'login_required' });
-      const signedIn = await waitFor(() => !loginShown(), 11 * 60_000, 2000);
+      await send({ type: 'needs-user', reason: 'login_required' });
+      const signedIn = await waitFor(() => !loginShown(), USER_WAIT_MS, 2000);
       if (!signedIn) return { outcome: 'login_required', message: 'Waited for you to sign in' };
       await sleep(2000);
     }
@@ -382,17 +403,34 @@
 
     const button = submitButton();
     if (!button) return { outcome: 'failed', message: 'No submit button found' };
+    // A visible "I'm not a robot" box: the form is filled, and the user ticks it and sends it themselves.
+    if (captchaCheckboxShown()) {
+      await send({ type: 'needs-user', reason: 'captcha' });
+      const done = await waitFor(confirmed, USER_WAIT_MS, 2000);
+      return done ? { outcome: 'submitted', evidence: done } : { outcome: 'captcha', message: 'Waited for you to finish the check' };
+    }
+    // Wait until the extension has noted it: from now on this application is never sent twice, even
+    // if the page navigates away before reporting.
+    await send({ type: 'submitting' });
     button.click();
     return new Promise((resolve) => watchAfterSubmit(resolve));
   }
 
   window.__fridayFill = fill;
+  window.__fridayCheck = () => new Promise((resolve) => watchAfterSubmit(resolve));
 
-  chrome.runtime?.onMessage?.addListener((msg) => {
+  globalThis.chrome?.runtime?.onMessage?.addListener((msg, _sender, reply) => {
     if (msg.type !== 'fill') return;
-    fill(msg.task, msg.resume, msg.submit !== false, msg.coverLetter).then((report) => {
-      const { outcome, evidence, unanswered, message } = report;
-      chrome.runtime.sendMessage({ type: 'result', report: { outcome: outcome === 'dry_run' ? 'failed' : outcome, evidence, unanswered, message } });
-    });
+    reply({ ok: true });
+    // Once per page: the extension sends this on every load, and some pages report "complete" twice.
+    if (window.__fridayStarted) return;
+    window.__fridayStarted = true;
+    const run = msg.phase === 'check' ? window.__fridayCheck() : fill(msg.task, msg.resume, msg.submit !== false, msg.coverLetter);
+    run
+      .catch((err) => ({ outcome: 'failed', message: `Filling failed: ${err.message}` }))
+      .then((report) => {
+        const { outcome, evidence, unanswered, message } = report;
+        send({ type: 'result', report: { outcome: outcome === 'dry_run' ? 'failed' : outcome, evidence, unanswered, message } });
+      });
   });
 })();

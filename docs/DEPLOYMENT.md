@@ -170,6 +170,30 @@ and sign in end to end.
 Every deploy only restarts containers whose image changed. While a container restarts, Caddy holds incoming
 requests for up to 10 seconds instead of returning errors. Desktop apps on a live WebSocket reconnect on their own.
 
+### Auto Apply from Friday's servers (off by default)
+
+Friday Jobs can submit applications from the server (`apps/worker/src/applier.ts`) as well as from users'
+browsers. It is two extra containers, started only with the `cloud-apply` compose profile:
+
+- `browser`: Chromium only, with its sandbox on (Docker's default seccomp profile plus `clone`, `unshare` and
+  `setns`: `deploy/chromium-seccomp.json`), read-only, no secrets, on its own network (internet, not the API,
+  Redis or the other containers). CI checks the sandbox starts under this profile on Ubuntu 24.04.
+- `applier`: drives the browser and talks only to the API with one token that works only on `/v1/applier/*`,
+  and only for applications it has claimed. No database, Redis or other credentials.
+
+Chromium needs about 1 GB, more than a t3.small has spare: move to a `t3.medium` first (table above). Then:
+
+```bash
+token=$(openssl rand -hex 32); path=/$(openssl rand -hex 24)
+infra/scripts/push-secrets.sh applier <(printf 'APPLIER_TOKEN=%s\nAUTO_APPLY_BROWSER_WS=ws://browser:9222%s\n' "$token" "$path")
+infra/scripts/push-secrets.sh browser <(printf 'BROWSER_WS_PATH=%s\n' "$path")
+infra/scripts/push-secrets.sh api <(printf 'APPLIER_TOKEN_SHA256=%s\n' "$(printf %s "$token" | sha256sum | cut -d' ' -f1)")
+# on the server: add COMPOSE_PROFILES=cloud-apply to /opt/parakeet/config.env, then redeploy
+```
+
+Check it: `sudo docker compose logs browser applier` shows `sandbox on` and the applier's claims. To turn it off,
+remove `COMPOSE_PROFILES` and redeploy; prepared applications then wait for users' browsers.
+
 ## 9. Desktop app
 
 1. **Before the first public release**, set a permanent `identifier` in `apps/desktop/src-tauri/tauri.conf.json`

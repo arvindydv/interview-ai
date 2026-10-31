@@ -51,6 +51,7 @@ const schema = z.object({
   /** Jooble keys are issued for one country's site. */
   JOOBLE_HOST: z.string().default('jooble.org'),
   JOOBLE_CALLS_PER_SYNC: z.coerce.number().int().min(1).max(200).default(20),
+
 });
 
 // Empty values in .env mean "not set".

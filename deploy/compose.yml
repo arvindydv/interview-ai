@@ -1,4 +1,5 @@
-# Production stack for one server: Caddy (HTTPS) → web, admin, jobs, api; worker and Redis behind them.
+# Production stack for one server: Caddy (HTTPS) → web, admin, jobs, api; worker and Redis behind them, and
+# (profile cloud-apply) the Auto Apply browser and applier.
 # Run by deploy/deploy.sh, which sets TAG, reads DOMAIN / ACME_EMAIL / REGISTRY from
 # /opt/parakeet/config.env, and writes /opt/parakeet/env/{api,worker}.env from SSM Parameter Store.
 # Postgres + Auth are Supabase, not part of this stack.
@@ -76,6 +77,84 @@ services:
     stop_grace_period: 60s # let a running job (resume analysis, email) finish
     mem_limit: 384m
 
+  # Auto Apply from Friday's servers, in two containers so job boards' pages never run next to a secret.
+  # Off until COMPOSE_PROFILES=cloud-apply is in /opt/parakeet/config.env (it needs ~1 GB more memory
+  # than a t3.small has; see docs/DEPLOYMENT.md).
+  #
+  #   browser  Chromium only (apps/worker/src/browserServer.ts), sandboxed. No secrets but the path the
+  #            applier connects to; can reach the internet, not the API, Redis or the other services.
+  #   applier  takes applications from the API with its one token (APPLIER_TOKEN, valid only on
+  #            /v1/applier/*) and drives the browser. No database, Redis or other credentials.
+  browser:
+    <<: *service
+    profiles: [cloud-apply]
+    image: ${REGISTRY:?}/parakeet-worker:${TAG:?}
+    command: ["node", "dist/browserServer.js"]
+    env_file: ${PARAKEET_HOME:-/opt/parakeet}/env/browser.env
+    networks: [browser]
+    # Docker's default seccomp profile plus the three calls Chrome's sandbox needs.
+    security_opt:
+      - seccomp=./chromium-seccomp.json
+      - no-new-privileges:true
+    read_only: true
+    tmpfs: ["/tmp:size=256m", "/home/node:size=64m"]
+    shm_size: 512m
+    mem_limit: 1024m
+    stop_grace_period: 30s
+
+  applier:
+    <<: *service
+    profiles: [cloud-apply]
+    image: ${REGISTRY:?}/parakeet-worker:${TAG:?}
+    command: ["node", "dist/applier.js"]
+    env_file: ${PARAKEET_HOME:-/opt/parakeet}/env/applier.env
+    environment:
+      APPLIER_API_URL: http://api:4000
+      AUTO_APPLY_CLOUD_SLOTS: '2'
+      NODE_OPTIONS: --max-old-space-size=128
+    networks: [default, browser]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    depends_on:
+      api: { condition: service_healthy }
+      browser: { condition: service_started }
+    stop_grace_period: 9m # an application being sent finishes (runs are capped at 8 minutes)
+    mem_limit: 192m
+
+  redis: { condition: service_healthy }
+    stop_grace_period: 30s
+    mem_limit: 512m
+
+  worker:
+    <<: *service
+    image: ${REGISTRY:?}/parakeet-worker:${TAG:?}
+    env_file: ${PARAKEET_HOME:-/opt/parakeet}/env/worker.env
+    environment:
+      REDIS_URL: redis://redis:6379
+      NODE_OPTIONS: --max-old-space-size=256
+    depends_on:
+      redis: { condition: service_healthy }
+    stop_grace_period: 60s # let a running job (resume analysis, email) finish
+    mem_limit: 384m
+
+  # Auto Apply from Friday's servers: the worker image, its own process, as each application is a
+  # Chromium tab. Chrome's sandbox needs user namespaces, which Docker's default seccomp profile blocks,
+  # so it runs without one; this container holds nothing but what the worker has.
+  applier:
+    <<: *service
+    image: ${REGISTRY:?}/parakeet-worker:${TAG:?}
+    command: ["node", "dist/applier.js"]
+    env_file: ${PARAKEET_HOME:-/opt/parakeet}/env/worker.env
+    environment:
+      REDIS_URL: redis://redis:6379
+      AUTO_APPLY_CHROME_NO_SANDBOX: '1'
+      AUTO_APPLY_CLOUD_SLOTS: '2'
+    depends_on:
+      redis: { condition: service_healthy }
+    stop_grace_period: 60s # let an application being sent finish
+    shm_size: 512m
+    mem_limit: 1536m
+
   redis:
     <<: *service
     image: redis:7.4-alpine
@@ -93,3 +172,8 @@ volumes:
   caddy-data:
   caddy-config:
   redis-data:
+
+networks:
+  default: {}
+  # The browser's own network: internet access, and the applier, nothing else.
+  browser: {}

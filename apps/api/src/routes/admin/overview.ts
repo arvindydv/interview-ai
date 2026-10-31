@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Queue } from 'bullmq';
 import { ROUND_TYPES, type AdminOverview, type AdminSystem, type Breakdown, type DayPoint, type QueueStats } from '@parakeet/shared';
 import { audit, requireAdmin } from '../../lib/adminAuth.js';
+import { channelStats } from '../../lib/autoApplyReports.js';
 import { sql } from '../../lib/db.js';
 import { connectionCount, onlineUserIds } from '../../lib/liveRegistry.js';
 import { llmConfigured, resolveModels } from '../../lib/llm.js';
@@ -133,6 +134,7 @@ export default async function adminOverviewRoutes(app: FastifyInstance) {
         { label: 'Set up interview', value: funnel.interviews },
         { label: 'Got an answer', value: funnel.asked },
       ],
+      autoApply: await channelStats(30),
     };
   });
 

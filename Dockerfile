@@ -112,13 +112,15 @@ ARG NEXT_PUBLIC_JOBS_SITE_URL \
     NEXT_PUBLIC_SUPABASE_URL \
     NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY \
     NEXT_PUBLIC_TURNSTILE_SITE_KEY \
-    NEXT_PUBLIC_WEB_URL
+    NEXT_PUBLIC_WEB_URL \
+    NEXT_PUBLIC_EXTENSION_URL
 ENV NEXT_PUBLIC_SITE_URL=$NEXT_PUBLIC_JOBS_SITE_URL \
     NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL \
     NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL \
     NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=$NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY \
     NEXT_PUBLIC_TURNSTILE_SITE_KEY=$NEXT_PUBLIC_TURNSTILE_SITE_KEY \
-    NEXT_PUBLIC_WEB_URL=$NEXT_PUBLIC_WEB_URL
+    NEXT_PUBLIC_WEB_URL=$NEXT_PUBLIC_WEB_URL \
+    NEXT_PUBLIC_EXTENSION_URL=$NEXT_PUBLIC_EXTENSION_URL
 # Signed-in pages call the API and Supabase from the browser.
 RUN : "${NEXT_PUBLIC_API_URL:?build arg required}" \
       "${NEXT_PUBLIC_SUPABASE_URL:?build arg required}" \
@@ -154,15 +156,19 @@ FROM runtime AS worker
 # PyMuPDF and python-docx, and free fonts that stand in for common resume fonts (Calibri → Carlito,
 # Arial → Liberation Sans, Garamond → EB Garamond…) when a PDF embeds only some of a font's letters.
 # PyMuPDF 2 lists pymupdf4llm and onnxruntime as dependencies; the script doesn't use them.
+# Chromium is for Auto Apply from Friday's servers (src/applier.ts, the "applier" service), which runs
+# the extension's form filler; the same fonts render the job boards' pages.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends python3 python3-venv fontconfig fonts-liberation2 fonts-crosextra-carlito \
+ && apt-get install -y --no-install-recommends chromium python3 python3-venv fontconfig fonts-liberation2 fonts-crosextra-carlito \
       fonts-crosextra-caladea fonts-ebgaramond fonts-lato fonts-open-sans fonts-roboto fonts-dejavu-core \
  && rm -rf /var/lib/apt/lists/* \
  && python3 -m venv /opt/resume-py \
  && /opt/resume-py/bin/pip install --no-cache-dir --no-deps pymupdf==2.0 \
  && /opt/resume-py/bin/pip install --no-cache-dir python-docx==1.2.0
-ENV PYTHON_BIN=/opt/resume-py/bin/python
+ENV PYTHON_BIN=/opt/resume-py/bin/python \
+    AUTO_APPLY_CHROME=/usr/bin/chromium
 COPY --from=source /repo/apps/worker/python apps/worker/python
+COPY --from=source /repo/apps/extension/src/filler.js apps/extension/src/filler.js
 COPY --from=prod-deps-worker /repo ./
 COPY --from=build-node /repo/packages/shared/dist packages/shared/dist
 COPY --from=build-node /repo/packages/emails/dist packages/emails/dist

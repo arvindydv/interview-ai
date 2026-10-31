@@ -9,7 +9,7 @@ import { env } from '../env.js';
 import { bulkModel } from '../llm.js';
 import { answerForm } from '../autoapply/answers.js';
 import { FormUnavailableError, fetchForm } from '../autoapply/forms.js';
-import { createTailoring, pickResume, runTailoring } from './tailor.js';
+import { createTailoring, pickResume, resumeLinks, runTailoring } from './tailor.js';
 
 // Friday Jobs Auto Apply, prepared on the server so it carries on while the user's computer is off.
 //
@@ -18,10 +18,11 @@ import { createTailoring, pickResume, runTailoring } from './tailor.js';
 //   autoapply.plan { userId }: picks today's jobs (best matches at or above the user's minimum score,
 //     not applied to before, up to the daily limit) and queues each for preparation.
 //   autoapply.prepare { applicationId }: tailors the resume, reads the job board's form and answers it.
-//     Ends Prepared (ready for the extension to submit), Pending (needs the user), Failed or Skipped.
+//     Ends Prepared (ready for Friday's servers or the extension to submit), Pending (needs the user), Failed or Skipped.
 //
 // Every step is idempotent and records what it did in auto_apply_events, so a retried or resumed job
-// picks up where the last one stopped. Submission is done by the Friday extension through the API.
+// picks up where the last one stopped. Submission is done by Friday's servers (../applier.ts) or the
+// Friday extension through the API.
 
 export const AUTO_APPLY_QUEUE = 'autoapply';
 
@@ -56,11 +57,13 @@ async function setStatus(
   reasonCode: AutoApplyReason | null,
   reason: string | null,
 ) {
-  await sql`
+  // Only from Preparing: the user may have removed it meanwhile, and that stands.
+  const [row] = await sql<{ id: string }[]>`
     update public.auto_applications
-    set status = ${status}, reason_code = ${reasonCode}, reason = ${reason}, updated_at = now()
-    where id = ${id}`;
-  await logEvent(id, userId, status, reason ?? `Marked ${status}`);
+    set status = ${status}, reason_code = ${reasonCode}, reason = ${reason}, claimed_by = null, claimed_at = null, updated_at = now()
+    where id = ${id} and status = 'preparing'
+    returning id`;
+  if (row) await logEvent(id, userId, status, reason ?? `Marked ${status}`);
 }
 
 async function prepareJob(id: string, delay = 0) {
@@ -80,30 +83,40 @@ async function tick() {
     await prepareJob(a.id);
   }
 
-  // Submissions the extension claimed but never reported: back to Prepared for another try.
-  const lapsed = await sql<{ id: string; user_id: string }[]>`
+  // Submissions claimed but never reported: back to Prepared for another try. Not once Friday's servers
+  // pressed submit: the job board may have it, so the user is asked to confirm instead of it going twice.
+  const lapsed = await sql<{ id: string; user_id: string; clicked: boolean }[]>`
     update public.auto_applications
-    set status = 'prepared', reason_code = null, reason = null, claimed_by = null, claimed_at = null, updated_at = now()
+    set status = case when submit_clicked_at is null then 'prepared' else 'pending' end,
+        reason_code = case when submit_clicked_at is null then null else 'unverified' end,
+        reason = case when submit_clicked_at is null then null
+                      else 'Sent, but we couldn’t see the job board’s confirmation. Check your email for one, then confirm it here.' end,
+        claimed_by = null, claimed_at = null, updated_at = now()
     where status = 'pending' and reason_code = 'submitting'
       and claimed_at < now() - make_interval(mins => ${CLAIM_LEASE_MIN})
-    returning id, user_id`;
-  for (const a of lapsed) await logEvent(a.id, a.user_id, 'lease_expired', 'The browser stopped before finishing; it will be tried again');
+    returning id, user_id, submit_clicked_at is not null as clicked`;
+  for (const a of lapsed) {
+    if (a.clicked) await logEvent(a.id, a.user_id, 'unverified', 'Stopped after submitting; no confirmation seen');
+    else await logEvent(a.id, a.user_id, 'lease_expired', 'Submitting stopped before finishing; it will be tried again');
+  }
 
-  // The job was taken down: nothing to apply to.
+  // The job was taken down: nothing to apply to. Not ones being sent, nor ones already sent that wait
+  // for the user to confirm (the job board has them; closing the listing doesn't undo that).
   const closed = await sql<{ id: string; user_id: string }[]>`
     update public.auto_applications a
     set status = 'skipped', reason_code = 'listing_closed', reason = 'The job is no longer listed.', updated_at = now()
-    where a.status in ('preparing', 'prepared', 'pending') and coalesce(a.reason_code, '') <> 'submitting'
+    where a.status in ('preparing', 'prepared', 'pending') and coalesce(a.reason_code, '') not in ('submitting', 'unverified')
       and not exists (select 1 from public.job_listings l where l.id = a.listing_id and l.closed_at is null)
     returning id, user_id`;
   for (const a of closed) await logEvent(a.id, a.user_id, 'skipped', 'The job is no longer listed.');
 
-  // Prepared but never submitted (the browser hasn't been opened in a week).
+  // Prepared but never submitted (the browser hasn't been opened in a week). Counted from when it was
+  // last touched, so one the user retries isn't expired again straight away.
   const expired = await sql<{ id: string; user_id: string }[]>`
     update public.auto_applications
     set status = 'skipped', reason_code = 'expired',
         reason = ${`Not submitted within ${AUTO_APPLY_LIMITS.expireDays} days.`}, updated_at = now()
-    where status = 'prepared' and created_at < now() - make_interval(days => ${AUTO_APPLY_LIMITS.expireDays})
+    where status = 'prepared' and updated_at < now() - make_interval(days => ${AUTO_APPLY_LIMITS.expireDays})
     returning id, user_id`;
   for (const a of expired) await logEvent(a.id, a.user_id, 'skipped', 'Expired before it was submitted.');
 
@@ -227,7 +240,7 @@ interface PrepareRow {
   closed: boolean | null;
 }
 
-async function prepare(job: Job<{ applicationId: string }>) {
+export async function prepare(job: Job<{ applicationId: string }>) {
   const id = job.data.applicationId;
   const lastAttempt = job.attemptsMade + 1 >= (job.opts.attempts ?? 1);
   const [app] = await sql<PrepareRow[]>`
@@ -240,7 +253,15 @@ async function prepare(job: Job<{ applicationId: string }>) {
   if (!app) return { skipped: 'deleted' };
   if (app.status !== 'preparing') return { skipped: `status ${app.status}` };
   const userId = app.user_id;
-  await sql`update public.auto_applications set attempts = attempts + 1, updated_at = now() where id = ${id}`;
+  // One preparation at a time: the stall sweeper, a retry or the user can queue another while one runs,
+  // and two would tailor (and pay for) the same application twice. The lease lapses with the sweeper.
+  const [mine] = await sql<{ id: string }[]>`
+    update public.auto_applications
+    set attempts = attempts + 1, claimed_by = ${`worker:${job.id ?? 'direct'}`}, claimed_at = now(), updated_at = now()
+    where id = ${id} and status = 'preparing'
+      and (claimed_at is null or claimed_at < now() - make_interval(mins => ${STALLED_PREPARE_MIN}))
+    returning id`;
+  if (!mine) return { skipped: 'already being prepared' };
 
   if (!app.listing_id || app.closed || !app.board || !app.external_id) {
     await setStatus(id, userId, 'skipped', 'listing_closed', 'The job is no longer listed.');
@@ -292,10 +313,10 @@ async function prepare(job: Job<{ applicationId: string }>) {
     // Answered from the same resume the tailoring used.
     const [ctx] = await sql<{
       profile: Partial<ApplicationProfile> | null; resume_profile: ResumeProfile | null; resume_text: string; file_name: string | null;
-      cover_letter: string | null;
+      cover_letter: string | null; resume_file: Buffer | null;
     }[]>`
       select p.data as profile, coalesce(j.parsed_json, r.parsed_json) as resume_profile, coalesce(j.text, r.text) as resume_text,
-             t.file_name, t.cover_letter
+             t.file_name, t.cover_letter, coalesce(j.file, r.file) as resume_file
       from public.tailored_resumes t
       left join public.resumes r on r.id = t.resume_id
       left join public.job_resumes j on j.id = t.job_resume_id
@@ -310,6 +331,7 @@ async function prepare(job: Job<{ applicationId: string }>) {
       coverLetter: ctx.cover_letter
         ? { text: ctx.cover_letter, fileName: (ctx.file_name ?? 'Resume.pdf').replace(/Resume/, 'Cover Letter').replace(/\.docx$/i, '.pdf') }
         : null,
+      resumeLinks: await resumeLinks(ctx.resume_file),
       model,
     });
     await sql`
@@ -334,6 +356,8 @@ async function prepare(job: Job<{ applicationId: string }>) {
     if (err instanceof UnrecoverableError || lastAttempt) {
       await setStatus(id, userId, 'failed', 'form_unavailable', `Preparation failed: ${(err as Error).message.slice(0, 200)}`);
     } else {
+      // Let the queue's retry take it straight away.
+      await sql`update public.auto_applications set claimed_by = null, claimed_at = null where id = ${id}`;
       await logEvent(id, userId, 'retry', `Attempt ${job.attemptsMade + 1} failed; retrying`, { error: (err as Error).message.slice(0, 500) });
     }
     throw err;

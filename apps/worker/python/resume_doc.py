@@ -5,6 +5,10 @@
         each with the character range a rewrite must fit in. Units marked fixed (names, headings, titles,
         dates, links) are context only.
 
+    resume_doc.py links <file> <pdf|docx>
+        Prints {"links": [...]}: the web addresses the resume links to (often behind words like
+        "LinkedIn" or "GitHub", so they're missing from its text).
+
     resume_doc.py coverletter <letter.json> <out.pdf>
         letter: {"name", "contact": [..], "date", "body": "paragraphs separated by blank lines"}. Writes a
         plain one-page A4 letter.
@@ -708,6 +712,16 @@ def main():
 
             units = docx_units(docx.Document(path))
         print(json.dumps({"units": public(units)}))
+    elif cmd == "links":
+        if fmt == "pdf":
+            import pymupdf
+
+            uris = [link.get("uri") for page in pymupdf.open(path) for link in page.get_links()]
+        else:
+            import docx
+
+            uris = [r.target_ref for r in docx.Document(path).part.rels.values() if r.is_external]
+        print(json.dumps({"links": list(dict.fromkeys(u for u in uris if u and u.startswith("http")))}))
     elif cmd == "render":
         with open(sys.argv[4]) as f:
             plan = json.load(f)

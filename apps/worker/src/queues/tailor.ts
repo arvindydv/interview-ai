@@ -41,6 +41,22 @@ async function doc<T>(args: string[]): Promise<T> {
   return JSON.parse(stdout) as T;
 }
 
+/** The web addresses a resume file links to (LinkedIn, GitHub…), which its text often only names. */
+export async function resumeLinks(file: Buffer | null): Promise<string[]> {
+  const format = file ? formatOf(file) : null;
+  if (!file || !format) return [];
+  const dir = await mkdtemp(join(tmpdir(), 'resume-links-'));
+  try {
+    const path = join(dir, `resume.${format}`);
+    await writeFile(path, file);
+    return (await doc<{ links: string[] }>(['links', path, format])).links;
+  } catch {
+    return [];
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
 /** PDF and DOCX by their first bytes (the stored MIME type is whatever the browser sent). */
 function formatOf(file: Buffer): 'pdf' | 'docx' | null {
   if (file.subarray(0, 5).toString('latin1') === '%PDF-') return 'pdf';

@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { AlertCircle, ChevronDown, ExternalLink, FileText, RotateCcw, Trash2 } from 'lucide-react';
 import {
-  AUTO_APPLY_STATUS_LABELS, type AutoApplication, type AutoApplicationDetail, type AutoApplyStatus, type FormQuestion,
+  AUTO_APPLY_STATUS_LABELS, profileQuestionFor, type AutoApplication, type AutoApplicationDetail, type AutoApplyStatus, type FormQuestion,
 } from '@parakeet/shared';
 import { Spinner } from './ui';
 import { api } from '@/lib/api';
@@ -13,7 +13,7 @@ import { timeAgo } from '@/lib/format';
 
 export const TABS: { id: AutoApplyStatus; hint: string }[] = [
   { id: 'pending', hint: 'Being submitted, or waiting for you' },
-  { id: 'prepared', hint: 'Ready; your browser submits these' },
+  { id: 'prepared', hint: 'Ready; Friday or your browser submits these' },
   { id: 'submitted', hint: 'The job board confirmed them' },
   { id: 'preparing', hint: 'Tailoring the resume and answering the form' },
   { id: 'failed', hint: 'Couldn’t be prepared or submitted' },
@@ -51,7 +51,7 @@ function AnswerForm({ id, questions, onDone }: { id: string; questions: FormQues
     <div className="mt-3 space-y-3 rounded-xl border border-amber-200 bg-amber-50/40 p-3">
       <p className="text-xs text-muted">Only you can answer these. Your answers are saved for the same question on other forms.</p>
       {questions.map((q) => (
-        <label key={q.key} className="block text-sm">
+        <div key={q.key} className="block text-sm">
           <span className="font-medium">{q.label}</span>
           {q.description && <span className="mt-0.5 block text-xs text-muted">{q.description}</span>}
           <div className="mt-1.5">
@@ -80,13 +80,21 @@ function AnswerForm({ id, questions, onDone }: { id: string; questions: FormQues
                   <option key={o}>{o}</option>
                 ))}
               </select>
+            ) : q.type === 'checkbox' ? (
+              <select value={(values[q.key] as string) ?? ''} onChange={(e) => setValues({ ...values, [q.key]: e.target.value })} className="input !py-2">
+                <option value="" disabled>
+                  Choose…
+                </option>
+                <option>Yes</option>
+                <option>No</option>
+              </select>
             ) : q.type === 'textarea' ? (
               <textarea rows={3} value={(values[q.key] as string) ?? ''} onChange={(e) => setValues({ ...values, [q.key]: e.target.value })} className="input" />
             ) : (
               <input value={(values[q.key] as string) ?? ''} onChange={(e) => setValues({ ...values, [q.key]: e.target.value })} className="input !py-2" />
             )}
           </div>
-        </label>
+        </div>
       ))}
       {error && <p className="text-xs text-danger">{error}</p>}
       <button onClick={submit} disabled={busy} className="btn btn-brand !py-1.5 !text-xs">
@@ -96,12 +104,15 @@ function AnswerForm({ id, questions, onDone }: { id: string; questions: FormQues
   );
 }
 
-function Row({ app, onChange }: { app: AutoApplication; onChange: () => void }) {
+function Row({ app, onChange, onOpenProfile }: { app: AutoApplication; onChange: () => void; onOpenProfile: () => void }) {
   const [open, setOpen] = useState(false);
   const [detail, setDetail] = useState<AutoApplicationDetail | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const needsAnswers = app.status === 'pending' && app.reasonCode === 'needs_answers' && app.missing.length > 0;
+  // Questions the profile answers (notice period, salary, links…) are answered once there, never here.
+  const profileQuestions = [...new Set(app.missing.map((q) => profileQuestionFor(q.label)).filter((q): q is string => q !== null))];
+  const ownQuestions = app.missing.filter((q) => !profileQuestionFor(q.label));
 
   useEffect(() => {
     if (open && !detail) api<AutoApplicationDetail>(`/v1/auto-apply/applications/${app.id}`).then(setDetail, () => {});
@@ -142,12 +153,28 @@ function Row({ app, onChange }: { app: AutoApplication; onChange: () => void }) 
         <span className={`shrink-0 rounded-md px-2 py-0.5 text-xs font-medium ${TONE[app.status]}`}>{AUTO_APPLY_STATUS_LABELS[app.status]}</span>
       </div>
 
-      {needsAnswers && <AnswerForm id={app.id} questions={app.missing} onDone={onChange} />}
+      {needsAnswers && profileQuestions.length > 0 && (
+        <div className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-amber-200 bg-amber-50/40 p-3 text-sm">
+          <p className="min-w-0 flex-1">
+            <span className="font-medium">Add to your profile once: {profileQuestions.join(', ')}.</span>{' '}
+            <span className="text-muted">Every application uses it, and this one goes ahead on its own.</span>
+          </p>
+          <button onClick={onOpenProfile} className="btn btn-brand !py-1.5 !text-xs">
+            Fill in profile
+          </button>
+        </div>
+      )}
+      {needsAnswers && ownQuestions.length > 0 && <AnswerForm id={app.id} questions={ownQuestions} onDone={onChange} />}
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
         {app.status === 'pending' && app.reasonCode === 'unverified' && (
           <button disabled={busy} onClick={() => act('confirm')} className="btn btn-brand !py-1.5 !text-xs">
             I got the confirmation
+          </button>
+        )}
+        {app.status === 'pending' && (app.reasonCode === 'captcha' || app.reasonCode === 'login_required') && (
+          <button disabled={busy} onClick={() => act('confirm')} className="btn btn-secondary !py-1.5 !text-xs">
+            I sent it myself
           </button>
         )}
         {app.status === 'pending' && (app.reasonCode === 'captcha' || app.reasonCode === 'login_required' || app.reasonCode === 'unverified') && (
@@ -218,7 +245,7 @@ function Row({ app, onChange }: { app: AutoApplication; onChange: () => void }) 
 /** Matches the API's page size. */
 const PAGE_SIZE = 30;
 
-export function AutoApplyList({ status, onChange }: { status: AutoApplyStatus; onChange: () => void }) {
+export function AutoApplyList({ status, onChange, onOpenProfile }: { status: AutoApplyStatus; onChange: () => void; onOpenProfile: () => void }) {
   const [items, setItems] = useState<AutoApplication[] | null>(null);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
@@ -257,6 +284,7 @@ export function AutoApplyList({ status, onChange }: { status: AutoApplyStatus; o
           <Row
             key={a.id}
             app={a}
+            onOpenProfile={onOpenProfile}
             onChange={() => {
               load();
               onChange();

@@ -1,7 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { Check, Plus, X } from 'lucide-react';
-import type { ApplicationProfile, WorkAuthorization } from '@parakeet/shared';
+import { commonQuestions, type ApplicationProfile, type WorkAuthorization } from '@parakeet/shared';
 import { Spinner } from './ui';
 import { api } from '@/lib/api';
 
@@ -18,6 +18,7 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
   );
 }
 
+const splitList = (s: string) => [...new Set(s.split(',').map((x) => x.trim()).filter(Boolean))].slice(0, 20);
 const yesNo = (v: boolean | null) => (v === null ? '' : v ? 'yes' : 'no');
 const fromYesNo = (v: string) => (v === '' ? null : v === 'yes');
 
@@ -29,15 +30,34 @@ export function AutoApplyProfile({ initial, onSaved }: { initial: ApplicationPro
   const set = <K extends keyof ApplicationProfile>(k: K, v: ApplicationProfile[K]) => setP((x) => ({ ...x, [k]: v }));
   const setAuth = (i: number, patch: Partial<WorkAuthorization>) =>
     set('workAuthorization', p.workAuthorization.map((w, j) => (j === i ? { ...w, ...patch } : w)));
-  const text = (k: 'firstName' | 'lastName' | 'email' | 'phone' | 'city' | 'country' | 'linkedin' | 'github' | 'portfolio' | 'website' | 'currentSalary' | 'expectedSalary' | 'earliestStart' | 'gender', placeholder = '') => (
-    <input value={p[k]} onChange={(e) => set(k, e.target.value)} placeholder={placeholder} className="input" />
+  const text = (
+    k: 'firstName' | 'lastName' | 'email' | 'phone' | 'city' | 'country' | 'linkedin' | 'github' | 'portfolio' | 'website' | 'currentSalary' |
+      'expectedSalary' | 'earliestStart' | 'gender' | 'preferredName' | 'pronouns' | 'hometown',
+    placeholder = '',
+  ) => <input value={p[k]} onChange={(e) => set(k, e.target.value)} placeholder={placeholder} className="input" />;
+  /** A yes/no question, or "ask me each time". */
+  const choice = (
+    k: 'willingToRelocate' | 'willingToTravel' | 'securityClearance' | 'recordingConsent' | 'backgroundCheckConsent',
+    label: string,
+    [yes, no] = ['Yes', 'No'],
+  ) => (
+    <Field label={label}>
+      <select value={yesNo(p[k])} onChange={(e) => set(k, fromYesNo(e.target.value))} className="input">
+        <option value="">Ask me each time</option>
+        <option value="yes">{yes}</option>
+        <option value="no">{no}</option>
+      </select>
+    </Field>
   );
+  const [languages, setLanguages] = useState(initial.languages.join(', '));
+  const common = commonQuestions({ ...p, languages: splitList(languages) });
+  const answered = common.filter((q) => q.answered).length;
 
   async function save() {
     setBusy(true);
     setError(null);
     try {
-      const next = await api<ApplicationProfile>('/v1/auto-apply/profile', { method: 'PUT', body: JSON.stringify(p) });
+      const next = await api<ApplicationProfile>('/v1/auto-apply/profile', { method: 'PUT', body: JSON.stringify({ ...p, languages: splitList(languages) }) });
       setP(next);
       onSaved(next);
       setSaved(true);
@@ -97,31 +117,97 @@ export function AutoApplyProfile({ initial, onSaved }: { initial: ApplicationPro
             <Plus size={14} /> Add a country
           </button>
         </div>
+        <label className="mt-3 block text-sm">
+          <span className="font-medium">Every other country</span>
+          <select
+            value={p.otherCountries === null ? '' : p.otherCountries.authorized ? 'authorized' : 'sponsorship'}
+            onChange={(e) =>
+              set(
+                'otherCountries',
+                e.target.value === ''
+                  ? null
+                  : { authorized: e.target.value === 'authorized', needsSponsorship: e.target.value === 'sponsorship' },
+              )
+            }
+            className="input mt-1.5"
+          >
+            <option value="">Ask me each time</option>
+            <option value="sponsorship">Not allowed to work; I’d need visa sponsorship</option>
+            <option value="authorized">Allowed to work without sponsorship</option>
+          </select>
+        </label>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Notice period" hint="days">
-          <input
-            type="number"
-            min={0}
-            max={365}
-            value={p.noticePeriodDays ?? ''}
-            onChange={(e) => set('noticePeriodDays', e.target.value === '' ? null : Math.max(0, Math.min(365, Number(e.target.value))))}
-            className="input"
-          />
-        </Field>
-        <Field label="Can start" hint="e.g. Immediately">{text('earliestStart')}</Field>
-        <Field label="Current salary" hint="optional">{text('currentSalary', '₹18 LPA')}</Field>
-        <Field label="Expected salary" hint="optional">{text('expectedSalary', '₹25 LPA')}</Field>
-        <Field label="Willing to relocate">
-          <select value={yesNo(p.willingToRelocate)} onChange={(e) => set('willingToRelocate', fromYesNo(e.target.value))} className="input">
-            <option value="">Ask me each time</option>
-            <option value="yes">Yes</option>
-            <option value="no">No</option>
-          </select>
-        </Field>
-        <Field label="Gender" hint="optional; diversity questions are declined otherwise">{text('gender')}</Field>
+      <div>
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <p className="text-sm font-medium">Common questions</p>
+          <span className={`text-xs font-medium ${answered === common.length ? 'text-brand' : 'text-amber-700'}`}>
+            {answered} of {common.length} answered
+          </span>
+        </div>
+        <p className="mt-0.5 text-xs text-muted">
+          Forms ask these again and again. Answer them once and Friday fills them in everywhere instead of stopping to ask you.
+        </p>
+        <div className="mt-3 grid gap-4 sm:grid-cols-2">
+          <Field label="Notice period" hint="days; 0 if you can join now">
+            <input
+              type="number"
+              min={0}
+              max={365}
+              value={p.noticePeriodDays ?? ''}
+              onChange={(e) => set('noticePeriodDays', e.target.value === '' ? null : Math.max(0, Math.min(365, Number(e.target.value))))}
+              className="input"
+            />
+          </Field>
+          <Field label="Can start" hint="e.g. Immediately">{text('earliestStart')}</Field>
+          <Field label="Current salary (CTC)" hint="with currency">{text('currentSalary', '₹18 LPA')}</Field>
+          <Field label="Expected salary (CTC)" hint="with currency">{text('expectedSalary', '₹25 LPA')}</Field>
+          <div className="block">
+            <span className="text-sm font-medium">Work arrangements you accept</span>
+            <div className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1.5 text-sm">
+              {(['remote', 'hybrid', 'onsite'] as const).map((w) => (
+                <label key={w} className="flex items-center gap-1.5">
+                  <input
+                    type="checkbox"
+                    checked={p.workplaces.includes(w)}
+                    onChange={(e) => set('workplaces', e.target.checked ? [...p.workplaces, w] : p.workplaces.filter((x) => x !== w))}
+                  />
+                  {w === 'onsite' ? 'In the office' : w === 'hybrid' ? 'Hybrid' : 'Remote'}
+                </label>
+              ))}
+            </div>
+          </div>
+          <Field label="Languages you can work in" hint="comma-separated">
+            <input
+              value={languages}
+              onChange={(e) => setLanguages(e.target.value)}
+              onBlur={() => set('languages', splitList(languages))}
+              placeholder="English, Hindi"
+              className="input"
+            />
+          </Field>
+          {choice('willingToRelocate', 'Willing to relocate')}
+          {choice('willingToTravel', 'Willing to travel for work')}
+          <Field label="Home town" hint="Indian forms ask for a home state">{text('hometown', 'Lucknow, Uttar Pradesh')}</Field>
+          {choice('securityClearance', 'Hold a government security clearance', ['Yes, I hold one', 'No'])}
+          {choice('recordingConsent', 'OK with interviews being recorded or transcribed', ['Yes', 'No'])}
+          {choice('backgroundCheckConsent', 'OK with a background check if offered the job', ['Yes', 'No'])}
+          <Field label="Preferred name" hint="optional">{text('preferredName')}</Field>
+          <Field label="Pronouns" hint="optional">{text('pronouns', 'she/her')}</Field>
+          <Field label="Gender" hint="optional; diversity questions are declined otherwise">{text('gender')}</Field>
+        </div>
       </div>
+
+      <label className="flex items-start gap-3 rounded-xl border border-line p-3.5 text-sm">
+        <input type="checkbox" checked={p.letAiDecide} onChange={(e) => set('letAiDecide', e.target.checked)} className="mt-0.5" />
+        <span>
+          <span className="font-medium">Let Friday answer judgment questions from my resume</span>
+          <span className="mt-0.5 block text-xs text-muted">
+            Questions about how you work or which role fits you best, and open questions it can answer from your real experience.
+            Facts about you (salary, visas, clearances, consents) only ever come from this profile or from you.
+          </span>
+        </span>
+      </label>
 
       {p.savedAnswers.length > 0 && (
         <div>

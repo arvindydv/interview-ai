@@ -15,7 +15,8 @@ export const viewport: Viewport = { themeColor: '#f6f7f9' };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en-IN">
+    // The Friday extension marks <html> (data-friday-extension) before React hydrates it.
+    <html lang="en-IN" suppressHydrationWarning>
       <body className="min-h-screen">{children}</body>
     </html>
   );

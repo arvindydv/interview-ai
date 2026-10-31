@@ -1,24 +1,27 @@
-import type { FastifyInstance } from 'fastify';
+import { randomBytes } from 'node:crypto';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import {
   AUTO_APPLY_LIMITS, AUTO_APPLY_PROVIDERS, AUTO_APPLY_STATUSES, EMPTY_APPLICATION_PROFILE, JOBS_PLANS, activeJobsPlan, autoApplyUrl,
   missingProfileFields, type ApplicationProfile, type JobsAnalytics, type JobsPlan, type JobsPlanStatus, type SwipeCard, type SwipeResult,
   type AutoApplication, type AutoApplicationDetail, type AutoApplyOverview, type AutoApplyProvider, type AutoApplyReason,
-  type AutoApplySettings, type AutoApplyStatus, type AutoApplyTask, type FormQuestion, type PreparedAnswer,
+  type AutoApplySettings, type AutoApplyStatus, type AutoApplyTask, type FormQuestion, type PreparedAnswer, type AutoApplyDevice,
+  type AutoApplyDeviceToken, type ResumeProfile,
 } from '@parakeet/shared';
-import { requireAuth } from '../lib/auth.js';
+import { AuthError, DEVICE_TOKEN_PREFIX, authenticateDevice, hashDeviceToken, requireAuth } from '../lib/auth.js';
 import { sql } from '../lib/db.js';
+import { APPLIER_CLAIM_PREFIX } from './applier.js';
+import { applyReport, channelStats, event, markApplied } from '../lib/autoApplyReports.js';
 import { queueAutoApply } from '../lib/queues.js';
 import { ensureUser } from '../lib/users.js';
 
 // Friday Jobs Auto Apply (packages/shared/src/autoApply.ts). The worker prepares applications
-// (apps/worker/src/queues/autoApply.ts); the user manages them here, and the Friday extension claims
+// (apps/worker/src/queues/autoApply.ts); the user manages them here. Friday's servers submit what they
+// can (apps/worker/src/applier.ts, straight against the database), and the Friday extension claims
 // prepared ones, submits them from the user's browser and reports what the job board said.
 
 /** Minutes the extension has to report on an application it claimed (matches the worker's sweeper). */
 const CLAIM_LEASE_MIN = 15;
-/** Submission attempts before an application is marked Failed. */
-const MAX_SUBMIT_ATTEMPTS = 3;
 
 interface SettingsRow {
   enabled: boolean;
@@ -27,9 +30,10 @@ interface SettingsRow {
   daily_limit: number;
   timezone: string;
   consented_at: Date | null;
+  cloud_submit: boolean;
 }
 
-const SETTINGS_COLUMNS = sql`enabled, mode, min_score, daily_limit, timezone, consented_at`;
+const SETTINGS_COLUMNS = sql`enabled, mode, min_score, daily_limit, timezone, consented_at, cloud_submit`;
 
 const toSettings = (r: SettingsRow | undefined, plan: JobsPlan): AutoApplySettings => ({
   enabled: r?.enabled ?? false,
@@ -39,6 +43,7 @@ const toSettings = (r: SettingsRow | undefined, plan: JobsPlan): AutoApplySettin
   dailyLimit: Math.min(r?.daily_limit ?? plan.dailyApplications, plan.dailyApplications),
   timezone: r?.timezone ?? 'Asia/Kolkata',
   consentedAt: r?.consented_at?.toISOString() ?? null,
+  cloudSubmit: r?.cloud_submit ?? true,
 });
 
 interface AppRow {
@@ -102,6 +107,7 @@ const settingsBody = z.object({
     .optional(),
   /** The user agrees to applications being sent in their name. */
   consent: z.literal(true).optional(),
+  cloudSubmit: z.boolean().optional(),
 });
 
 const profileBody = z.object({
@@ -124,8 +130,19 @@ const profileBody = z.object({
   willingToRelocate: z.boolean().nullable(),
   earliestStart: text(80),
   gender: text(60),
+  preferredName: text(80).default(''),
+  pronouns: text(40).default(''),
+  hometown: text(120).default(''),
+  languages: z.array(text(40).min(1)).max(20).default([]),
+  otherCountries: z.object({ authorized: z.boolean(), needsSponsorship: z.boolean() }).nullable().default(null),
+  workplaces: z.array(z.enum(['remote', 'hybrid', 'onsite'])).max(3).default([]),
+  willingToTravel: z.boolean().nullable().default(null),
+  securityClearance: z.boolean().nullable().default(null),
+  recordingConsent: z.boolean().nullable().default(null),
+  backgroundCheckConsent: z.boolean().nullable().default(null),
+  letAiDecide: z.boolean().default(true),
   savedAnswers: z.array(z.object({ question: text(500).min(1), answer: text(2000) })).max(300),
-}) satisfies z.ZodType<ApplicationProfile>;
+}) satisfies z.ZodType<ApplicationProfile, unknown>;
 
 const answersBody = z.object({
   answers: z.record(z.string().max(300), z.union([text(4000), z.array(text(300)).max(50)])),
@@ -133,6 +150,8 @@ const answersBody = z.object({
 
 const reportBody = z.object({
   outcome: z.enum(['submitted', 'captcha', 'login_required', 'needs_answers', 'failed']),
+  /** The job board's submit button had been pressed (older extensions don't say). */
+  afterSubmit: z.boolean().optional(),
   evidence: z.object({ url: z.string().max(2000), text: z.string().max(5000) }).optional(),
   unanswered: z.array(z.string().max(500)).max(50).optional(),
   message: z.string().max(1000).optional(),
@@ -140,51 +159,45 @@ const reportBody = z.object({
 
 const claimBody = z.object({ device: z.string().min(1).max(100) });
 
-/**
- * What each job board shows once it has the application. Submissions count only when the page the
- * browser landed on matches, so a form that silently failed is never marked Submitted.
- */
-const CONFIRMATION: Record<AutoApplyProvider, { url: RegExp; text: RegExp }> = {
-  greenhouse: {
-    url: /greenhouse\.io\/.*(confirmation|thank)/i,
-    text: /thank you for applying|application (has been )?(received|submitted)|we('ve| have) received your application/i,
-  },
-  lever: {
-    url: /lever\.co\/[^/]+\/[^/]+\/thanks/i,
-    text: /application submitted|thank(s| you) for applying|we('ve| have) received your application/i,
-  },
-  ashby: {
-    url: /ashbyhq\.com\/.*(submitted|confirmation)/i,
-    text: /application (was )?(successfully )?submitted|thank(s| you) for (applying|submitting)|we('ve| have) received your application/i,
-  },
-  // Not yet seen live on these three; a miss only means the user is asked to confirm.
-  workable: {
-    url: /workable\.com\/.*(success|thank|submitted)/i,
-    text: /thank(s| you) for (applying|your application)|application (has been |was )?(successfully )?(submitted|received)/i,
-  },
-  smartrecruiters: {
-    url: /smartrecruiters\.com\/.*(success|thank|confirmation)/i,
-    text: /thank(s| you) for (applying|your application)|application (has been |was )?(successfully )?(submitted|received)/i,
-  },
-  workday: {
-    url: /myworkdayjobs\.com\/.*(applicationSubmitted|submitted)/i,
-    text: /application submitted|thank(s| you) for applying|your application (has been|was) (submitted|received)/i,
-  },
-};
+const deviceBody = z.object({ name: z.string().trim().min(1).max(80) });
 
-export function verifySubmission(provider: AutoApplyProvider, evidence: { url: string; text: string } | undefined) {
-  if (!evidence) return false;
-  const c = CONFIRMATION[provider];
-  return c.url.test(evidence.url) || c.text.test(evidence.text);
+/** What the extension may call with its device token; everything else needs the user's session. */
+const DEVICE_ROUTES = new Set([
+  '/v1/auto-apply/claim',
+  '/v1/auto-apply/device',
+  // Only as /devices/self: the extension disconnecting itself.
+  '/v1/auto-apply/devices/:id',
+  '/v1/auto-apply/applications/:id/resume',
+  '/v1/auto-apply/applications/:id/cover-letter',
+  '/v1/auto-apply/applications/:id/report',
+]);
+
+/** The user's session, or (on the extension's routes only) a device token. */
+async function requireUserOrDevice(req: FastifyRequest, reply: FastifyReply) {
+  const header = req.headers.authorization;
+  if (!header?.startsWith(`Bearer ${DEVICE_TOKEN_PREFIX}`)) return requireAuth(req, reply);
+  const route = req.routeOptions.url ?? '';
+  if (!DEVICE_ROUTES.has(route) || (route.endsWith('/devices/:id') && (req.params as { id?: string }).id !== 'self')) {
+    return reply.code(403).send({ error: 'forbidden', message: 'The extension can’t do this.' });
+  }
+  try {
+    const { deviceId, ...user } = await authenticateDevice(header.slice(7));
+    req.user = user;
+    req.deviceId = deviceId;
+  } catch (err) {
+    if (err instanceof AuthError) return reply.code(err.status).send({ error: err.code, message: err.message });
+    throw err;
+  }
 }
+
+const toDevice = (r: { id: string; name: string; created_at: Date; last_seen_at: Date | null }): AutoApplyDevice => ({
+  id: r.id,
+  name: r.name,
+  createdAt: r.created_at.toISOString(),
+  lastSeenAt: r.last_seen_at?.toISOString() ?? null,
+});
 
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
-
-async function event(applicationId: string, userId: string, kind: string, message: string, detail?: unknown) {
-  await sql`
-    insert into public.auto_apply_events (application_id, user_id, kind, message, detail)
-    values (${applicationId}, ${userId}, ${kind}, ${message}, ${detail === undefined ? null : sql.json(detail as never)})`;
-}
 
 /** The user's Friday Jobs plan (free once a paid one runs out). */
 async function userPlan(userId: string): Promise<{ plan: JobsPlan; expiresAt: Date | null }> {
@@ -224,11 +237,11 @@ async function blockers(userId: string, profile: ApplicationProfile, settings: A
 }
 
 export default async function autoApplyRoutes(app: FastifyInstance) {
-  app.addHook('preHandler', requireAuth);
+  app.addHook('preHandler', requireUserOrDevice);
 
   app.get('/v1/auto-apply', async (req): Promise<AutoApplyOverview> => {
     const userId = req.user.id;
-    const [[settingsRow], profile, counts, { plan, expiresAt }] = await Promise.all([
+    const [[settingsRow], profile, counts, { plan, expiresAt }, devices] = await Promise.all([
       sql<SettingsRow[]>`select ${SETTINGS_COLUMNS} from public.auto_apply_settings where user_id = ${userId}`,
       loadProfile(userId),
       sql<{ status: AutoApplyStatus; n: number; today: number; needs: number }[]>`
@@ -239,19 +252,31 @@ export default async function autoApplyRoutes(app: FastifyInstance) {
         left join public.auto_apply_settings s on s.user_id = a.user_id
         where a.user_id = ${userId} group by a.status`,
       userPlan(userId),
+      sql<{ id: string; name: string; created_at: Date; last_seen_at: Date | null }[]>`
+        select id, name, created_at, last_seen_at from public.auto_apply_devices
+        where user_id = ${userId} and revoked_at is null
+        order by last_seen_at desc nulls last, created_at desc`,
     ]);
     const settings = toSettings(settingsRow, plan);
-    // Prefill the profile from the account and resume the first time.
+    const missing = await blockers(userId, profile, settings);
+    // Until the user saves it, the profile is filled in from their account and resume for them to check.
+    const [saved] = await sql<{ n: number }[]>`select 1 as n from public.application_profiles where user_id = ${userId}`;
+    if (!saved) {
+      const [resume] = await sql<{ text: string; parsed: ResumeProfile | null }[]>`
+        select text, parsed_json as parsed from public.resumes where user_id = ${userId} order by created_at desc limit 1`;
+      if (resume) Object.assign(profile, prefillFromResume(profile, resume.text, resume.parsed));
+    }
     if (!profile.email && req.user.email) profile.email = req.user.email;
     return {
       settings,
       plan,
       planExpiresAt: expiresAt?.toISOString() ?? null,
       profile,
-      blockers: await blockers(userId, profile, settings),
+      blockers: missing,
       today: counts.filter((c) => c.status !== 'skipped').reduce((n, c) => n + c.today, 0),
       counts: Object.fromEntries(AUTO_APPLY_STATUSES.map((s) => [s, counts.find((c) => c.status === s)?.n ?? 0])) as Record<AutoApplyStatus, number>,
       needsYou: counts.reduce((n, c) => n + c.needs, 0),
+      devices: devices.map(toDevice),
     };
   });
 
@@ -260,7 +285,7 @@ export default async function autoApplyRoutes(app: FastifyInstance) {
     if (!body.success) return reply.code(400).send({ error: 'bad_request', message: body.error.issues[0]?.message ?? 'Invalid settings' });
     const userId = req.user.id;
     await ensureUser(req);
-    const { enabled, mode, minScore, dailyLimit, timezone, consent } = body.data;
+    const { enabled, mode, minScore, dailyLimit, timezone, consent, cloudSubmit } = body.data;
     const { plan } = await userPlan(userId);
     if (dailyLimit !== undefined && dailyLimit > plan.dailyApplications) {
       return reply.code(402).send({
@@ -269,15 +294,16 @@ export default async function autoApplyRoutes(app: FastifyInstance) {
       });
     }
     const [row] = await sql<SettingsRow[]>`
-      insert into public.auto_apply_settings (user_id, mode, min_score, daily_limit, timezone, consented_at)
+      insert into public.auto_apply_settings (user_id, mode, min_score, daily_limit, timezone, consented_at, cloud_submit)
       values (${userId}, ${mode ?? 'auto'}, ${minScore ?? AUTO_APPLY_LIMITS.defaultScore}, ${dailyLimit ?? plan.dailyApplications},
-              ${timezone ?? 'Asia/Kolkata'}, ${consent ? sql`now()` : null})
+              ${timezone ?? 'Asia/Kolkata'}, ${consent ? sql`now()` : null}, ${cloudSubmit ?? true})
       on conflict (user_id) do update set
         mode = coalesce(${mode ?? null}, auto_apply_settings.mode),
         min_score = coalesce(${minScore ?? null}, auto_apply_settings.min_score),
         daily_limit = coalesce(${dailyLimit ?? null}, auto_apply_settings.daily_limit),
         timezone = coalesce(${timezone ?? null}, auto_apply_settings.timezone),
         consented_at = coalesce(auto_apply_settings.consented_at, ${consent ? sql`now()` : null}),
+        cloud_submit = coalesce(${cloudSubmit ?? null}, auto_apply_settings.cloud_submit),
         updated_at = now()
       returning ${SETTINGS_COLUMNS}`;
     if (enabled !== undefined && enabled !== row.enabled) {
@@ -418,7 +444,7 @@ export default async function autoApplyRoutes(app: FastifyInstance) {
   });
 
   // Try again: a failed or expired application is prepared again; one stopped at the job board (CAPTCHA,
-  // sign-in) goes back to Prepared for the extension.
+  // sign-in) goes back to Prepared for the extension (only: Friday's servers would meet the same check).
   app.post<{ Params: { id: string } }>('/v1/auto-apply/applications/:id/retry', async (req, reply) => {
     if (!z.uuid().safeParse(req.params.id).success) return reply.notFound('No such application.');
     const userId = req.user.id;
@@ -429,7 +455,9 @@ export default async function autoApplyRoutes(app: FastifyInstance) {
     if (!row.listing_open) return reply.code(409).send({ error: 'closed', message: 'The job is no longer listed.' });
     if (row.status === 'pending' && ['captcha', 'login_required'].includes(row.reason_code ?? '')) {
       await sql`
-        update public.auto_applications set status = 'prepared', reason_code = null, reason = null, retry_at = null, updated_at = now()
+        update public.auto_applications
+        set status = 'prepared', reason_code = null, reason = null, retry_at = null, needs_browser = true, submit_clicked_at = null,
+            updated_at = now()
         where id = ${req.params.id}`;
       await event(req.params.id, userId, 'retry', 'Ready to submit again');
       return { status: 'prepared' };
@@ -437,7 +465,7 @@ export default async function autoApplyRoutes(app: FastifyInstance) {
     if (row.status === 'failed' || (row.status === 'skipped' && ['expired', 'removed_by_user'].includes(row.reason_code ?? ''))) {
       await sql`
         update public.auto_applications
-        set status = 'preparing', reason_code = null, reason = null, retry_at = null,
+        set status = 'preparing', reason_code = null, reason = null, retry_at = null, needs_browser = false, submit_clicked_at = null,
             form = case when status = 'failed' then null else form end, updated_at = now()
         where id = ${req.params.id}`;
       await event(req.params.id, userId, 'retry', 'Preparing again');
@@ -447,14 +475,17 @@ export default async function autoApplyRoutes(app: FastifyInstance) {
     return reply.code(409).send({ error: 'conflict', message: 'This application can’t be retried.' });
   });
 
-  // The user saw the job board's confirmation (or its email) for an application we couldn't verify.
+  // The user saw the job board's confirmation (or its email) for an application we couldn't verify, or
+  // finished one themselves after a CAPTCHA or sign-in stopped the extension.
   app.post<{ Params: { id: string } }>('/v1/auto-apply/applications/:id/confirm', async (req, reply) => {
     if (!z.uuid().safeParse(req.params.id).success) return reply.notFound('No such application.');
     const [row] = await sql<{ id: string; listing_id: string | null }[]>`
       update public.auto_applications
       set status = 'submitted', reason_code = null, reason = null, submitted_at = coalesce(submitted_at, now()),
+          submitted_via = coalesce(submitted_via, 'user'),
           evidence = coalesce(evidence, '{}'::jsonb) || '{"confirmedByUser": true}'::jsonb, updated_at = now()
-      where id = ${req.params.id} and user_id = ${req.user.id} and status = 'pending' and reason_code = 'unverified'
+      where id = ${req.params.id} and user_id = ${req.user.id} and status = 'pending'
+        and reason_code in ('unverified', 'captcha', 'login_required')
       returning id, listing_id`;
     if (!row) return reply.code(409).send({ error: 'conflict', message: 'This application isn’t waiting for confirmation.' });
     await event(row.id, req.user.id, 'submitted', 'You confirmed the job board received it');
@@ -638,10 +669,48 @@ export default async function autoApplyRoutes(app: FastifyInstance) {
         return { band, applied: inBand.length, responses: resp, rate: rate(resp, inBand.length) };
       }),
       autoApply: Object.fromEntries(AUTO_APPLY_STATUSES.map((s) => [s, statusRows.find((r) => r.status === s)?.n ?? 0])) as Record<AutoApplyStatus, number>,
+      autoApplyChannels: await channelStats(days, userId),
     };
   });
 
   // ---- The Friday extension ----------------------------------------------------------------------
+
+  // The extension connects with the session it read on the Friday Jobs site and gets a token of its
+  // own; from then on it never uses (or refreshes) the site's session.
+  app.post('/v1/auto-apply/devices', async (req, reply): Promise<AutoApplyDeviceToken | void> => {
+    const body = deviceBody.safeParse(req.body);
+    if (!body.success || req.deviceId) return reply.code(400).send({ error: 'bad_request', message: 'Invalid device.' });
+    await ensureUser(req);
+    const [{ n }] = await sql<{ n: number }[]>`
+      select count(*)::int as n from public.auto_apply_devices where user_id = ${req.user.id} and revoked_at is null`;
+    if (n >= 20) return reply.code(429).send({ error: 'too_many', message: 'Disconnect a browser on the Auto Apply page first.' });
+    const token = `${DEVICE_TOKEN_PREFIX}${randomBytes(32).toString('base64url')}`;
+    const [row] = await sql<{ id: string; name: string; created_at: Date; last_seen_at: Date | null }[]>`
+      insert into public.auto_apply_devices (user_id, name, token_hash, last_seen_at)
+      values (${req.user.id}, ${body.data.name}, ${hashDeviceToken(token)}, now())
+      returning id, name, created_at, last_seen_at`;
+    return { token, device: toDevice(row), userId: req.user.id, email: req.user.email };
+  });
+
+  // The extension's popup: who it's signed in as and whether Auto Apply is on.
+  app.get('/v1/auto-apply/device', async (req) => {
+    const [s] = await sql<{ enabled: boolean }[]>`select enabled from public.auto_apply_settings where user_id = ${req.user.id}`;
+    const [{ prepared }] = await sql<{ prepared: number }[]>`
+      select count(*)::int as prepared from public.auto_applications
+      where user_id = ${req.user.id} and status = 'prepared' and (retry_at is null or retry_at <= now())`;
+    return { email: req.user.email, enabled: s?.enabled ?? false, prepared };
+  });
+
+  // Disconnect a browser: from the Auto Apply page by id, or by the extension itself ("self").
+  app.delete<{ Params: { id: string } }>('/v1/auto-apply/devices/:id', async (req, reply) => {
+    const id = req.params.id === 'self' ? req.deviceId : req.params.id;
+    if (!id || !z.uuid().safeParse(id).success) return reply.notFound('No such browser.');
+    const [row] = await sql<{ id: string }[]>`
+      update public.auto_apply_devices set revoked_at = now()
+      where id = ${id} and user_id = ${req.user.id} and revoked_at is null returning id`;
+    if (!row) return reply.notFound('No such browser.');
+    return { ok: true };
+  });
 
   // Hands the extension the next prepared application, leased to it for CLAIM_LEASE_MIN minutes.
   app.post('/v1/auto-apply/claim', async (req, reply): Promise<{ task: AutoApplyTask | null } | void> => {
@@ -653,7 +722,7 @@ export default async function autoApplyRoutes(app: FastifyInstance) {
     const [row] = await sql<(AppRow & { answers: PreparedAnswer[]; file_name: string | null; has_cover: boolean })[]>`
       update public.auto_applications a
       set status = 'pending', reason_code = 'submitting', reason = 'Being submitted from your browser',
-          claimed_by = ${body.data.device}, claimed_at = now(), updated_at = now()
+          claimed_by = ${req.deviceId ?? body.data.device}, claimed_at = now(), submit_clicked_at = null, updated_at = now()
       from (
         select id from public.auto_applications
         where user_id = ${userId} and status = 'prepared' and (retry_at is null or retry_at <= now())
@@ -715,77 +784,24 @@ export default async function autoApplyRoutes(app: FastifyInstance) {
     const body = reportBody.safeParse(req.body);
     if (!body.success || !z.uuid().safeParse(req.params.id).success) return reply.code(400).send({ error: 'bad_request', message: 'Invalid report.' });
     const userId = req.user.id;
-    const [app] = await sql<{ id: string; provider: AutoApplyProvider; listing_id: string | null; form: FormQuestion[] | null; status: AutoApplyStatus; reason_code: string | null }[]>`
-      select id, provider, listing_id, form, status, reason_code from public.auto_applications
+    const [app] = await sql<{ id: string; provider: AutoApplyProvider; listing_id: string | null; form: FormQuestion[] | null; status: AutoApplyStatus; reason_code: string | null; claimed_by: string | null }[]>`
+      select id, provider, listing_id, form, status, reason_code, claimed_by from public.auto_applications
       where id = ${req.params.id} and user_id = ${userId}`;
     if (!app) return reply.notFound('No such application.');
-    if (app.status !== 'pending' || app.reason_code !== 'submitting') {
+    // Being submitted, or left with the user at a CAPTCHA or sign-in, which they may finish in that tab.
+    // Not one Friday's servers are sending (routes/applier.ts).
+    if (
+      app.status !== 'pending' ||
+      !['submitting', 'captcha', 'login_required'].includes(app.reason_code ?? '') ||
+      (app.reason_code === 'submitting' && app.claimed_by?.startsWith(APPLIER_CLAIM_PREFIX))
+    ) {
       return reply.code(409).send({ error: 'conflict', message: 'This application isn’t being submitted.' });
     }
-    const { outcome, evidence, unanswered, message } = body.data;
-    const set = async (status: AutoApplyStatus, code: AutoApplyReason | null, reason: string | null, extra = sql``) => {
-      await sql`
-        update public.auto_applications
-        set status = ${status}, reason_code = ${code}, reason = ${reason}, claimed_by = null, claimed_at = null,
-            evidence = ${evidence ? sql.json(evidence as never) : null}, updated_at = now() ${extra}
-        where id = ${app.id}`;
-    };
-
-    if (outcome === 'submitted') {
-      if (verifySubmission(app.provider, evidence)) {
-        await set('submitted', null, null, sql`, submitted_at = now()`);
-        await event(app.id, userId, 'submitted', 'Submitted; the job board confirmed it', { url: evidence!.url });
-        await markApplied(userId, app.listing_id);
-        return { status: 'submitted' };
-      }
-      await set('pending', 'unverified', 'Sent, but we couldn’t see the job board’s confirmation. Check your email for one, then confirm it here.');
-      await event(app.id, userId, 'unverified', 'No confirmation seen after submitting', { url: evidence?.url });
-      await queueAutoApply('autoapply.notify', { userId }, req.log);
-      return { status: 'pending' };
-    }
-    if (outcome === 'captcha' || outcome === 'login_required') {
-      const reason =
-        outcome === 'captcha'
-          ? 'The job board asked for a CAPTCHA check. Open it in your browser to finish, or try again later.'
-          : 'The job board wants you to sign in before applying.';
-      await set('pending', outcome, reason);
-      await event(app.id, userId, outcome, message ?? reason);
-      await queueAutoApply('autoapply.notify', { userId }, req.log);
-      return { status: 'pending' };
-    }
-    if (outcome === 'needs_answers') {
-      // Questions on the live form that the prepared answers didn't cover. Ones the form we read didn't
-      // list are added to it, so the user can answer them and the extension fills them by label.
-      const form = [...(app.form ?? [])];
-      const keys: string[] = [];
-      for (const label of (unanswered ?? []).map((l) => l.replace(/[*✱]\s*$/, '').trim()).filter(Boolean)) {
-        const known = form.find((q) => norm(q.label) === norm(label));
-        if (known) keys.push(known.key);
-        else {
-          const q: FormQuestion = { key: `extra:${norm(label).slice(0, 80)}`, label, type: 'text', required: true, options: [], kind: 'custom' };
-          form.push(q);
-          keys.push(q.key);
-        }
-      }
-      await set('pending', 'needs_answers', `Needs your answer: ${(unanswered ?? []).slice(0, 3).join('; ') || 'a question on the form'}`, sql`, missing = ${keys}, form = ${sql.json(form as never)}`);
-      await event(app.id, userId, 'needs_answers', 'The form had questions we couldn’t answer', { unanswered });
-      await queueAutoApply('autoapply.notify', { userId }, req.log);
-      return { status: 'pending' };
-    }
-    // failed: back to Prepared for another try, until MAX_SUBMIT_ATTEMPTS.
-    const [{ n }] = await sql<{ n: number }[]>`
-      select count(*)::int as n from public.auto_apply_events
-      where application_id = ${app.id} and kind = 'submit_failed'
-        -- Failures before the user's last Retry don't count.
-        and id > coalesce((select max(id) from public.auto_apply_events where application_id = ${app.id} and kind = 'retry'), 0)`;
-    await event(app.id, userId, 'submit_failed', message ?? 'Submitting failed', { url: evidence?.url });
-    if (n + 1 >= MAX_SUBMIT_ATTEMPTS) {
-      await set('failed', 'submit_failed', `Couldn’t submit after ${MAX_SUBMIT_ATTEMPTS} tries${message ? `: ${message}` : ''}.`);
-      return { status: 'failed' };
-    }
-    // Try others first: 30 minutes after the first failure, an hour after the second.
-    await set('prepared', null, null, sql`, retry_at = now() + make_interval(mins => ${30 * (n + 1)})`);
-    return { status: 'prepared' };
+    // Already waiting for the user for this reason (e.g. the extension reported it, then gave up waiting).
+    if (body.data.outcome === app.reason_code) return { status: 'pending' };
+    const { afterSubmit, ...report } = body.data;
+    const status = await applyReport({ ...app, user_id: userId }, report, { via: 'browser', clicked: afterSubmit ?? false }, req.log);
+    return { status };
   });
 }
 
@@ -820,14 +836,29 @@ async function applySavedAnswers(userId: string, profile: ApplicationProfile, ex
   }
 }
 
-/** A submitted application shows in the user's Applied list. */
-async function markApplied(userId: string, listingId: string | null) {
-  if (!listingId) return;
-  await sql`
-    insert into public.job_applications (user_id, listing_id, title, company, location, apply_url, status, applied_at)
-    select ${userId}, l.id, l.title, l.company, l.location, l.apply_url, 'applied', now()
-    from public.job_listings l where l.id = ${listingId}
-    on conflict (user_id, listing_id) do update set
-      status = case when job_applications.status = 'saved' then 'applied' else job_applications.status end,
-      applied_at = coalesce(job_applications.applied_at, now()), updated_at = now()`;
+/** What the resume says that the profile asks for: name, phone, profile links and languages. Empty fields only. */
+export function prefillFromResume(p: ApplicationProfile, text: string, parsed: ResumeProfile | null): Partial<ApplicationProfile> {
+  const out: Partial<ApplicationProfile> = {};
+  const url = (re: RegExp) => {
+    const m = re.exec(text);
+    return m ? `https://${m[1].replace(/\/$/, '')}` : '';
+  };
+  const [first, ...rest] = (parsed?.name ?? '').trim().split(/\s+/);
+  if (!p.firstName && first && rest.length) {
+    out.firstName = first;
+    out.lastName = rest.join(' ');
+  }
+  if (!p.linkedin) out.linkedin = url(/(?:https?:\/\/)?(?:www\.|[a-z]{2}\.)?(linkedin\.com\/in\/[\w\-%]+\/?)/i);
+  // A profile, not a repository.
+  if (!p.github) out.github = url(/(?:https?:\/\/)?(?:www\.)?(github\.com\/[\w-]+)(?![\w/-])/i);
+  if (!p.phone) {
+    const phone = [...text.matchAll(/\+?\d[\d\s().-]{8,16}\d/g)].map((m) => m[0].trim()).find((m) => m.replace(/\D/g, '').length >= 10 && !/^\d{4}\s*[-–]\s*\d{4}$/.test(m));
+    if (phone) out.phone = phone;
+  }
+  if (!p.languages.length) {
+    const m = /^\s*languages?(?: known| spoken)?\s*[:\-–]\s*(.+)$/im.exec(text);
+    const langs = m?.[1].split(/[,;|•]/).map((l) => l.replace(/\(.*?\)/g, '').trim()).filter((l) => /^[A-Za-z][A-Za-z ]{1,30}$/.test(l));
+    if (langs?.length) out.languages = langs.slice(0, 10);
+  }
+  return Object.fromEntries(Object.entries(out).filter(([, v]) => (Array.isArray(v) ? v.length : v))) as Partial<ApplicationProfile>;
 }

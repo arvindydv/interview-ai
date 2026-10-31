@@ -1,8 +1,9 @@
 // Friday Jobs Auto Apply: every day the worker picks the user's best new matches, tailors their resume
 // to each and answers the application form from their profile (apps/worker/src/queues/autoApply.ts),
-// whether or not their computer is on. Prepared applications are submitted from the user's own browser
-// by the Friday extension, never by bypassing a CAPTCHA, and count as submitted only once the job board
-// confirms them.
+// whether or not their computer is on. Prepared applications are submitted by Friday's servers where the
+// job board allows it (apps/worker/src/applier.ts), and otherwise from the user's own browser by the
+// Friday extension; a CAPTCHA or sign-in the servers meet is handed to the browser, never bypassed.
+// They count as submitted only once the job board confirms them.
 
 /**
  * - preparing: being tailored and answered (internal step before Prepared)
@@ -27,7 +28,7 @@ export const AUTO_APPLY_STATUS_LABELS: Record<AutoApplyStatus, string> = {
 /** Why an application is pending, failed or skipped. */
 export type AutoApplyReason =
   // pending
-  | 'submitting' // the extension is filling the form
+  | 'submitting' // Friday's servers or the extension are filling the form
   | 'needs_answers' // a required question can't be answered from the profile or resume
   | 'captcha' // the job board asked for a CAPTCHA challenge
   | 'login_required' // the job board wants the user to sign in
@@ -50,6 +51,52 @@ export type AutoApplyReason =
  */
 export const AUTO_APPLY_PROVIDERS = ['greenhouse', 'lever', 'ashby', 'workable', 'smartrecruiters', 'workday'] as const;
 export type AutoApplyProvider = (typeof AUTO_APPLY_PROVIDERS)[number];
+
+/**
+ * Job boards Friday's servers submit to. Workday wants a sign-in to each employer's site, so it is
+ * left to the user's browser.
+ */
+export const AUTO_APPLY_CLOUD_PROVIDERS = ['greenhouse', 'lever', 'ashby', 'workable', 'smartrecruiters'] as const satisfies readonly AutoApplyProvider[];
+
+/**
+ * What each job board shows once it has the application (kept in step with apps/extension/src/filler.js).
+ * Submissions count only when the page the browser landed on matches, so a form that silently failed
+ * is never marked Submitted.
+ */
+const CONFIRMATION: Record<AutoApplyProvider, { url: RegExp; text: RegExp }> = {
+  greenhouse: {
+    url: /greenhouse\.io\/.*(confirmation|thank)/i,
+    text: /thank you for applying|application (has been )?(received|submitted)|we('ve| have) received your application/i,
+  },
+  lever: {
+    url: /lever\.co\/[^/]+\/[^/]+\/thanks/i,
+    text: /application submitted|thank(s| you) for applying|we('ve| have) received your application/i,
+  },
+  ashby: {
+    url: /ashbyhq\.com\/.*(submitted|confirmation)/i,
+    text: /application (was )?(successfully )?submitted|thank(s| you) for (applying|submitting)|we('ve| have) received your application/i,
+  },
+  // Not yet seen live on these three; a miss only means the user is asked to confirm.
+  workable: {
+    url: /workable\.com\/.*(success|thank|submitted)/i,
+    text: /thank(s| you) for (applying|your application)|application (has been |was )?(successfully )?(submitted|received)/i,
+  },
+  smartrecruiters: {
+    url: /smartrecruiters\.com\/.*(success|thank|confirmation)/i,
+    text: /thank(s| you) for (applying|your application)|application (has been |was )?(successfully )?(submitted|received)/i,
+  },
+  workday: {
+    url: /myworkdayjobs\.com\/.*(applicationSubmitted|submitted)/i,
+    text: /application submitted|thank(s| you) for applying|your application (has been|was) (submitted|received)/i,
+  },
+};
+
+/** Whether what the page showed after submitting is the job board's confirmation. */
+export function verifySubmission(provider: AutoApplyProvider, evidence: { url: string; text: string } | undefined) {
+  if (!evidence) return false;
+  const c = CONFIRMATION[provider];
+  return c.url.test(evidence.url) || c.text.test(evidence.text);
+}
 
 /** The page the extension opens to apply. */
 export function autoApplyUrl(provider: AutoApplyProvider, board: string, externalId: string, listingUrl: string) {
@@ -94,6 +141,11 @@ export interface AutoApplySettings {
   timezone: string;
   /** When the user agreed to applications being sent in their name; Auto Apply can't be on without it. */
   consentedAt: string | null;
+  /**
+   * Friday's servers submit applications on the job boards that allow it, so they go out while the
+   * user's computer is off. Off: everything waits for the user's browser.
+   */
+  cloudSubmit: boolean;
 }
 
 export interface WorkAuthorization {
@@ -126,6 +178,31 @@ export interface ApplicationProfile {
   earliestStart: string;
   /** Voluntary diversity questions are always declined unless the user says otherwise here. */
   gender: string;
+  // Common questions: each one answered here is one Auto Apply never has to stop and ask.
+  /** What they'd like to be called, when not their first name. */
+  preferredName: string;
+  /** e.g. "she/her". Empty: not shared. */
+  pronouns: string;
+  /** Home town and state, e.g. "Lucknow, Uttar Pradesh" (Indian forms ask for a home state). */
+  hometown: string;
+  /** Languages they can work in, e.g. ["English", "Hindi"]. */
+  languages: string[];
+  /** Every country not in workAuthorization. null: asked each time. */
+  otherCountries: { authorized: boolean; needsSponsorship: boolean } | null;
+  /** Work arrangements they accept. Empty: asked each time. */
+  workplaces: ('remote' | 'hybrid' | 'onsite')[];
+  willingToTravel: boolean | null;
+  /** Whether they hold a government security clearance. null: asked each time. */
+  securityClearance: boolean | null;
+  /** Interviews may be recorded or transcribed (AI notetakers). null: asked each time. */
+  recordingConsent: boolean | null;
+  /** A background check if they're offered the job. null: asked each time. */
+  backgroundCheckConsent: boolean | null;
+  /**
+   * Friday answers judgment questions itself (how they'd approach something, which role type fits,
+   * open questions) from the resume, instead of waiting. Never personal or legal facts.
+   */
+  letAiDecide: boolean;
   /** The user's answers to questions Auto Apply couldn't answer, reused for the same question later. */
   savedAnswers: { question: string; answer: string }[];
 }
@@ -148,8 +225,63 @@ export const EMPTY_APPLICATION_PROFILE: ApplicationProfile = {
   willingToRelocate: null,
   earliestStart: '',
   gender: '',
+  preferredName: '',
+  pronouns: '',
+  hometown: '',
+  languages: [],
+  otherCountries: null,
+  workplaces: [],
+  willingToTravel: null,
+  securityClearance: null,
+  recordingConsent: null,
+  backgroundCheckConsent: null,
+  letAiDecide: true,
   savedAnswers: [],
 };
+
+/**
+ * The profile question that answers a form's question, when one does. Those are asked once, in the
+ * profile, never per application: answered there, they fill every form.
+ */
+export function profileQuestionFor(label: string): string | null {
+  const l = label.toLowerCase();
+  const rules: [RegExp, string][] = [
+    [/notice period|how soon can you (join|start)|joining time|earliest (start|joining)/, 'Notice period'],
+    [/(expected|desired|asking).{0,30}(ctc|salary|compensation|pay)/, 'Expected salary'],
+    [/(current|present|last|previous|existing).{0,30}(ctc|salary|compensation|pay)/, 'Current salary'],
+    [/linked\s?in/, 'LinkedIn'],
+    [/github/, 'GitHub'],
+    [/portfolio/, 'Portfolio'],
+    [/sponsorship|authori[sz]ed to work|work permit|right to work|visa status/, 'Where you can work'],
+    [/relocat|location preference|preferred (work )?location/, 'Relocation'],
+    [/\btravel/, 'Travel'],
+    [/languages?\b/, 'Languages'],
+    [/home ?(town|state|city|district)|native (place|state)/, 'Home town'],
+    [/(hold|have|possess).{0,40}security clearance/, 'Security clearance'],
+    [/notetaker|recorded|recording|transcri/, 'Recorded interviews'],
+    [/background (check|verification|screening)/, 'Background check'],
+  ];
+  return rules.find(([re]) => re.test(l))?.[1] ?? null;
+}
+
+/** Common questions forms ask, and whether the profile answers each (for "N of M answered"). */
+export function commonQuestions(p: ApplicationProfile): { label: string; answered: boolean }[] {
+  return [
+    { label: 'LinkedIn', answered: Boolean(p.linkedin.trim()) },
+    { label: 'Notice period', answered: p.noticePeriodDays !== null },
+    { label: 'Current salary', answered: Boolean(p.currentSalary.trim()) },
+    { label: 'Expected salary', answered: Boolean(p.expectedSalary.trim()) },
+    { label: 'Where you can work', answered: p.workAuthorization.length > 0 && p.otherCountries !== null },
+    { label: 'Work arrangements', answered: p.workplaces.length > 0 },
+    { label: 'Relocation', answered: p.willingToRelocate !== null },
+    { label: 'Travel', answered: p.willingToTravel !== null },
+    { label: 'Languages', answered: p.languages.length > 0 },
+    { label: 'Home town', answered: Boolean(p.hometown.trim()) },
+    { label: 'Security clearance', answered: p.securityClearance !== null },
+    { label: 'Recorded interviews', answered: p.recordingConsent !== null },
+    { label: 'Background check', answered: p.backgroundCheckConsent !== null },
+  ];
+}
 
 /** Fields Auto Apply needs before it can be turned on. */
 export function missingProfileFields(p: ApplicationProfile): string[] {
@@ -229,9 +361,29 @@ export interface AutoApplyOverview {
   counts: Record<AutoApplyStatus, number>;
   /** Pending applications that need the user. */
   needsYou: number;
+  /** Browsers connected through the Friday extension, most recently seen first. */
+  devices: AutoApplyDevice[];
 }
 
-/** POST /v1/auto-apply/claim: the next prepared application, for the extension to submit. */
+/** A browser running the Friday extension, which submits prepared applications. */
+export interface AutoApplyDevice {
+  id: string;
+  /** e.g. "Chrome on Linux" */
+  name: string;
+  createdAt: string;
+  /** When it last asked for work or reported; null before its first request. */
+  lastSeenAt: string | null;
+}
+
+/** POST /v1/auto-apply/devices: the extension connects with the site's session and gets its own token. */
+export interface AutoApplyDeviceToken {
+  token: string;
+  device: AutoApplyDevice;
+  userId: string;
+  email: string;
+}
+
+/** POST /v1/auto-apply/claim: the next prepared application, for the extension (or Friday's servers) to submit. */
 export interface AutoApplyTask {
   id: string;
   provider: AutoApplyProvider;
@@ -258,6 +410,8 @@ export interface AutoApplyReport {
   /** For needs_answers: the required fields the extension couldn't fill. */
   unanswered?: string[];
   message?: string;
+  /** The submit button had been pressed: a failure then is never retried, the user confirms instead. */
+  afterSubmit?: boolean;
 }
 
 /** GET /v1/swipe: a matched job to decide on. Right is apply, left is skip. */
@@ -311,4 +465,22 @@ export interface JobsAnalytics {
   byScore: { band: string; applied: number; responses: number; rate: number }[];
   /** Auto Apply applications in the period by status. */
   autoApply: Record<AutoApplyStatus, number>;
+  /** Who sent them, and how often Friday's servers needed a browser. */
+  autoApplyChannels: AutoApplyChannels;
+}
+
+/** Auto Apply in a period by who sent each application (also for all users, in the admin overview). */
+export interface AutoApplyChannels {
+  /** Confirmed by the job board (or by the user), by who sent them. Before server submission: browser. */
+  submitted: { cloud: number; browser: number; user: number };
+  /** Sent, but no confirmation seen yet, by who sent them. */
+  unverified: { cloud: number; browser: number };
+  /** Friday's servers met a CAPTCHA or sign-in and passed the application to the user's browser. */
+  handedToBrowser: number;
+  /** ...with no browser connected, so it waited for the user. */
+  waitedForUser: number;
+  /** Server submissions that failed (each try), and that ended up Failed. */
+  cloudFailures: number;
+  /** cloud / (cloud + handedToBrowser + waitedForUser): how much the servers finished alone, 0–1. */
+  cloudShare: number;
 }

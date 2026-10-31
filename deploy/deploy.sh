@@ -41,6 +41,11 @@ echo "==> Deploying $TAG"
 mkdir -p "$PARAKEET_HOME/env"
 write_env api
 write_env worker
+# Auto Apply from Friday's servers (compose profile cloud-apply): their own env files.
+if [[ ,${COMPOSE_PROFILES:-}, == *,cloud-apply,* ]]; then
+  write_env applier
+  write_env browser
+fi
 
 cd "$RELEASE"
 docker compose pull --quiet

@@ -182,6 +182,9 @@ importers:
       playwright-core:
         specifier: 1.56.1
         version: 1.56.1
+      postgres:
+        specifier: ^3.4.9
+        version: 3.4.9
 
   apps/jobs:
     dependencies:
@@ -298,6 +301,9 @@ importers:
       nodemailer:
         specifier: ^10.1.1
         version: 10.1.1
+      playwright-core:
+        specifier: 1.56.1
+        version: 1.56.1
       postgres:
         specifier: ^3.4.9
         version: 3.4.9
