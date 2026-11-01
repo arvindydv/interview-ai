@@ -2,14 +2,14 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
-  BookOpenText, Check, ChevronDown, Copy, Gauge, Hourglass, Lightbulb, MessageSquareQuote, Mic, RotateCcw, ShieldCheck, Target, Timer,
+  BookOpenText, Check, ChevronDown, Copy, Download, Gauge, Hourglass, Lightbulb, MessageSquareQuote, Mic, RotateCcw, ShieldCheck, Target, Timer,
   TrendingUp,
 } from 'lucide-react';
 import {
-  PRACTICE_DIFFICULTIES, PRACTICE_DURATIONS, type PracticeAnswer, type PracticeConfidence, type PracticeFeedback,
+  PRACTICE_DIFFICULTIES, PRACTICE_DURATIONS, reportFileName, type PracticeAnswer, type PracticeConfidence, type PracticeFeedback,
   type PracticeQuestion, type PracticeScores, type PracticeSession, type ReadingVerdict,
 } from '@parakeet/shared';
-import { ApiError, api } from '@/lib/api';
+import { ApiError, api, apiBlob } from '@/lib/api';
 import { roundLabel } from '@/lib/interviews';
 import { KIND_LABEL, PACE, formatDuration, formatSeconds, scoreLabel, scoreTone } from '@/lib/practice';
 import { Spinner } from '@/components/ui';
@@ -34,6 +34,7 @@ export const READING: Record<ReadingVerdict, { label: string; tone: string }> = 
 export function Debrief({ session }: { session: PracticeSession }) {
   const router = useRouter();
   const [again, setAgain] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const result = session.result!;
   const answered = session.answers.map((a, n) => ({ a, f: result.questions[n] })).filter(({ a }) => a && !a.skipped);
   const categories = Object.fromEntries(
@@ -62,6 +63,22 @@ export function Debrief({ session }: { session: PracticeSession }) {
     }
   };
 
+  const download = async () => {
+    setDownloading(true);
+    try {
+      const blob = await apiBlob(`/v1/practice/${session.id}/report.pdf`);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = reportFileName(session.completedAt ?? session.createdAt, 'practice');
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : 'Couldn’t download the report. Try again.', { tone: 'bad' });
+    }
+    setDownloading(false);
+  };
+
   return (
     <div className="space-y-6">
       {/* headline */}
@@ -71,9 +88,14 @@ export function Debrief({ session }: { session: PracticeSession }) {
         <div className="flex flex-col gap-6 sm:flex-row sm:items-center">
           <ReadinessRing score={result.score} size={120} stroke={9} label="Interview score" outOf10 />
           <div className="min-w-0 flex-1">
-            <p className="text-xs text-muted">
-              {session.title} · {roundLabel(session.roundType)} · {PRACTICE_DIFFICULTIES.find((d) => d.id === session.difficulty)?.label}
-            </p>
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <p className="text-xs text-muted">
+                {session.title} · {roundLabel(session.roundType)} · {PRACTICE_DIFFICULTIES.find((d) => d.id === session.difficulty)?.label}
+              </p>
+              <button onClick={download} disabled={downloading} className="btn btn-secondary !px-3 !py-1.5 text-xs">
+                {downloading ? <Spinner className="!size-3.5" /> : <Download size={14} />} Download PDF
+              </button>
+            </div>
             <h1 className={`mt-1 text-2xl font-semibold tracking-tight ${scoreTone(result.score)}`}>{scoreLabel(result.score)}</h1>
             <p className="mt-2 text-sm leading-relaxed text-fg/85">{result.summary}</p>
           </div>
@@ -113,6 +135,9 @@ export function Debrief({ session }: { session: PracticeSession }) {
       </section>
 
       <div className="flex flex-wrap justify-center gap-2 pt-2">
+        <button onClick={download} disabled={downloading} className="btn btn-secondary">
+          {downloading ? <Spinner className="!size-4" /> : <Download size={15} />} Download feedback (PDF)
+        </button>
         <button onClick={practiseAgain} disabled={again} className="btn btn-primary">
           {again ? <Spinner className="!size-4" /> : <RotateCcw size={15} />} Practise again
         </button>

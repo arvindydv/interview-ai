@@ -22,6 +22,8 @@ export interface TurnInfo {
 interface FluxOptions {
   /** Words to recognise better: the company, the role. */
   keyterms?: string[];
+  /** The longest silence before a turn is ended anyway; DEEPGRAM_EOT_TIMEOUT_MS by default. */
+  eotTimeoutMs?: number;
   /** `epoch` increases with every (re)connection; turn indexes restart from 0 on each one. */
   onTurn: (turn: TurnInfo, epoch: number) => void;
   onState: (state: ListenState, error?: string) => void;
@@ -50,7 +52,7 @@ export class FluxStream {
       sample_rate: String(AUDIO_FORMAT.sampleRate),
       eot_threshold: String(env.DEEPGRAM_EOT_THRESHOLD),
       eager_eot_threshold: String(env.DEEPGRAM_EAGER_EOT_THRESHOLD),
-      eot_timeout_ms: String(env.DEEPGRAM_EOT_TIMEOUT_MS),
+      eot_timeout_ms: String(this.opts.eotTimeoutMs ?? env.DEEPGRAM_EOT_TIMEOUT_MS),
     });
     for (const term of this.opts.keyterms ?? []) params.append('keyterm', term);
     return `wss://api.deepgram.com/v2/listen?${params}`;

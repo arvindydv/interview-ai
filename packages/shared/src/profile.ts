@@ -13,8 +13,8 @@ export type RoundType =
 
 export const ROUND_TYPES: { id: RoundType; label: string; hint: string; softwareOnly?: boolean }[] = [
   { id: 'general', label: 'General / HR', hint: 'About you, motivation, strengths, salary' },
+  { id: 'technical', label: 'Technical / field', hint: 'Questions on the skills, tools and subject knowledge in your resume' },
   { id: 'behavioral', label: 'Behavioral', hint: '"Tell me about a time…" questions' },
-  { id: 'technical', label: 'Role knowledge', hint: 'Subject and technical questions for your field' },
   { id: 'case_study', label: 'Case / scenario', hint: '"What would you do if…", case studies' },
   { id: 'presentation', label: 'Demo / presentation', hint: 'Demo lesson, pitch, portfolio or presentation' },
   { id: 'coding', label: 'Coding', hint: 'Live coding problems', softwareOnly: true },

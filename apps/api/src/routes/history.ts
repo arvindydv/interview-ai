@@ -2,11 +2,13 @@ import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import {
   SEARCH_MARK, type HistoryPage, type HistoryRetention, type HistorySearchHit, type HistorySession,
-  type HistorySessionSummary, type HistoryTurn, type SessionDebrief,
+  type HistorySessionSummary, type HistoryTurn, type SessionDebrief, reportFileName,
 } from '@parakeet/shared';
 import { requireAuth } from '../lib/auth.js';
 import { sql } from '../lib/db.js';
-import { historyQueue } from '../lib/queues.js';
+import { requestDebrief } from '../lib/debrief.js';
+import { interviewReportPdf } from '../lib/interviewReport.js';
+import { resumeName } from '../lib/resumeName.js';
 
 // Past live sessions (spec G1/G2): browse, search, summarise and delete. Usage and billing figures stay
 // in live_sessions/live_turns whatever the user deletes; only the text goes.
@@ -51,6 +53,8 @@ const SUMMARY = sql`
   ) t on true`;
 
 const uuid = z.uuid();
+/** The browser names the download in the user's own time zone; this is the server's fallback (most users are in India). */
+const REPORT_TIME_ZONE = 'Asia/Kolkata';
 const notFound = (reply: FastifyReply) => reply.code(404).send({ error: 'not_found', message: 'No such session' });
 
 export default async function historyRoutes(app: FastifyInstance) {
@@ -116,35 +120,49 @@ export default async function historyRoutes(app: FastifyInstance) {
     };
   });
 
-  // Post-interview summary (G2): needs the session's text, so not available once it's been cleared.
+  // Post-interview feedback (G2), on request (it's also written by itself when an interview ends, see
+  // lib/debrief.ts). Needs the session's text, so not available once it's been cleared.
   app.post<{ Params: { id: string } }>('/v1/history/:id/summary', async (req, reply) => {
     if (!uuid.safeParse(req.params.id).success) return notFound(reply);
-    const [row] = await sql<{ id: string; summary_status: string | null; with_text: number }[]>`
-      select s.id, s.summary_status,
-             (select count(*)::int from public.live_turns t where t.live_session_id = s.id and t.question <> '') as with_text
-      from public.live_sessions s
+    const r = await requestDebrief(req.params.id, req.user.id);
+    if ('status' in r) return r;
+    if (r.error === 'not_found') return notFound(reply);
+    if (r.error === 'no_text') return reply.code(409).send({ error: 'no_text', message: 'This session has no saved questions to review.' });
+    return reply.code(503).send({ error: 'unavailable', message: 'Feedback is unavailable right now.' });
+  });
+
+  // The feedback as a PDF, named by the interview's date (e.g. 12_oct_interview.pdf).
+  app.get<{ Params: { id: string } }>('/v1/history/:id/report.pdf', async (req, reply) => {
+    if (!uuid.safeParse(req.params.id).success) return notFound(reply);
+    const [row] = await sql<SummaryRow[]>`
+      ${SUMMARY}
       where s.id = ${req.params.id} and s.user_id = ${req.user.id} and s.deleted_at is null`;
     if (!row) return notFound(reply);
-    if (!row.with_text) {
-      return reply.code(409).send({ error: 'no_text', message: 'This session has no saved questions to summarise.' });
+    const [extra] = await sql<{ summary: SessionDebrief | null; name: string | null; resume_text: string | null }[]>`
+      select s.summary, r.parsed_json ->> 'name' as name, r.text as resume_text
+      from public.live_sessions s
+      left join lateral (select parsed_json, text from public.resumes where user_id = s.user_id order by created_at desc limit 1) r on true
+      where s.id = ${row.id}`;
+    if (!extra?.summary) {
+      return reply.code(409).send({ error: 'conflict', message: 'The feedback report is ready once your interview has been reviewed.' });
     }
-    if (row.summary_status === 'pending') return { status: 'pending' };
-    await sql`update public.live_sessions set summary_status = 'pending' where id = ${row.id}`;
-    try {
-      await historyQueue.add('history.summary', { sessionId: row.id }, { jobId: `history-summary-${row.id}-${Date.now()}` });
-    } catch (err) {
-      req.log.error({ err }, 'failed to enqueue session summary');
-      await sql`update public.live_sessions set summary_status = 'failed' where id = ${row.id}`;
-      return reply.code(503).send({ error: 'unavailable', message: 'Summaries are unavailable right now.' });
-    }
-    return { status: 'pending' };
+    const turns = await sql<{ question: string; answer: string }[]>`
+      select question, answer from public.live_turns
+      where live_session_id = ${row.id} and status <> 'blocked' and question <> '' order by created_at`;
+    const name = resumeName(extra.name, extra.resume_text ?? '') || req.user.name || '';
+    const pdf = await interviewReportPdf({ session: toSummary(row), summary: extra.summary, turns, candidateName: name });
+    return reply
+      .header('content-type', 'application/pdf')
+      .header('content-disposition', `attachment; filename="${reportFileName(row.connected_at, 'interview', REPORT_TIME_ZONE)}"`)
+      .header('cache-control', 'private, no-store')
+      .send(pdf);
   });
 
   app.delete<{ Params: { id: string } }>('/v1/history/:id', async (req, reply) => {
     if (!uuid.safeParse(req.params.id).success) return notFound(reply);
     const ids = await sql.begin(async (tx) => {
       const rows = await tx<{ id: string }[]>`
-        update public.live_sessions set deleted_at = now(), summary = null, summary_status = null
+        update public.live_sessions set deleted_at = now(), summary = null, summary_status = null, transcript = '[]'::jsonb
         where id = ${req.params.id} and user_id = ${req.user.id} and deleted_at is null returning id`;
       if (rows.length) await tx`update public.live_turns set question = '', answer = '' where live_session_id = ${req.params.id}`;
       return rows;
@@ -156,7 +174,7 @@ export default async function historyRoutes(app: FastifyInstance) {
   // Clears every saved question and answer. Usage figures stay.
   app.delete('/v1/history', async (req) => {
     await sql.begin(async (tx) => {
-      await tx`update public.live_sessions set deleted_at = coalesce(deleted_at, now()), summary = null, summary_status = null where user_id = ${req.user.id}`;
+      await tx`update public.live_sessions set deleted_at = coalesce(deleted_at, now()), summary = null, summary_status = null, transcript = '[]'::jsonb where user_id = ${req.user.id}`;
       await tx`update public.live_turns set question = '', answer = '' where user_id = ${req.user.id} and (question <> '' or answer <> '')`;
     });
     return { ok: true };

@@ -27,7 +27,7 @@ export const scoreTone = (score: number) => (score >= 65 ? 'text-brand' : score 
 export const KIND_LABEL: Record<PracticeQuestionKind, string> = {
   opener: 'Opener',
   behavioral: 'Behavioural',
-  role: 'Role knowledge',
+  role: 'Technical',
   situational: 'Situational',
   follow_up: 'Follow-up',
   closing: 'Closing',
@@ -151,8 +151,9 @@ class VoicePlayer {
     src.buffer = buffer;
     src.connect(ctx.destination);
     // Buffer a moment before the first chunk (and after a hiccup in the stream), so a late chunk
-    // doesn't leave a gap mid-word; then each chunk plays right after the last.
-    if (this.next < ctx.currentTime + 0.02) this.next = ctx.currentTime + (this.next ? 0.15 : 0.3);
+    // doesn't leave a gap mid-word; then each chunk plays right after the last. Short, because it adds
+    // to every reply: the server sends audio faster than it plays, and often all of it at once.
+    if (this.next < ctx.currentTime + 0.02) this.next = ctx.currentTime + (this.next ? 0.1 : 0.12);
     src.start(this.next);
     this.next += buffer.duration;
     this.sources.add(src);

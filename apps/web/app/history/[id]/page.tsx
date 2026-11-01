@@ -3,13 +3,13 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import {
-  AlertTriangle, ArrowLeft, BookOpen, Clock, Copy, Image as ImageIcon, Mail, MessageSquareText, MoreHorizontal, RefreshCw,
-  Sparkles, Trash2,
+  AlertTriangle, ArrowLeft, BookOpen, Clock, Copy, Download, Image as ImageIcon, Mail, MessageSquareText, MoreHorizontal, RefreshCw,
+  Sparkles, Target, Trash2, TrendingUp,
 } from 'lucide-react';
-import type { HistorySession, HistoryTurn } from '@parakeet/shared';
-import { ApiError, api } from '@/lib/api';
+import { reportFileName, type HistorySession, type HistoryTurn, type InterviewPerformance } from '@parakeet/shared';
+import { ApiError, api, apiBlob } from '@/lib/api';
 import { useRequireSession } from '@/lib/useSession';
-import { formatDuration } from '@/lib/practice';
+import { formatDuration, scoreLabel, scoreTone } from '@/lib/practice';
 import { AppShell } from '@/components/AppShell';
 import { LogoMark } from '@/components/Logo';
 import { Spinner } from '@/components/ui';
@@ -67,6 +67,24 @@ export default function HistorySessionPage() {
     } catch (e) {
       toast(errorText(e), { tone: 'bad' });
     }
+  };
+
+  const [downloading, setDownloading] = useState(false);
+  const download = async () => {
+    if (!session) return;
+    setDownloading(true);
+    try {
+      const blob = await apiBlob(`/v1/history/${id}/report.pdf`);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = reportFileName(session.startedAt, 'interview');
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    } catch (e) {
+      toast(errorText(e), { tone: 'bad' });
+    }
+    setDownloading(false);
   };
 
   const remove = async () => {
@@ -132,6 +150,11 @@ export default function HistorySessionPage() {
                 </div>
               </div>
               <div className="flex items-center gap-1.5">
+                {session.summary && (
+                  <button onClick={download} disabled={downloading} className="btn btn-primary !px-3 !py-2 text-xs">
+                    {downloading ? <Spinner className="!size-3.5" /> : <Download size={14} />} Download PDF
+                  </button>
+                )}
                 {transcript && (
                   <button onClick={() => copy(transcript, 'Transcript copied.')} className="btn btn-secondary !px-3 !py-2 text-xs">
                     <Copy size={14} /> Copy transcript
@@ -159,9 +182,14 @@ export default function HistorySessionPage() {
               <section>
                 <h2 className="mb-3 text-sm font-semibold">Transcript</h2>
                 <ol className="space-y-3">
-                  {session.turns.map((t, n) => (
-                    <Turn key={t.id} t={t} n={n} startedAt={started.getTime()} />
-                  ))}
+                  {(() => {
+                    // Feedback is numbered over the questions with text, in order.
+                    let asked = 0;
+                    const answers = new Map(session.summary?.performance?.answers.map((a) => [a.question, a]));
+                    return session.turns.map((t, n) => (
+                      <Turn key={t.id} t={t} n={n} startedAt={started.getTime()} feedback={t.question ? answers.get(++asked) : undefined} />
+                    ));
+                  })()}
                 </ol>
               </section>
             )}
@@ -183,7 +211,7 @@ export default function HistorySessionPage() {
   );
 }
 
-function Turn({ t, n, startedAt }: { t: HistoryTurn; n: number; startedAt: number }) {
+function Turn({ t, n, startedAt, feedback }: { t: HistoryTurn; n: number; startedAt: number; feedback?: InterviewPerformance['answers'][number] }) {
   const offset = Math.max(0, new Date(t.createdAt).getTime() - startedAt);
   return (
     <li id={`turn-${t.id}`} className="scroll-mt-24 rounded-2xl border border-line bg-surface/50 p-4 sm:p-5">
@@ -204,6 +232,16 @@ function Turn({ t, n, startedAt }: { t: HistoryTurn; n: number; startedAt: numbe
             )}
           </div>
           <p className="mt-1 font-medium">{t.question || <span className="text-muted italic">Screenshot question</span>}</p>
+          {feedback && (
+            <div className="mt-3 rounded-xl border border-warn/25 bg-warn/[0.04] p-3.5">
+              <p className="flex flex-wrap items-center gap-2 text-[11px] font-medium text-warn">
+                <Target size={11} /> {feedback.heard ? 'Your answer' : 'Your answer wasn’t heard'}
+                {feedback.heard && <span className={`tabular-nums ${scoreTone(feedback.score * 10)}`}>{feedback.score.toFixed(1)}/10</span>}
+              </p>
+              {feedback.heard && feedback.said && <p className="mt-1 text-sm text-fg/75 italic">{feedback.said}</p>}
+              <p className="mt-1.5 text-sm leading-relaxed text-fg/85">{feedback.feedback}</p>
+            </div>
+          )}
           {t.answer && (
             <div className="group relative mt-3 rounded-xl border border-line bg-bg/40 p-3.5">
               <p className="mb-1 flex items-center gap-1.5 text-[11px] font-medium text-brand">
@@ -232,8 +270,8 @@ function Summary({ session, onRequest }: { session: HistorySession; onRequest: (
       <section className="glass flex items-center gap-4 rounded-[var(--radius-card)] p-5" aria-live="polite">
         <Spinner className="text-brand" />
         <div>
-          <p className="text-sm font-semibold">Writing your summary…</p>
-          <p className="text-xs text-muted">Topics covered, what to revise, and a thank-you email. Usually under a minute.</p>
+          <p className="text-sm font-semibold">Writing your interview feedback…</p>
+          <p className="text-xs text-muted">How you answered, what to revise, and a thank-you email. Usually under a minute.</p>
         </div>
       </section>
     );
@@ -248,16 +286,16 @@ function Summary({ session, onRequest }: { session: HistorySession; onRequest: (
             <Sparkles size={18} />
           </span>
           <div className="min-w-0 flex-1">
-            <p className="font-semibold">Post-interview summary</p>
+            <p className="font-semibold">Interview feedback</p>
             <p className="text-sm text-muted">
               {session.summaryStatus === 'failed'
                 ? 'The last attempt didn’t finish. Try again.'
-                : 'What was covered, the topics to revise before the next round, and a thank-you email ready to send.'}
+                : 'How you answered, the topics to revise before the next round, and a thank-you email ready to send.'}
             </p>
           </div>
           <button onClick={onRequest} className="btn btn-primary !py-2">
             {session.summaryStatus === 'failed' ? <RefreshCw size={15} /> : <Sparkles size={15} />}
-            {session.summaryStatus === 'failed' ? 'Try again' : 'Summarise'}
+            {session.summaryStatus === 'failed' ? 'Try again' : 'Get feedback'}
           </button>
         </div>
       </section>
@@ -266,6 +304,7 @@ function Summary({ session, onRequest }: { session: HistorySession; onRequest: (
   const mailto = `mailto:?${new URLSearchParams({ subject: s.thankYouEmail.subject, body: s.thankYouEmail.body }).toString().replace(/\+/g, '%20')}`;
   return (
     <section className="space-y-4 animate-fade-up">
+      {s.performance && <Performance p={s.performance} />}
       <div className="glass rounded-[var(--radius-card)] p-5 sm:p-6">
         <p className="flex items-center gap-2 text-sm font-semibold">
           <Sparkles size={15} className="text-brand" /> Summary
@@ -321,5 +360,47 @@ function Summary({ session, onRequest }: { session: HistorySession; onRequest: (
         </div>
       </div>
     </section>
+  );
+}
+
+/** How the candidate answered, from their own words (when the desktop app heard their microphone). */
+function Performance({ p }: { p: InterviewPerformance }) {
+  const score = p.score * 10;
+  return (
+    <div className="relative overflow-hidden rounded-[var(--radius-card)] border border-line p-5 sm:p-6">
+      <div className="absolute inset-0 -z-10 bg-surface" />
+      <div className="absolute -top-24 -right-24 -z-10 size-80 glow opacity-60" />
+      <div className="flex flex-col gap-5 sm:flex-row sm:items-center">
+        <div className="shrink-0">
+          <p className="text-xs text-muted">How you answered</p>
+          <p className={`mt-1 text-4xl font-semibold tracking-tight tabular-nums ${scoreTone(score)}`}>
+            {p.score.toFixed(1)}
+            <span className="text-base font-normal text-faint">/10</span>
+          </p>
+          <p className={`text-sm font-medium ${scoreTone(score)}`}>{scoreLabel(score)}</p>
+        </div>
+        <p className="text-sm leading-relaxed text-fg/85">{p.summary}</p>
+      </div>
+      <div className="mt-5 grid gap-5 sm:grid-cols-2">
+        {[
+          { title: 'What went well', items: p.strengths, icon: TrendingUp, tone: 'text-brand', dot: 'bg-brand' },
+          { title: 'Work on next', items: p.improvements, icon: Target, tone: 'text-warn', dot: 'bg-warn' },
+        ].map(({ title, items, icon: Icon, tone, dot }) => (
+          <div key={title}>
+            <h3 className="flex items-center gap-2 text-sm font-semibold">
+              <Icon size={15} className={tone} /> {title}
+            </h3>
+            <ul className="mt-2.5 space-y-2">
+              {items.map((it, n) => (
+                <li key={n} className="flex gap-2 text-sm leading-relaxed text-fg/85">
+                  <span className={`mt-2 size-1.5 shrink-0 rounded-full ${dot}`} />
+                  {it}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }

@@ -1,4 +1,4 @@
-import type { TurnStatus } from '@parakeet/shared';
+import type { TranscriptLine, TurnStatus } from '@parakeet/shared';
 import type { AuthUser } from './auth.js';
 import { sql } from './db.js';
 
@@ -23,6 +23,18 @@ export async function openLiveSession(user: AuthUser, clientSessionId: string): 
 
 export async function closeLiveSession(id: string) {
   await sql`update public.live_sessions set disconnected_at = now() where id = ${id}`;
+}
+
+/** Bounds on a session's saved conversation (a 2-hour interview is a few hundred lines). */
+const MAX_TRANSCRIPT_LINES = 2_000;
+const MAX_LINE_CHARS = 4_000;
+
+/** Adds a finished line of the conversation to the session, for the feedback afterwards. */
+export async function appendTranscript(id: string, source: TranscriptLine['source'], text: string) {
+  const line: TranscriptLine = { source, text: text.slice(0, MAX_LINE_CHARS), at: new Date().toISOString() };
+  await sql`
+    update public.live_sessions set transcript = transcript || jsonb_build_array(${sql.json(line as never)}::jsonb)
+    where id = ${id} and deleted_at is null and jsonb_array_length(transcript) < ${MAX_TRANSCRIPT_LINES}`;
 }
 
 export interface TurnRecord {

@@ -2,14 +2,16 @@ import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import {
   NO_MINUTES_ERROR, NO_MINUTES_MESSAGE, NO_RESUME_ERROR, PRACTICE_DIFFICULTIES, PRACTICE_DURATIONS, PRACTICE_LIMITS, ROUND_TYPES,
-  parseMessage, renderResumeProfile,
+  parseMessage, renderResumeProfile, reportFileName,
   type PracticeAnswer, type PracticeClientMessage, type PracticeDifficulty, type PracticeQuestion, type PracticeResult,
   type PracticeServerMessage, type PracticeSession, type PracticeStatus, type PracticeSummary, type ResumeProfile, type RoundType,
   type TrialBalance,
 } from '@parakeet/shared';
 import { AuthError, authenticate, requireAuth } from '../lib/auth.js';
 import { sql } from '../lib/db.js';
+import { interviewerModel } from '../lib/interviewer.js';
 import { llmConfigured, resolveModels } from '../lib/llm.js';
+import { practiceReportPdf } from '../lib/practiceReport.js';
 import { PracticeRoom, type RoomStore } from '../lib/practiceRoom.js';
 import { practiceQueue } from '../lib/queues.js';
 import { resumeName } from '../lib/resumeName.js';
@@ -228,6 +230,23 @@ export default async function practiceRoutes(app: FastifyInstance) {
       return reply.code(201).send({ session: toSession(row) });
     });
 
+    // The debrief as a PDF to download.
+    rest.get<{ Params: { id: string } }>('/v1/practice/:id/report.pdf', async (req, reply) => {
+      if (!uuid.safeParse(req.params.id).success) return notFound(reply);
+      const row = await findOne(req.user.id, req.params.id);
+      if (!row) return notFound(reply);
+      if (row.status !== 'scored' || !row.result) {
+        return reply.code(409).send({ error: 'conflict', message: 'The feedback report is ready once your interview has been reviewed.' });
+      }
+      const pdf = await practiceReportPdf(toSession(row), row.candidate_name);
+      return reply
+        .header('content-type', 'application/pdf')
+        // The browser names it in the user's own time zone; most users are in India.
+        .header('content-disposition', `attachment; filename="${reportFileName(row.completed_at ?? row.created_at, 'practice', 'Asia/Kolkata')}"`)
+        .header('cache-control', 'private, no-store')
+        .send(pdf);
+    });
+
     // Ends a session that is no longer live (e.g. the tab was closed mid-interview) and starts the debrief.
     rest.post<{ Params: { id: string } }>('/v1/practice/:id/finish', async (req, reply): Promise<{ session: PracticeSession } | void> => {
       if (!uuid.safeParse(req.params.id).success) return notFound(reply);
@@ -352,7 +371,7 @@ export default async function practiceRoutes(app: FastifyInstance) {
         candidateName: context.name || row.candidate_name,
         context: context.text,
         keyterms: context.keyterms,
-        model: resolveModels({ fast: settings?.fastModel }).fast,
+        model: interviewerModel(resolveModels({ fast: settings?.fastModel }).fast),
         hour,
         store,
         send,

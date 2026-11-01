@@ -15,7 +15,11 @@ const normalize = (text: string) => text.toLowerCase().replace(/[^\p{L}\p{N}]+/g
 export class Conversation {
   private lines: { source: AudioSource; text: string }[] = [];
 
+  /** `onLine`: every finished line, for the session's saved transcript (this keeps only the recent ones). */
+  constructor(private readonly onLine?: (source: AudioSource, text: string) => void) {}
+
   add(source: AudioSource, text: string) {
+    this.onLine?.(source, text);
     this.lines.push({ source, text });
     // Keep the last few minutes: enough for follow-ups, small enough not to slow the answer down.
     while (this.lines.length > 16 || this.lines.reduce((n, l) => n + l.text.length, 0) > 6000) this.lines.shift();
