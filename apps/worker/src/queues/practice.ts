@@ -101,6 +101,7 @@ Score every answer from 0 to 10 on:
 - specificity: concrete examples, names, numbers and outcomes instead of generalities
 - clarity: easy to follow when spoken: plain words, no rambling
 Use the whole range: 9–10 only for answers that would impress a real panel, 5 for a passable but forgettable answer, 0–2 for an empty or off-topic one. A skipped or blank answer scores 0 on everything; say briefly what they should have covered.
+- Technical / field questions (kind "role", and any question about how a skill, tool or concept works): relevance also means technically correct and complete for their field. A confident answer with a wrong fact is not a relevant answer. Name anything wrong, outdated or missing in feedback, and make betterAnswer technically accurate.
 
 For each answer:
 - verdict: a few words.

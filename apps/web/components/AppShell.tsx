@@ -3,9 +3,10 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import {
-  CreditCard, Download, FileText, GraduationCap, History, Home, LayoutDashboard, LifeBuoy, LogOut, Menu, Mic,
-  Settings, Tag, X, type LucideIcon,
+  CreditCard, Download, FileText, GraduationCap, Handshake, History, Home, LayoutDashboard, LifeBuoy, LogOut, Menu,
+  Mic, Settings, Tag, X, type LucideIcon,
 } from 'lucide-react';
+import { claimPendingReferral, isPartner } from '@/lib/referral';
 import { supabase } from '@/lib/supabase';
 import { Logo } from '@/components/Logo';
 import { ThemePicker } from '@/components/ThemeToggle';
@@ -21,6 +22,8 @@ const workspace: NavItem[] = [
   { icon: CreditCard, label: 'Plans & billing', href: '/billing' },
   { icon: Settings, label: 'Settings', href: '/settings' },
 ];
+
+const partnerItem: NavItem = { icon: Handshake, label: 'Partner', href: '/partner' };
 
 const explore: NavItem[] = [
   { icon: Home, label: 'Website', href: '/' },
@@ -61,7 +64,7 @@ function NavLink({ item, active, onNavigate }: { item: NavItem; active: boolean;
   );
 }
 
-function SidebarContent({ email, onNavigate }: { email: string; onNavigate?: () => void }) {
+function SidebarContent({ email, partner, onNavigate }: { email: string; partner: boolean; onNavigate?: () => void }) {
   const pathname = usePathname();
   const router = useRouter();
   const name = email.split('@')[0];
@@ -70,7 +73,7 @@ function SidebarContent({ email, onNavigate }: { email: string; onNavigate?: () 
     <>
       <nav className="mt-8 flex-1 space-y-7 overflow-y-auto" aria-label="Main">
         <NavGroup title="Workspace">
-          {workspace.map((item) => (
+          {(partner ? [...workspace, partnerItem] : workspace).map((item) => (
             <NavLink
               key={item.href}
               item={item}
@@ -118,7 +121,15 @@ function SidebarContent({ email, onNavigate }: { email: string; onNavigate?: () 
 /** Signed-in layout: a sidebar on desktop, a top bar with a slide-in menu on mobile. */
 export function AppShell({ email, children }: { email: string; children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
+  const [partner, setPartner] = useState(false);
   const pathname = usePathname();
+
+  // Every signed-in page passes through here: settle an invite link followed before sign-up.
+  useEffect(() => {
+    if (!email) return;
+    claimPendingReferral();
+    isPartner().then(setPartner);
+  }, [email]);
 
   useEffect(() => setOpen(false), [pathname]);
   useEffect(() => {
@@ -138,7 +149,7 @@ export function AppShell({ email, children }: { email: string; children: React.R
         <div className="px-2 py-1.5">
           <Logo />
         </div>
-        <SidebarContent email={email} />
+        <SidebarContent email={email} partner={partner} />
       </aside>
 
       {/* mobile menu */}
@@ -158,7 +169,7 @@ export function AppShell({ email, children }: { email: string; children: React.R
               <X size={18} />
             </button>
           </div>
-          <SidebarContent email={email} onNavigate={() => setOpen(false)} />
+          <SidebarContent email={email} partner={partner} onNavigate={() => setOpen(false)} />
         </aside>
       </div>
 
