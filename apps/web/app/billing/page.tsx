@@ -7,8 +7,8 @@ import {
   Receipt, ShieldCheck, Timer, X,
 } from 'lucide-react';
 import {
-  MAX_MINUTES, MINUTE_PRESETS, MIN_MINUTES, PLANS, PRICE_PER_MINUTE, formatInr, isValidMinutes, minutesProduct,
-  planLabel, productById, type BillingOverview, type CheckoutOrder, type CreateOrderInput, type Payment,
+  HOUR_PRESETS, MAX_HOURS, MIN_HOURS, PLANS, PRICE_PER_HOUR, formatInr, hoursProduct, isValidHours,
+  paidProductById, planLabel, productById, type BillingOverview, type CheckoutOrder, type CreateOrderInput, type Payment,
   type PaymentStatus, type Product, type ProductId, type VerifyPaymentInput,
 } from '@parakeet/shared';
 import { ApiError, api } from '@/lib/api';
@@ -37,8 +37,8 @@ const POLL_FOR_MS = 3 * 60_000;
 /** Where a failed or reversed debit ends up, said the same way everywhere. */
 const BANK_RETURN = 'If any amount was debited, your bank returns it within 5–7 working days.';
 
-const PRESET_MINUTES = [...MINUTE_PRESETS];
-const DEFAULT_MINUTES = 60;
+const PRESET_HOURS = [...HOUR_PRESETS];
+const DEFAULT_HOURS = 1;
 
 async function confirmPayment(response: VerifyPaymentInput): Promise<BillingOverview | Pending> {
   for (let attempt = 0; ; attempt++) {
@@ -54,7 +54,7 @@ async function confirmPayment(response: VerifyPaymentInput): Promise<BillingOver
 
 function successNotice(product: Product, after: BillingOverview): Notice {
   if (product.kind === 'minutes') {
-    return { tone: 'ok', title: 'Payment successful', text: `${product.minutes} minutes were added to your account.` };
+    return { tone: 'ok', title: 'Payment successful', text: `${product.name} of live session time ${product.minutes === 60 ? 'was' : 'were'} added to your account.` };
   }
   const until = after.planExpiresAt ? ` until ${longDate(after.planExpiresAt)}` : '';
   return { tone: 'ok', title: 'Payment successful', text: `Your ${planLabel(product.plan)} plan is active${until}.` };
@@ -97,7 +97,7 @@ function AccountSummary({ overview }: { overview: BillingOverview }) {
         <div>
           <p className="text-xs text-muted">Current plan</p>
           <div className="mt-2 flex items-center gap-2">
-            <span className="text-2xl font-semibold tracking-tight">{unlimited ? planLabel(overview.plan) : 'Pay per minute'}</span>
+            <span className="text-2xl font-semibold tracking-tight">{unlimited ? planLabel(overview.plan) : 'Pay as you go'}</span>
             {unlimited && <Pill tone="ok">Unlimited</Pill>}
           </div>
           <p className="mt-1 text-sm text-muted">
@@ -115,7 +115,7 @@ function AccountSummary({ overview }: { overview: BillingOverview }) {
             <div className="h-full rounded-full bg-brand transition-all" style={{ width: `${(1 - usedShare) * 100}%` }} />
           </div>
           <p className="mt-1.5 text-xs text-faint">
-            {unlimited ? 'Not used while your plan is active. They stay for later.' : left === 0 ? 'Buy minutes or a plan to keep using live sessions.' : 'Minutes never expire.'}
+            {unlimited ? 'Not used while your plan is active. They stay for later.' : left === 0 ? 'Buy hours or a plan to keep using live sessions.' : 'Minutes never expire.'}
           </p>
         </div>
       </div>
@@ -123,22 +123,22 @@ function AccountSummary({ overview }: { overview: BillingOverview }) {
   );
 }
 
-function MinutesPicker({
-  minutes, setMinutes, highlighted, busy, disabled, onBuy, onSuggestPlan,
+function HoursPicker({
+  hours, setHours, highlighted, busy, disabled, onBuy, onSuggestPlan,
 }: {
-  minutes: string;
-  setMinutes: (v: string) => void;
+  hours: string;
+  setHours: (v: string) => void;
   highlighted: boolean;
   busy: boolean;
   disabled: boolean;
   onBuy: (p: Product) => void;
   onSuggestPlan: () => void;
 }) {
-  const n = Number(minutes);
-  const valid = minutes !== '' && isValidMinutes(n);
-  const product = valid ? minutesProduct(n) : null;
-  const clamp = (v: number) => String(Math.min(Math.max(Math.round(v) || MIN_MINUTES, MIN_MINUTES), MAX_MINUTES));
-  const step = (d: number) => setMinutes(clamp((valid ? n : MIN_MINUTES) + d));
+  const n = Number(hours);
+  const valid = hours !== '' && isValidHours(n);
+  const product = valid ? hoursProduct(n) : null;
+  const clamp = (v: number) => String(Math.min(Math.max(Math.round(v) || MIN_HOURS, MIN_HOURS), MAX_HOURS));
+  const step = (d: number) => setHours(clamp((valid ? n : MIN_HOURS) + d));
   const planIsBetter = product !== null && product.amount >= PLANS.monthly.amount;
 
   return (
@@ -148,67 +148,67 @@ function MinutesPicker({
           <Timer size={16} />
         </span>
         <div>
-          <h3 className="text-sm font-semibold">Buy minutes</h3>
-          <p className="text-xs text-muted">{formatInr(PRICE_PER_MINUTE * 100)} per minute · never expire</p>
+          <h3 className="text-sm font-semibold">Buy hours</h3>
+          <p className="text-xs text-muted">{formatInr(PRICE_PER_HOUR * 100)} per hour · never expire</p>
         </div>
       </div>
 
       <div className="mt-5 grid grid-cols-3 gap-2" role="group" aria-label="Quick picks">
-        {PRESET_MINUTES.map((m) => (
+        {PRESET_HOURS.map((h) => (
           <button
-            key={m}
-            onClick={() => setMinutes(String(m))}
-            aria-pressed={n === m}
+            key={h}
+            onClick={() => setHours(String(h))}
+            aria-pressed={n === h}
             className={`rounded-lg px-2 py-2 text-sm font-medium ring-1 transition ${
-              n === m ? 'bg-brand/10 text-brand ring-brand/50' : 'bg-white/[0.03] text-muted ring-line hover:text-fg'
+              n === h ? 'bg-brand/10 text-brand ring-brand/50' : 'bg-white/[0.03] text-muted ring-line hover:text-fg'
             }`}
           >
-            {m} min
+            {h} {h === 1 ? 'hour' : 'hours'}
           </button>
         ))}
       </div>
 
-      <label htmlFor="minutes" className="mt-5 text-xs text-muted">Or enter your own amount</label>
+      <label htmlFor="hours" className="mt-5 text-xs text-muted">Or enter your own amount</label>
       <div className="mt-1.5 flex items-center gap-2">
-        <button onClick={() => step(-10)} aria-label="10 minutes less" className="btn btn-secondary !size-10 !p-0" disabled={valid && n <= MIN_MINUTES}>
+        <button onClick={() => step(-1)} aria-label="1 hour less" className="btn btn-secondary !size-10 !p-0" disabled={valid && n <= MIN_HOURS}>
           <Minus size={16} />
         </button>
         <div className="relative flex-1">
           <input
-            id="minutes"
+            id="hours"
             type="number"
             inputMode="numeric"
-            min={MIN_MINUTES}
-            max={MAX_MINUTES}
-            value={minutes}
-            onChange={(e) => setMinutes(e.target.value.replace(/\D/g, '').slice(0, 4))}
-            onBlur={() => minutes !== '' && setMinutes(clamp(n))}
+            min={MIN_HOURS}
+            max={MAX_HOURS}
+            value={hours}
+            onChange={(e) => setHours(e.target.value.replace(/\D/g, '').slice(0, 2))}
+            onBlur={() => hours !== '' && setHours(clamp(n))}
             className="input !pr-12 text-center text-lg font-semibold tabular-nums"
-            aria-describedby="minutes-help"
+            aria-describedby="hours-help"
           />
-          <span className="pointer-events-none absolute top-1/2 right-3.5 -translate-y-1/2 text-sm text-faint">min</span>
+          <span className="pointer-events-none absolute top-1/2 right-3.5 -translate-y-1/2 text-sm text-faint">hr</span>
         </div>
-        <button onClick={() => step(10)} aria-label="10 minutes more" className="btn btn-secondary !size-10 !p-0" disabled={valid && n >= MAX_MINUTES}>
+        <button onClick={() => step(1)} aria-label="1 hour more" className="btn btn-secondary !size-10 !p-0" disabled={valid && n >= MAX_HOURS}>
           <Plus size={16} />
         </button>
       </div>
       <input
         type="range"
-        min={MIN_MINUTES}
-        max={MAX_MINUTES}
-        step={10}
-        value={valid ? n : MIN_MINUTES}
-        onChange={(e) => setMinutes(e.target.value)}
+        min={MIN_HOURS}
+        max={MAX_HOURS}
+        step={1}
+        value={valid ? n : MIN_HOURS}
+        onChange={(e) => setHours(e.target.value)}
         className="mt-4 w-full accent-brand"
-        aria-label="Minutes"
+        aria-label="Hours"
       />
-      <p id="minutes-help" className={`mt-1 text-xs ${minutes !== '' && !valid ? 'text-danger' : 'text-faint'}`}>
-        Between {MIN_MINUTES} and {MAX_MINUTES} minutes.
+      <p id="hours-help" className={`mt-1 text-xs ${hours !== '' && !valid ? 'text-danger' : 'text-faint'}`}>
+        Between {MIN_HOURS} and {MAX_HOURS} hours.
       </p>
 
       <div className="mt-5 flex items-end justify-between gap-3 border-t border-line pt-4">
         <div>
-          <p className="text-xs text-muted">{valid ? `${n} min × ${formatInr(PRICE_PER_MINUTE * 100)}` : 'Total'}</p>
+          <p className="text-xs text-muted">{valid ? `${n} hr × ${formatInr(PRICE_PER_HOUR * 100)}` : 'Total'}</p>
           <p className="text-3xl font-semibold tracking-tight tabular-nums">{product ? formatInr(product.amount) : '—'}</p>
         </div>
       </div>
@@ -219,7 +219,7 @@ function MinutesPicker({
         </p>
       )}
       <button onClick={() => product && onBuy(product)} disabled={disabled || !product} className="btn btn-primary mt-4 w-full">
-        {busy ? <Spinner /> : <><CreditCard size={15} /> {product ? `Pay ${formatInr(product.amount)}` : 'Choose minutes'}</>}
+        {busy ? <Spinner /> : <><CreditCard size={15} /> {product ? `Pay ${formatInr(product.amount)}` : 'Choose hours'}</>}
       </button>
     </div>
   );
@@ -290,7 +290,7 @@ function History({ payments }: { payments: Payment[] }) {
         return (
           <li key={p.id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 py-3 first:pt-0 last:pb-0">
             <div className="min-w-0">
-              <p className="text-sm font-medium">{productById(p.productId)?.name ?? p.productId}</p>
+              <p className="text-sm font-medium">{paidProductById(p.productId)?.name ?? p.productId}</p>
               <p className="mt-0.5 truncate text-xs text-faint">
                 {shortDate(p.paidAt ?? p.createdAt)}
                 {p.paymentId && <> · <span className="font-mono">{p.paymentId}</span></>}
@@ -338,7 +338,7 @@ function Billing() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState<ProductId | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
-  const [minutes, setMinutes] = useState(String(wanted?.kind === 'minutes' ? wanted.minutes : DEFAULT_MINUTES));
+  const [hours, setHours] = useState(String(wanted?.kind === 'minutes' ? wanted.minutes / 60 : DEFAULT_HOURS));
   const [highlight, setHighlight] = useState<'minutes' | 'monthly' | 'yearly' | null>(
     wanted ? (wanted.kind === 'minutes' ? 'minutes' : wanted.plan) : null,
   );
@@ -498,7 +498,7 @@ function Billing() {
         <header className="animate-fade-up">
           <h1 className="text-3xl font-semibold tracking-tight">Plans & billing</h1>
           <p className="mt-1 text-sm text-muted">
-            Buy exactly the minutes you need, or go unlimited for a month or a year. Every feature is included either way.
+            Buy exactly the hours you need, or go unlimited for a month or a year. Every feature is included either way.
           </p>
         </header>
 
@@ -517,18 +517,18 @@ function Billing() {
           <h2 id="choose" className="text-base font-semibold">{unlimited ? 'Add more' : 'Choose how to pay'}</h2>
           <p className="mt-1 mb-4 text-sm text-muted">
             {unlimited
-              ? 'Buying a plan again adds to your remaining days. Minutes you buy are kept for after your plan ends.'
-              : 'Minutes are best for a few interviews. Plans are best if you practise or interview every week.'}
+              ? 'Buying a plan again adds to your remaining days. Hours you buy are kept for after your plan ends.'
+              : 'Hours are best for a few interviews. Plans are best if you practise or interview every week.'}
           </p>
           <div className="grid gap-4 lg:grid-cols-3">
-            <MinutesPicker
-              minutes={minutes}
-              setMinutes={(v) => {
-                setMinutes(v);
+            <HoursPicker
+              hours={hours}
+              setHours={(v) => {
+                setHours(v);
                 setHighlight(null);
               }}
               highlighted={highlight === 'minutes'}
-              busy={busy?.startsWith('minutes_') ?? false}
+              busy={busy?.startsWith('hours_') ?? false}
               disabled={disabled}
               onBuy={buy}
               onSuggestPlan={() => {

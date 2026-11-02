@@ -1,7 +1,7 @@
 // Canonical site identity for metadata, structured data, the sitemap and social cards.
 
 import type { Metadata } from 'next';
-import { FREE_MINUTES, PLANS, PRICE_PER_MINUTE } from '@parakeet/shared';
+import { FREE_MINUTES, PLANS, PRICE_PER_HOUR } from '@parakeet/shared';
 import { company } from '@/lib/company';
 
 /** Public origin, no trailing slash. Every canonical URL and sitemap entry is built from it. */
@@ -98,8 +98,8 @@ export function siteJsonLd() {
       },
       {
         '@type': 'Offer',
-        name: 'Pay per minute',
-        price: String(PRICE_PER_MINUTE),
+        name: 'Pay per hour',
+        price: String(PRICE_PER_HOUR),
         priceCurrency: 'INR',
         url: absoluteUrl('/pricing'),
       },

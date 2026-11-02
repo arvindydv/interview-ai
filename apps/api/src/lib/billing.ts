@@ -1,4 +1,4 @@
-import { productById, type Payment, type PaymentStatus, type Product, type ProductId } from '@parakeet/shared';
+import { paidProductById, type Payment, type PaymentStatus, type Product, type ProductId } from '@parakeet/shared';
 import { sql } from './db.js';
 import { applyReferralCommission } from './partners.js';
 
@@ -45,7 +45,7 @@ export async function fulfilOrder(orderId: string, paymentId: string, amount: nu
       }
       return 'mismatch';
     }
-    const product = productById(p.product);
+    const product = paidProductById(p.product);
     if (!product) throw new Error(`payment ${p.id} has unknown product ${p.product}`);
     if (product.kind === 'minutes') {
       const seconds = product.minutes * 60;

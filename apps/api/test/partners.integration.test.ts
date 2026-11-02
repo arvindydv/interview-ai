@@ -149,30 +149,30 @@ describe('referral partners', { skip: !serviceKey && 'set SUPABASE_SERVICE_ROLE_
   test('payments earn commission at the rate in effect when paid; refunds take it back', async () => {
     const monthly = await buy('fan', 'monthly'); // ₹2,999 at 20%
     await sql`update public.partners set commission_bps = 1000 where id = ${partnerId}`;
-    await buy('fan', 'minutes_10'); // ₹100 at 10%
+    await buy('fan', 'hours_1'); // ₹899 at 10%
 
     let d = await dashboard();
     assert.equal(d.totals.signups, 1);
     assert.equal(d.totals.payingUsers, 1);
-    assert.equal(d.totals.revenue, 2999_00 + 100_00);
-    assert.equal(d.totals.earned, 599_80 + 10_00);
-    assert.equal(d.series.earned.at(-1)!.value, 599_80 + 10_00);
-    assert.deepEqual(d.referrals.map((r) => [r.label, r.paid, r.commission, r.email]), [['User 1', 2999_00 + 100_00, 609_80, undefined]]);
+    assert.equal(d.totals.revenue, 2999_00 + 899_00);
+    assert.equal(d.totals.earned, 599_80 + 89_90);
+    assert.equal(d.series.earned.at(-1)!.value, 599_80 + 89_90);
+    assert.deepEqual(d.referrals.map((r) => [r.label, r.paid, r.commission, r.email]), [['User 1', 2999_00 + 899_00, 689_70, undefined]]);
 
     assert.equal(await revokeRefunded(monthly.paymentId, monthly.orderId), true);
     d = await dashboard();
-    assert.equal(d.totals.revenue, 100_00);
-    assert.equal(d.totals.earned, 10_00);
+    assert.equal(d.totals.revenue, 899_00);
+    assert.equal(d.totals.earned, 89_90);
     assert.deepEqual(d.earnings.map((e) => e.status).sort(), ['paid', 'refunded']);
   });
 
   test('payouts reduce the balance; an inactive partner stops earning', async () => {
     await sql`insert into public.partner_payouts (partner_id, amount, created_by) values (${partnerId}, 4_00, 'test')`;
     await sql`update public.partners set active = false where id = ${partnerId}`;
-    await buy('fan', 'minutes_10');
+    await buy('fan', 'hours_1');
     const d = await dashboard();
-    assert.equal(d.totals.earned, 10_00);
+    assert.equal(d.totals.earned, 89_90);
     assert.equal(d.totals.paidOut, 4_00);
-    assert.equal(d.totals.balance, 6_00);
+    assert.equal(d.totals.balance, 85_90);
   });
 });

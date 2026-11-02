@@ -4,7 +4,7 @@ import {
   ArrowRight, Banknote, BookOpen, Briefcase, Camera, Check, Code2, Download, EyeOff, FileText, GraduationCap, HeartPulse,
   Landmark, Megaphone, Mic, Sparkles, Users,
 } from 'lucide-react';
-import { FREE_MINUTES, PLANS, PRICE_PER_MINUTE, formatInr } from '@parakeet/shared';
+import { FREE_MINUTES, PLANS, PRICE_PER_HOUR, formatInr } from '@parakeet/shared';
 import { HeroDemo } from '@/components/HeroDemo';
 import { DownloadButtons } from '@/components/DownloadButtons';
 import { MacInstallGuide } from '@/components/MacInstallGuide';
@@ -90,7 +90,7 @@ const faqs = [
   },
   {
     q: 'Is Friday AI free?',
-    a: `You get ${FREE_MINUTES} free minutes when you first sign in to the desktop app, with no card needed. After that it is ${formatInr(PRICE_PER_MINUTE * 100)} per minute, or unlimited with a ${formatInr(PLANS.monthly.amount)} monthly or ${formatInr(PLANS.yearly.amount)} yearly plan. Every feature is included on every plan.`,
+    a: `You get ${FREE_MINUTES} free minutes when you first sign in to the desktop app, with no card needed. After that it is ${formatInr(PRICE_PER_HOUR * 100)} per hour, or unlimited with a ${formatInr(PLANS.monthly.amount)} monthly or ${formatInr(PLANS.yearly.amount)} yearly plan. Every feature is included on every plan.`,
   },
   {
     q: 'Does it only work for software engineering interviews?',
