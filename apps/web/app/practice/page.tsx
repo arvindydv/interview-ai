@@ -383,7 +383,7 @@ function SetupCard({
                 </p>
                 <div className="flex gap-2">
                   <Link href="/pricing?from=practice" className="btn btn-ghost !py-2 text-sm">
-                    Buy minutes
+                    Buy hours
                   </Link>
                   <Link href="/#download" className="btn btn-primary !py-2">
                     <Download size={15} /> Get the app

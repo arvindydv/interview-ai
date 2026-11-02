@@ -115,7 +115,7 @@ export default function TermsPage() {
             trial.
           </li>
           <li>
-            <strong>Paid plans.</strong> You can pay per minute of live session time or buy a monthly or yearly plan. The
+            <strong>Paid plans.</strong> You can buy hours of live session time or buy a monthly or yearly plan. The
             current prices are on the pricing page. Prices are in Indian rupees (INR), and any applicable taxes are shown at
             checkout before you pay.
           </li>

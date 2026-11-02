@@ -3,32 +3,44 @@
 
 import type { TrialBalance } from './api.js';
 
-/** Live session price for minute packs, in rupees. */
-export const PRICE_PER_MINUTE = 10;
+/** Live session price for hour packs, in rupees. */
+export const PRICE_PER_HOUR = 899;
 /** Free live session time, once per person (granted by the API's lib/freeTrial.ts when the desktop app first signs in). */
 export const FREE_MINUTES = 5;
 
-/** Minutes someone can buy in one payment, when they pick their own amount. */
-export const MIN_MINUTES = 10;
-export const MAX_MINUTES = 1000;
+/** Hours someone can buy in one payment, when they pick their own amount. */
+export const MIN_HOURS = 1;
+export const MAX_HOURS = 10;
 /** Amounts offered as one-click choices on the billing page. */
-export const MINUTE_PRESETS = [30, 60, 120] as const;
+export const HOUR_PRESETS = [1, 2, 3] as const;
 
-/** `minutes_<n>` buys n minutes (MIN_MINUTES..MAX_MINUTES); `monthly` and `yearly` are plans. */
-export type ProductId = 'monthly' | 'yearly' | `minutes_${number}`;
+/**
+ * `hours_<n>` buys n hours (MIN_HOURS..MAX_HOURS); `monthly` and `yearly` are plans. `minutes_<n>` is
+ * the old per-minute pack: no longer sold, but still named by past payments.
+ */
+export type ProductId = 'monthly' | 'yearly' | `hours_${number}` | `minutes_${number}`;
 
 export type Product =
   | { id: ProductId; kind: 'minutes'; name: string; /** paise */ amount: number; minutes: number }
   | { id: ProductId; kind: 'plan'; name: string; /** paise */ amount: number; plan: 'monthly' | 'yearly'; days: number };
 
-export const isValidMinutes = (n: number) => Number.isInteger(n) && n >= MIN_MINUTES && n <= MAX_MINUTES;
+export const isValidHours = (n: number) => Number.isInteger(n) && n >= MIN_HOURS && n <= MAX_HOURS;
 
-/** A minute pack for `minutes` minutes, priced at PRICE_PER_MINUTE. Check isValidMinutes first. */
-export const minutesProduct = (minutes: number): Product => ({
+/** An hour pack for `hours` hours, priced at PRICE_PER_HOUR. Check isValidHours first. */
+export const hoursProduct = (hours: number): Product => ({
+  id: `hours_${hours}`,
+  kind: 'minutes',
+  name: hours === 1 ? '1 hour' : `${hours} hours`,
+  amount: hours * PRICE_PER_HOUR * 100,
+  minutes: hours * 60,
+});
+
+/** The old per-minute pack, at the ₹10/minute it sold for. */
+const legacyMinutesProduct = (minutes: number): Product => ({
   id: `minutes_${minutes}`,
   kind: 'minutes',
   name: `${minutes} minutes`,
-  amount: minutes * PRICE_PER_MINUTE * 100,
+  amount: minutes * 10 * 100,
   minutes,
 });
 
@@ -39,14 +51,20 @@ export const PLANS = {
   yearly: { id: 'yearly', kind: 'plan', name: 'Yearly plan', amount: 19999_00, plan: 'yearly', days: 365 },
 } as const satisfies Record<string, Product>;
 
-/** The product an id names, or null if it names none (unknown id, or minutes out of range). */
+/** A product that can be bought now, or null (unknown id, hours out of range, or a product no longer sold). */
 export function productById(id: unknown): Product | null {
   if (id === 'monthly' || id === 'yearly') return PLANS[id];
-  const m = typeof id === 'string' ? /^minutes_([1-9]\d{0,5})$/.exec(id) : null;
-  return m && isValidMinutes(Number(m[1])) ? minutesProduct(Number(m[1])) : null;
+  const m = typeof id === 'string' ? /^hours_([1-9]\d{0,5})$/.exec(id) : null;
+  return m && isValidHours(Number(m[1])) ? hoursProduct(Number(m[1])) : null;
 }
 
 export const isProductId = (id: unknown): id is ProductId => productById(id) !== null;
+
+/** The product a past payment was for, including products no longer sold. */
+export function paidProductById(id: unknown): Product | null {
+  const m = typeof id === 'string' ? /^minutes_([1-9]\d{0,5})$/.exec(id) : null;
+  return m ? legacyMinutesProduct(Number(m[1])) : productById(id);
+}
 
 /** 299900 → "₹2,999" */
 export const formatInr = (paise: number) =>

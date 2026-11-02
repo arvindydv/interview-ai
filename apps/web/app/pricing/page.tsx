@@ -1,20 +1,20 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { ArrowRight, CalendarDays, CalendarRange, Check, Timer } from 'lucide-react';
-import { FREE_MINUTES, MIN_MINUTES, PLANS, PRICE_PER_MINUTE, formatInr } from '@parakeet/shared';
+import { FREE_MINUTES, PLANS, PRICE_PER_HOUR, formatInr } from '@parakeet/shared';
 import { Faq, Magnetic, NavBar, Reveal, SpotlightGroup } from '@/components/landing/motion';
 import { Eyebrow, SiteFooter } from '@/components/landing/sections';
 import { JsonLd } from '@/components/JsonLd';
 import { breadcrumbJsonLd, faqJsonLd, pageMetadata, siteJsonLd } from '@/lib/site';
 
 export const metadata: Metadata = pageMetadata({
-  title: `Pricing: AI interview assistant plans from ₹${PRICE_PER_MINUTE}/min`,
-  description: `Friday AI pricing in INR: ₹${PRICE_PER_MINUTE} per minute, or unlimited real-time interview help for ${formatInr(PLANS.monthly.amount)}/month or ${formatInr(PLANS.yearly.amount)}/year. First ${FREE_MINUTES} minutes free, no card needed.`,
+  title: `Pricing: AI interview assistant plans from ₹${PRICE_PER_HOUR}/hour`,
+  description: `Friday AI pricing in INR: ₹${PRICE_PER_HOUR} per hour, or unlimited real-time interview help for ${formatInr(PLANS.monthly.amount)}/month or ${formatInr(PLANS.yearly.amount)}/year. First ${FREE_MINUTES} minutes free, no card needed.`,
   path: '/pricing',
 });
 
 // Rupees. The API charges from the same catalog (@parakeet/shared billing).
-const PER_MINUTE = PRICE_PER_MINUTE;
+const PER_HOUR = PRICE_PER_HOUR;
 const MONTHLY = PLANS.monthly.amount / 100;
 const YEARLY = PLANS.yearly.amount / 100;
 
@@ -31,14 +31,14 @@ const included = [
 const plans = [
   {
     icon: Timer,
-    name: 'Pay per minute',
-    price: inr(PER_MINUTE),
-    unit: '/ minute',
-    blurb: 'For the occasional interview. Only pay for the minutes Friday AI is listening.',
-    note: 'Billed by the minute of live session time. No subscription.',
-    perks: [`First ${FREE_MINUTES} minutes free`, `Buy any amount from ${MIN_MINUTES} minutes`, 'Minutes never expire'],
+    name: 'Pay per hour',
+    price: inr(PER_HOUR),
+    unit: '/ hour',
+    blurb: 'For the occasional interview. Buy the hours you need, and only the time Friday AI is listening is used.',
+    note: 'Used by the minute of live session time. No subscription.',
+    perks: [`First ${FREE_MINUTES} minutes free`, 'Buy one hour or more', 'Unused time never expires'],
     cta: 'Start paying as you go',
-    href: '/billing?product=minutes_30',
+    href: '/billing?product=hours_1',
     featured: false,
   },
   {
@@ -47,7 +47,7 @@ const plans = [
     price: inr(MONTHLY),
     unit: '/ month',
     blurb: 'For an active job search with several rounds every week.',
-    note: `Pays for itself after about ${Math.ceil(MONTHLY / PER_MINUTE)} minutes a month.`,
+    note: `Pays for itself once you need more than ${Math.floor(MONTHLY / PER_HOUR)} hours a month.`,
     perks: ['Unlimited session minutes', 'One-time payment, no auto-renewal'],
     cta: 'Go monthly',
     href: '/billing?product=monthly',
@@ -78,7 +78,7 @@ const faqs = [
   },
   {
     q: 'Can I switch plans later?',
-    a: 'Yes. You can move from pay per minute to a monthly or yearly plan at any time, and the new plan takes effect right away.',
+    a: 'Yes. You can move from pay per hour to a monthly or yearly plan at any time, and the new plan takes effect right away.',
   },
   {
     q: 'Do I get every feature on every plan?',
@@ -122,7 +122,7 @@ export default function PricingPage() {
               Simple pricing for your <span className="text-gradient">AI interview assistant</span>
             </h1>
             <p className="rise-in mx-auto mt-6 max-w-xl text-base text-muted sm:text-lg" style={{ '--i': 1 } as React.CSSProperties}>
-              Pay only for the minutes you use, or get unlimited real-time interview help with a monthly or yearly plan.
+              Buy hours as you need them, or get unlimited real-time interview help with a monthly or yearly plan.
               Live answers, coding solutions and AI mock interviews are included on every plan. Prices in INR.
             </p>
             <p className="rise-in mt-6 inline-flex items-center gap-2 rounded-full border border-brand/25 bg-brand/[0.06] px-4 py-1.5 text-sm text-brand" style={{ '--i': 2 } as React.CSSProperties}>
