@@ -35,12 +35,52 @@ export interface HistoryTurn {
   createdAt: string;
 }
 
-/** Post-interview summary (spec G2). */
+/** One recognised line of a live session's conversation, kept for the feedback after it. */
+export interface TranscriptLine {
+  source: 'interviewer' | 'you';
+  text: string;
+  at: string;
+}
+
+/** How the candidate answered, judged from their own words. Only when the desktop app heard their microphone. */
+export interface InterviewPerformance {
+  /** 0–10. */
+  score: number;
+  summary: string;
+  strengths: string[];
+  improvements: string[];
+  /** One per question asked (the session's turns with question text, in order). */
+  answers: {
+    /** 1-based, in that order. */
+    question: number;
+    /** False when their answer isn't in the transcript (microphone off, or nothing recognised). */
+    heard: boolean;
+    /** The gist of what they said, in a sentence. */
+    said: string;
+    /** 0–10; 0 when not heard. */
+    score: number;
+    feedback: string;
+  }[];
+}
+
+/** Post-interview feedback (spec G2), written automatically when a desktop interview ends. */
 export interface SessionDebrief {
   overview: string;
   topics: string[];
   weakSpots: { topic: string; why: string; study: string }[];
   thankYouEmail: { subject: string; body: string };
+  performance?: InterviewPerformance;
+}
+
+/** Questions a desktop session needs before its feedback is written by itself (fewer is a test, not an interview). */
+export const AUTO_DEBRIEF_MIN_QUESTIONS = 2;
+
+/** A report's file name from its date: "12_oct_interview.pdf". `timeZone` defaults to the local one. */
+export function reportFileName(date: Date | string, kind: 'interview' | 'practice', timeZone?: string) {
+  const parts = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', timeZone }).formatToParts(new Date(date));
+  const day = parts.find((p) => p.type === 'day')?.value ?? '';
+  const month = (parts.find((p) => p.type === 'month')?.value ?? '').toLowerCase().slice(0, 3);
+  return `${day}_${month}_${kind}.pdf`;
 }
 
 export interface HistorySession extends HistorySessionSummary {

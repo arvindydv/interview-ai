@@ -25,10 +25,12 @@ import applierRoutes from './routes/applier.js';
 import autoApplyRoutes from './routes/autoApply.js';
 import jobResumeRoutes from './routes/jobResumes.js';
 import coldEmailRoutes from './routes/coldEmail.js';
+import referralRoutes, { referralClickRoutes } from './routes/referrals.js';
 import adminAuthRoutes from './routes/admin/auth.js';
 import adminOverviewRoutes from './routes/admin/overview.js';
 import adminUserRoutes from './routes/admin/users.js';
 import adminReportRoutes from './routes/admin/reports.js';
+import adminPartnerRoutes from './routes/admin/partners.js';
 
 // Keep HTTPS connections (Deepgram, OpenRouter, Claude) open between requests. With the default 4 s,
 // every practice interviewer turn paid a fresh TLS handshake (about 1 s from Mumbai) on each service.
@@ -69,10 +71,13 @@ await app.register(autoApplyRoutes);
 await app.register(coldEmailRoutes);
 await app.register(applierRoutes);
 await app.register(jobResumeRoutes);
+await app.register(referralRoutes);
+await app.register(referralClickRoutes);
 await app.register(adminAuthRoutes);
 await app.register(adminOverviewRoutes);
 await app.register(adminUserRoutes);
 await app.register(adminReportRoutes);
+await app.register(adminPartnerRoutes);
 
 const shutdown = async () => {
   await app.close();

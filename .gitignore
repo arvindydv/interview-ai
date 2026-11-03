@@ -15,6 +15,8 @@ apps/desktop/src-tauri/target/
 apps/desktop/dist/
 packages/emails/preview/
 
-# Worker Python (python/resume_doc.py)
-apps/worker/.venv/
+# Local Python environment and caches (apps/worker)
+.venv/
 __pycache__/
+# Packed browser extension builds
+apps/extension/dist.zip

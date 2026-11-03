@@ -26,6 +26,8 @@ const schema = z.object({
   LLM_FAST_MODEL: z.string().optional(),
   /** Screenshot questions: vision / strong tier (spec D3). */
   LLM_VISION_MODEL: z.string().optional(),
+  /** The practice interviewer's turns. Default: the fastest available (lib/interviewer.ts). */
+  LLM_INTERVIEWER_MODEL: z.string().optional(),
 
   // Live transcription: Deepgram Flux (turn-based streaming STT). Without a key, only typed and
   // screenshot questions work.

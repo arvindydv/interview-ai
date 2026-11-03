@@ -42,7 +42,7 @@ export default function RefundsPage() {
       <LegalSection id="cancel" title="2. Cancelling a plan">
         <ul>
           <li>
-            <strong>Pay per minute:</strong> there is nothing to cancel. You pay only for the minutes you buy, and you can
+            <strong>Pay per hour:</strong> there is nothing to cancel. You pay only for the hours you buy, and you can
             stop using them at any time.
           </li>
           <li>
@@ -59,7 +59,7 @@ export default function RefundsPage() {
           <li>
             <strong>Change of mind:</strong> you get a full refund of a purchase if you ask within {REFUND_DAYS} days of
             paying and have used no more than {REFUND_MAX_MINUTES} minutes of live session time since then. This applies
-            to a minute pack, a monthly plan or a yearly plan, and to one purchase per account.
+            to an hour pack, a monthly plan or a yearly plan, and to one purchase per account.
           </li>
           <li>
             <strong>Duplicate or failed payments:</strong> if you were charged twice, or money was taken from your account

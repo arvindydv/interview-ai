@@ -1,5 +1,6 @@
-import { productById, type Payment, type PaymentStatus, type Product, type ProductId } from '@parakeet/shared';
+import { paidProductById, type Payment, type PaymentStatus, type Product, type ProductId } from '@parakeet/shared';
 import { sql } from './db.js';
+import { applyReferralCommission } from './partners.js';
 
 // Payment bookkeeping. The checkout callback (POST /v1/billing/verify) and the Razorpay webhook both
 // report the same payment, in either order and possibly more than once (webhooks are retried), so
@@ -44,7 +45,7 @@ export async function fulfilOrder(orderId: string, paymentId: string, amount: nu
       }
       return 'mismatch';
     }
-    const product = productById(p.product);
+    const product = paidProductById(p.product);
     if (!product) throw new Error(`payment ${p.id} has unknown product ${p.product}`);
     if (product.kind === 'minutes') {
       const seconds = product.minutes * 60;
@@ -68,6 +69,7 @@ export async function fulfilOrder(orderId: string, paymentId: string, amount: nu
         where id = ${p.user_id}`;
       await tx`update public.payments set granted_days = ${product.days} where id = ${p.id}`;
     }
+    await applyReferralCommission(tx, p.id);
     return 'granted';
   });
 }

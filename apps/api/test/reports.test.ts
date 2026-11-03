@@ -1,39 +1,15 @@
-import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { REPORT_LIMITS, REPORT_REASONS } from '@parakeet/shared';
-import { reportBody, reportPatch } from '../src/lib/reports.js';
+import assert from 'node:assert/strict';
+import { reportFileName } from '@parakeet/shared';
+import { printable } from '../src/lib/pdf.js';
 
-test('accepts every reason the desktop app offers', () => {
-  for (const reason of REPORT_REASONS) {
-    assert.equal(reportBody.safeParse({ turnId: 't1', reason }).success, true, reason);
-  }
+test('reports are named by the day they happened, in the given time zone', () => {
+  assert.equal(reportFileName('2026-10-12T10:00:00Z', 'interview', 'Asia/Kolkata'), '12_oct_interview.pdf');
+  // 20:00 UTC on 3 September is already the 4th in India; September is "sep", not "sept".
+  assert.equal(reportFileName('2026-09-03T20:00:00Z', 'practice', 'Asia/Kolkata'), '4_sep_practice.pdf');
 });
 
-test('rejects an unknown reason with a readable message', () => {
-  const r = reportBody.safeParse({ turnId: 't1', reason: 'spam' });
-  assert.equal(r.success, false);
-  assert.match(r.error!.issues[0].message, /harmful, inappropriate, misleading or other/);
-});
-
-test('requires a turn id', () => {
-  assert.equal(reportBody.safeParse({ reason: 'harmful' }).success, false);
-  assert.equal(reportBody.safeParse({ turnId: '   ', reason: 'harmful' }).success, false);
-  assert.equal(reportBody.safeParse({ turnId: 'x'.repeat(129), reason: 'harmful' }).success, false);
-});
-
-test('details are optional, trimmed and capped', () => {
-  assert.equal(reportBody.parse({ turnId: 't1', reason: 'other' }).details, '');
-  assert.equal(reportBody.parse({ turnId: 't1', reason: 'other', details: '  rude  ' }).details, 'rude');
-  const tooLong = 'x'.repeat(REPORT_LIMITS.maxDetailsChars + 1);
-  assert.equal(reportBody.safeParse({ turnId: 't1', reason: 'other', details: tooLong }).success, false);
-});
-
-test('the client copy of the answer is truncated, not rejected', () => {
-  const r = reportBody.parse({ turnId: 't1', reason: 'misleading', answer: 'a'.repeat(REPORT_LIMITS.maxAnswerChars + 50) });
-  assert.equal(r.answer.length, REPORT_LIMITS.maxAnswerChars);
-});
-
-test('admin review accepts only known statuses', () => {
-  assert.equal(reportPatch.safeParse({ status: 'actioned' }).success, true);
-  assert.equal(reportPatch.safeParse({ status: 'deleted' }).success, false);
+test('report text uses characters the font can print, all the way down', () => {
+  const data = printable({ say: 'with EXPLAIN to', list: ['sub‑queries', 7], nested: { x: 'a b​c' } });
+  assert.deepEqual(data, { say: 'with EXPLAIN to', list: ['sub-queries', 7], nested: { x: 'a bc' } });
 });

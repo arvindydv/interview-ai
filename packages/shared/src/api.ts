@@ -14,6 +14,8 @@ export interface Me {
   trial: TrialBalance | null;
   /** Whether this account got the free trial minutes, and if not, why. */
   trialStatus: FreeTrialStatus;
+  /** The account belongs to a referral partner, who has a dashboard at /partner. */
+  partner: boolean;
 }
 
 /**

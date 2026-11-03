@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
-import { MAX_MINUTES, MIN_MINUTES, isProductId, productById, type BillingOverview, type CheckoutOrder } from '@parakeet/shared';
+import { MAX_HOURS, MIN_HOURS, isProductId, productById, type BillingOverview, type CheckoutOrder } from '@parakeet/shared';
 import { requireAuth } from '../lib/auth.js';
 import {
   MAX_ORDERS_PER_HOUR, fulfilOrder, listPayments, markOrderFailed, reusableOrder, revokeRefunded, type FulfilResult,
@@ -25,7 +25,7 @@ const CURRENCY = 'INR';
 const DISABLED = { error: 'payments_disabled', message: 'Payments are not available right now. Please try again later.' };
 
 const orderBody = z.object({
-  productId: z.string().refine(isProductId, `Choose between ${MIN_MINUTES} and ${MAX_MINUTES} minutes, or a plan`),
+  productId: z.string().refine(isProductId, `Choose between ${MIN_HOURS} and ${MAX_HOURS} hours, or a plan`),
   // Marketing consent and Meta cookies (lib/metaCapi.ts). Anything malformed counts as no consent
   // rather than failing the checkout.
   tracking: z

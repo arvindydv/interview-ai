@@ -20,7 +20,7 @@ jobs:
       MSIX_PACKAGE_NAME: FridayAI.FridayAIDesktopAssistant
       MSIX_PUBLISHER: CN=68B4F28C-1583-4F8B-B95E-109DB1059BC5
       # Bump for every Store submission (the fourth part must stay 0).
-      MSIX_VERSION: 0.1.4.0
+      MSIX_VERSION: 0.1.6.0
       PARAKEET_WEB_URL: ${{ vars.PARAKEET_WEB_URL }}
       PARAKEET_API_URL: ${{ vars.PARAKEET_API_URL }}
       PARAKEET_SUPABASE_URL: ${{ vars.PARAKEET_SUPABASE_URL }}
@@ -61,20 +61,20 @@ jobs:
           foreach ($s in @("Report this response", "report_answer", "Submit report")) {
             if (-not ($ui -match [regex]::Escape($s))) { throw "Built UI is missing '$s'" }
           }
-          $exe = Get-ChildItem -Path src-tauri/target -Recurse -File -Filter "parakeet.exe" |
+          $exe = Get-ChildItem -Path src-tauri/target -Recurse -File -Filter "friday.exe" |
             Where-Object { $_.Directory.Name -eq "release" } | Select-Object -First 1
           $bin = [IO.File]::ReadAllText($exe.FullName, [Text.Encoding]::Latin1)
           foreach ($s in @("report_answer", "/v1/reports")) {
-            if (-not $bin.Contains($s)) { throw "parakeet.exe is missing '$s'" }
+            if (-not $bin.Contains($s)) { throw "friday.exe is missing '$s'" }
           }
-          Write-Host "Reporting feature present in UI bundle and parakeet.exe"
+          Write-Host "Reporting feature present in UI bundle and friday.exe"
 
-          # The app's own version (tauri.conf.json, baked into parakeet.exe) must match the MSIX version.
+          # The app's own version (tauri.conf.json, baked into friday.exe) must match the MSIX version.
           $appVersion = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
           if ("$appVersion.0" -ne $env:MSIX_VERSION) { throw "tauri.conf.json version $appVersion does not match MSIX $env:MSIX_VERSION" }
           $fileVersion = $exe.VersionInfo.FileVersion
-          if (-not "$fileVersion".StartsWith($appVersion)) { throw "parakeet.exe file version is '$fileVersion', expected $appVersion" }
-          Write-Host "App version $appVersion (parakeet.exe $fileVersion) matches MSIX $env:MSIX_VERSION"
+          if (-not "$fileVersion".StartsWith($appVersion)) { throw "friday.exe file version is '$fileVersion', expected $appVersion" }
+          Write-Host "App version $appVersion (friday.exe $fileVersion) matches MSIX $env:MSIX_VERSION"
 
       - uses: microsoft/setup-WinAppCli@v0.1
 
@@ -90,13 +90,13 @@ jobs:
           Get-ChildItem -Path src-tauri/target -Recurse -Filter "*.exe" |
             Select-Object -ExpandProperty FullName
 
-          $exe = Get-ChildItem -Path src-tauri/target -Recurse -File -Filter "parakeet.exe" |
+          $exe = Get-ChildItem -Path src-tauri/target -Recurse -File -Filter "friday.exe" |
             Where-Object { $_.Directory.Name -eq "release" } |
             Select-Object -First 1
 
           if (-not $exe) { throw "Windows executable not found" }
 
-          Copy-Item $exe.FullName store-msix/payload/parakeet.exe
+          Copy-Item $exe.FullName store-msix/payload/friday.exe
 
           Set-Location store-msix/payload
 
@@ -105,7 +105,7 @@ jobs:
             --publisher-name "$env:MSIX_PUBLISHER" `
             --version "$env:MSIX_VERSION" `
             --description "Friday AI Desktop Assistant" `
-            --entrypoint "parakeet.exe"
+            --entrypoint "friday.exe"
 
           if ($LASTEXITCODE -ne 0) { throw "Manifest generation failed" }
 
@@ -146,7 +146,7 @@ jobs:
 
           winapp pack . `
             --manifest ./Package.appxmanifest `
-            --executable parakeet.exe `
+            --executable friday.exe `
             --no-sign `
             --output "../FridayAI_$($env:MSIX_VERSION)_x64.msix"
 

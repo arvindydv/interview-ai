@@ -53,6 +53,11 @@ export class AnswerMeter {
     return this.firstVoice !== null;
   }
 
+  /** How long it has been quiet since the candidate last spoke, in ms (0 while speaking or before they start). */
+  get silentMs() {
+    return this.silenceStart === null ? 0 : this.ms - this.silenceStart;
+  }
+
   /** Raw PCM (linear16, mono) from the microphone. */
   audio(pcm: Buffer) {
     let buf = this.carry.length ? Buffer.concat([this.carry, pcm]) : pcm;

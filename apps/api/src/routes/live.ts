@@ -3,7 +3,8 @@ import type { FastifyInstance } from 'fastify';
 import {
   DEFAULT_SETTINGS, IMAGE_LIMITS, parseMessage, type ClientMessage, type ImageAttachment, type ServerMessage,
 } from '@parakeet/shared';
-import { closeLiveSession, openLiveSession, questionsToday, recordTurn, type TurnRecord } from '../lib/activity.js';
+import { appendTranscript, closeLiveSession, openLiveSession, questionsToday, recordTurn, type TurnRecord } from '../lib/activity.js';
+import { requestDebrief } from '../lib/debrief.js';
 import { requireAuth } from '../lib/auth.js';
 import { loadInterviewContext, type InterviewContext } from '../lib/context.js';
 import { Conversation, Listener, type AnswerHandle } from '../lib/listen.js';
@@ -243,7 +244,12 @@ export default async function liveRoutes(app: FastifyInstance) {
         req.log.error({ err }, 'failed to record live session');
         return null;
       });
-      const conversation = new Conversation();
+      // Every finished line is also saved with the session, for the feedback after the interview.
+      const conversation = new Conversation((source, text) => {
+        void liveSessionId
+          .then((id) => (id ? appendTranscript(id, source, text) : undefined))
+          .catch((err) => req.log.warn({ err }, 'failed to save a transcript line'));
+      });
 
       // Pre-warm the fast tier's prompt cache with this user's context, so the first question of
       // the interview starts from a cache hit and an open connection.
@@ -367,7 +373,14 @@ export default async function liveRoutes(app: FastifyInstance) {
         for (const ctrl of turns.values()) ctrl.abort();
         untrack();
         publishLive(userId, { kind: 'close' });
-        void liveSessionId.then((id) => (id ? closeLiveSession(id) : undefined)).catch(() => {});
+        void liveSessionId
+          .then(async (id) => {
+            if (!id) return;
+            await closeLiveSession(id);
+            // A real interview (enough questions) gets its feedback written straight away.
+            await requestDebrief(id, userId, { auto: true });
+          })
+          .catch((err) => req.log.warn({ err }, 'failed to close the live session'));
         req.log.info({ sessionId }, 'live session closed');
       });
     },

@@ -5,7 +5,8 @@ class Pcm16 extends AudioWorkletProcessor {
   constructor(options) {
     super();
     this.ratio = sampleRate / options.processorOptions.rate;
-    this.frame = new Int16Array(options.processorOptions.frame);
+    this.size = options.processorOptions.frame;
+    this.frame = new Int16Array(this.size);
     this.n = 0;
     this.pos = 0;
     this.sq = 0;
@@ -19,9 +20,10 @@ class Pcm16 extends AudioWorkletProcessor {
       const s = Math.max(-1, Math.min(1, input[i] * (1 - f) + (i + 1 < input.length ? input[i + 1] : input[i]) * f));
       this.sq += s * s;
       this.frame[this.n++] = s < 0 ? s * 0x8000 : s * 0x7fff;
-      if (this.n === this.frame.length) {
+      if (this.n === this.size) {
         this.port.postMessage({ pcm: this.frame.buffer, level: Math.sqrt(this.sq / this.n) }, [this.frame.buffer]);
-        this.frame = new Int16Array(this.frame.length);
+        // The transfer detached this.frame (its length is now 0), so the next one is sized from this.size.
+        this.frame = new Int16Array(this.size);
         this.n = 0;
         this.sq = 0;
       }

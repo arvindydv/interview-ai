@@ -1535,6 +1535,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "friday"
+version = "0.1.6"
+dependencies = [
+ "anyhow",
+ "ashpd",
+ "base64 0.23.1",
+ "cpal",
+ "futures-util",
+ "image",
+ "keyring",
+ "log",
+ "os_info",
+ "reqwest",
+ "rustix 1.1.5",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-clipboard-manager",
+ "tauri-plugin-global-shortcut",
+ "tauri-plugin-log",
+ "tauri-plugin-opener",
+ "tauri-plugin-single-instance",
+ "tokio",
+ "tokio-tungstenite",
+ "url",
+ "uuid",
+ "winreg",
+ "xcap",
+]
+
+[[package]]
 name = "futures-channel"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3602,39 +3635,6 @@ dependencies = [
  "gobject-sys",
  "libc",
  "system-deps 6.2.2",
-]
-
-[[package]]
-name = "parakeet"
-version = "0.1.4"
-dependencies = [
- "anyhow",
- "ashpd",
- "base64 0.23.1",
- "cpal",
- "futures-util",
- "image",
- "keyring",
- "log",
- "os_info",
- "reqwest",
- "rustix 1.1.5",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "tauri",
- "tauri-build",
- "tauri-plugin-clipboard-manager",
- "tauri-plugin-global-shortcut",
- "tauri-plugin-log",
- "tauri-plugin-opener",
- "tauri-plugin-single-instance",
- "tokio",
- "tokio-tungstenite",
- "url",
- "uuid",
- "winreg",
- "xcap",
 ]
 
 [[package]]

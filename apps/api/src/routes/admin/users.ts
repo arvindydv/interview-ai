@@ -8,7 +8,7 @@ import { forgetUserStatus } from '../../lib/auth.js';
 import { sql } from '../../lib/db.js';
 import { disconnectUser, onlineUserIds } from '../../lib/liveRegistry.js';
 import { profileQueue } from '../../lib/queues.js';
-import { fillDays } from './overview.js';
+import { fillDays } from '../../lib/series.js';
 
 const PAGE_SIZE = 25;
 const LIST_ANSWER_CHARS = 280;

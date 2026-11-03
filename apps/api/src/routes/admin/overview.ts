@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { Queue } from 'bullmq';
-import { ROUND_TYPES, type AdminOverview, type AdminSystem, type Breakdown, type DayPoint, type QueueStats } from '@parakeet/shared';
+import { ROUND_TYPES, type AdminOverview, type AdminSystem, type Breakdown, type QueueStats } from '@parakeet/shared';
 import { audit, requireAdmin } from '../../lib/adminAuth.js';
 import { channelStats } from '../../lib/autoApplyReports.js';
 import { sql } from '../../lib/db.js';
@@ -8,22 +8,8 @@ import { connectionCount, onlineUserIds } from '../../lib/liveRegistry.js';
 import { llmConfigured, resolveModels } from '../../lib/llm.js';
 import { emailQueue, profileQueue, systemQueue } from '../../lib/queues.js';
 import { getSettings } from '../../lib/settings.js';
+import { SERIES_DAYS, fillDays } from '../../lib/series.js';
 import { healthReport } from '../health.js';
-
-const SERIES_DAYS = 30;
-
-/** Turns sparse per-day counts into a dense series ending today (UTC), zero-filled. */
-export function fillDays(rows: { day: string; n: number }[], days = SERIES_DAYS): DayPoint[] {
-  const byDay = new Map(rows.map((r) => [r.day, r.n]));
-  const out: DayPoint[] = [];
-  const today = new Date();
-  for (let i = days - 1; i >= 0; i--) {
-    const d = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - i));
-    const day = d.toISOString().slice(0, 10);
-    out.push({ day, value: byDay.get(day) ?? 0 });
-  }
-  return out;
-}
 
 const queues: Record<string, Queue> = { system: systemQueue, email: emailQueue, profile: profileQueue };
 
