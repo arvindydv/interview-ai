@@ -6,6 +6,7 @@ import {
 import {
   APPLICATION_STATUSES, APPLICATION_STATUS_LABELS, type ApplicationStatus, type FeedDetail, type FeedItem,
 } from '@parakeet/shared';
+import { ColdEmailPanel } from './ColdEmailPanel';
 import { TailorPanel } from './TailorPanel';
 import { AgencyBadge, CompanyLogo, MatchRing, Spinner, StartupBadge, ViaBadge, matchTone } from './ui';
 import { api, ApiError } from '@/lib/api';
@@ -227,6 +228,8 @@ export function JobDetail({
             )}
           </section>
         )}
+
+        {!(missing || head.closed) && job && <ColdEmailPanel id={id} company={job.company} score={match?.score ?? null} />}
 
         {!(missing || head.closed) && job && <TailorPanel id={id} partial={job.descriptionPartial} />}
 

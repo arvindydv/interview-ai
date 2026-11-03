@@ -78,6 +78,20 @@ const schema = z.object({
   CAREERJET_API_KEY: z.string().optional(),
   /** Careerjet's country site, e.g. en_IN. */
   CAREERJET_LOCALE: z.string().default('en_IN'),
+
+  // Friday Jobs cold email, sent from the candidate's own Gmail (lib/gmail.ts). Off until all three are
+  // set. Google Cloud console → APIs & Services: enable the Gmail API, create an OAuth client (Web
+  // application) with redirect URI <API_PUBLIC_URL>/v1/cold-email/gmail/callback, and add the
+  // gmail.send scope to the consent screen (a restricted scope: Google verifies the app before it can
+  // be used by anyone outside the test users).
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  GOOGLE_CLIENT_SECRET: z.string().optional(),
+  /** Encrypts stored Gmail refresh tokens: 32 random bytes, base64 (openssl rand -base64 32). Changing it disconnects every Gmail. */
+  GMAIL_TOKEN_KEY: z.string().optional(),
+  /** This API's public URL, for Google's OAuth redirect. */
+  API_PUBLIC_URL: z.url().default('http://localhost:4000'),
+  /** The Friday Jobs site, where Google sends the candidate back after connecting Gmail. */
+  JOBS_URL: z.url().default('http://localhost:3300'),
 });
 
 // Empty values in .env mean "not set".

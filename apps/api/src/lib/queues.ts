@@ -136,3 +136,16 @@ export async function queueAutoApply(
     log.error({ err, name }, 'failed to enqueue auto apply job');
   }
 }
+
+// Friday Jobs cold email, run by apps/worker (queues/coldEmail.ts): "coldemail.draft" { coldEmailId }
+// finds the hiring contacts, tailors the resume if needed and writes the email.
+export const COLD_EMAIL_QUEUE = 'coldemail';
+export const coldEmailQueue = new Queue<{ coldEmailId: string }>(COLD_EMAIL_QUEUE, {
+  connection,
+  defaultJobOptions: {
+    attempts: 2,
+    backoff: { type: 'exponential', delay: 5_000 },
+    removeOnComplete: { age: 24 * 3600 },
+    removeOnFail: { age: 7 * 24 * 3600 },
+  },
+});
