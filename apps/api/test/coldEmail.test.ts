@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
+process.env.SUPABASE_URL ??= 'http://127.0.0.1:54321';
+process.env.DATABASE_URL ??= 'postgresql://postgres:postgres@127.0.0.1:54322/postgres';
+process.env.REDIS_URL ??= 'redis://127.0.0.1:6380';
 process.env.GMAIL_TOKEN_KEY = Buffer.alloc(32, 7).toString('base64');
 process.env.GOOGLE_CLIENT_ID = 'client';
 process.env.GOOGLE_CLIENT_SECRET = 'secret';
