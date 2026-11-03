@@ -52,6 +52,12 @@ const schema = z.object({
   JOOBLE_HOST: z.string().default('jooble.org'),
   JOOBLE_CALLS_PER_SYNC: z.coerce.number().int().min(1).max(200).default(20),
 
+  // Friday Jobs cold email: finds recruiters' and hiring managers' addresses by company domain
+  // (hunter.io, API key from hunter.io/api-keys). Unset: only addresses in the posting, or ones the
+  // candidate types, are used. Results are cached a month per company (public.contact_lookups).
+  HUNTER_API_KEY: z.string().optional(),
+  /** Cold emails: Sonnet-tier by default, as they go to a person in the candidate's name. */
+  LLM_COLD_EMAIL_MODEL: z.string().optional(),
 });
 
 // Empty values in .env mean "not set".

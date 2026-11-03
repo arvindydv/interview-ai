@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { BarChart3, Bookmark, Crown, FileStack, Globe, Layers, LogOut, Menu, Search, Send, Sparkles, Target, UserRound, X, Zap } from 'lucide-react';
+import { BarChart3, Bookmark, Crown, FileStack, Globe, Layers, LogOut, Mail, Menu, Search, Send, Sparkles, Target, UserRound, X, Zap } from 'lucide-react';
 import { Logo } from './Logo';
 import { Spinner } from './ui';
 import { JobsProvider, useJobs } from '@/lib/jobs';
@@ -21,6 +21,7 @@ const MINE = [
   { href: '/saved', label: 'Saved', icon: Bookmark, count: 'saved' },
   { href: '/applied', label: 'Applied', icon: Send, count: 'applied' },
   { href: '/auto-apply', label: 'Auto Apply', icon: Zap, count: null },
+  { href: '/cold-emails', label: 'Cold emails', icon: Mail, count: null },
   { href: '/analytics', label: 'Analytics', icon: BarChart3, count: null },
   { href: '/resumes', label: 'Resumes', icon: FileStack, count: null },
   { href: '/plans', label: 'Plans', icon: Crown, count: null },
