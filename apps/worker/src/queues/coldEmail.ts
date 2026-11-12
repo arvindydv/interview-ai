@@ -1,6 +1,7 @@
 import { UnrecoverableError, Worker } from 'bullmq';
 import { z } from 'zod';
-import { EMPTY_APPLICATION_PROFILE, TAILOR_LIMITS, hiringAddress, postingContacts, senderName, type ApplicationProfile, type ColdEmailContact } from '@parakeet/shared';
+import { AGGREGATORS, EMPTY_APPLICATION_PROFILE, TAILOR_LIMITS, senderName, type ApplicationProfile } from '@parakeet/shared';
+import { findContacts } from '../contacts.js';
 import { sql } from '../db.js';
 import { env } from '../env.js';
 import { PermanentError, llmConfigured, structured } from '../llm.js';
@@ -11,105 +12,6 @@ import { createTailoring, fixNames, runTailoring, tailorModel } from './tailor.j
 // from the candidate's Gmail once they press Send.
 
 export const COLD_EMAIL_QUEUE = 'coldemail';
-
-/** Finder results are reused for a month per company. */
-const LOOKUP_DAYS = 30;
-
-const HIRING_POSITION = /recruit|talent|hiring|people|human resources|\bhr\b|staffing|acquisition/i;
-const LEADER_POSITION = /founder|ceo|cto|chief|head of|vp|director|manager/i;
-
-interface HunterEmail {
-  value: string;
-  type: 'personal' | 'generic';
-  confidence: number | null;
-  first_name: string | null;
-  last_name: string | null;
-  position: string | null;
-  department: string | null;
-}
-
-/** After Hunter says the key is bad or a limit is reached, it isn't asked again until then. */
-let hunterPausedUntil = 0;
-
-async function hunterSearch(params: Record<string, string>): Promise<HunterEmail[]> {
-  const url = new URL('https://api.hunter.io/v2/domain-search');
-  for (const [k, v] of Object.entries({ ...params, limit: '10', api_key: env.HUNTER_API_KEY! })) url.searchParams.set(k, v);
-  const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
-  // 400: Hunter couldn't use the domain or company name. Nothing to find, and retrying won't change it.
-  if (res.status === 400 || res.status === 404) return [];
-  // 401: bad key. 403: too many requests a second. 429: the month's searches are used up.
-  if (res.status === 401 || res.status === 403 || res.status === 429) {
-    hunterPausedUntil = Date.now() + (res.status === 403 ? 60_000 : 3600_000);
-    throw new Error(res.status === 401 ? 'Hunter refused the API key' : `Hunter limit reached (HTTP ${res.status})`);
-  }
-  if (!res.ok) throw new Error(`Hunter domain search: HTTP ${res.status}`);
-  const body = (await res.json()) as { data?: { emails?: HunterEmail[] } };
-  return body.data?.emails ?? [];
-}
-
-/**
- * The company's recruiters (then founders and managers, who hire at small companies) from the email
- * finder, cached a month. Empty when HUNTER_API_KEY isn't set or the finder fails: the candidate can
- * always type an address.
- */
-/**
- * Hosts where many companies have a page (careers sites, site builders, job boards): their domain
- * belongs to the host, so searching it would find the host's staff. Those companies are looked up by name.
- */
-const SHARED_HOSTS =
-  /(^|\.)(notion\.site|notion\.so|github\.io|vercel\.app|netlify\.app|webflow\.io|wixsite\.com|carrd\.co|framer\.(website|ai)|super\.site|linkedin\.com|ashbyhq\.com|lever\.co|greenhouse\.io|workable\.com|smartrecruiters\.com|myworkdayjobs\.com|keka\.com|zohorecruit\.(com|in)|freshteam\.com|google\.com|sites\.google\.com|medium\.com|substack\.com)$/;
-
-const VALID_EMAIL = /^[a-z0-9._%+-]+@[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}$/;
-
-/** The company's own domain from its website, or null when it's on a shared host. */
-export function companyDomain(website: string | null) {
-  const domain = website?.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').split(/[/?#:]/)[0] || null;
-  return domain && domain.includes('.') && !SHARED_HOSTS.test(domain) ? domain : null;
-}
-
-async function finderContacts(website: string | null, company: string): Promise<ColdEmailContact[]> {
-  if (!env.HUNTER_API_KEY || Date.now() < hunterPausedUntil) return [];
-  const domain = companyDomain(website);
-  const key = domain ?? `name:${company.toLowerCase()}`;
-  const [cached] = await sql<{ contacts: ColdEmailContact[] }[]>`
-    select contacts from public.contact_lookups
-    where key = ${key} and looked_up_at > now() - make_interval(days => ${LOOKUP_DAYS})`;
-  if (cached) return cached.contacts;
-
-  const target: Record<string, string> = domain ? { domain } : { company };
-  let emails: HunterEmail[];
-  try {
-    emails = await hunterSearch({ ...target, department: 'hr' });
-    if (!emails.some((e) => e.type === 'personal')) emails = [...emails, ...(await hunterSearch({ ...target, department: 'executive' }))];
-  } catch (err) {
-    console.warn(`[coldemail] finder lookup for ${key} failed:`, (err as Error).message);
-    return [];
-  }
-  const seen = new Set<string>();
-  const contacts = emails
-    .map((e) => ({ ...e, value: (e.value ?? '').trim().toLowerCase() }))
-    // A person's address the finder is fairly sure of, or a shared mailbox that takes applications (not support@, privacy@…).
-    .filter((e) => VALID_EMAIL.test(e.value) && (e.confidence ?? 0) >= 50 && (e.type === 'personal' || hiringAddress(e.value) !== null))
-    .filter((e) => !seen.has(e.value) && seen.add(e.value))
-    .map((e): ColdEmailContact => ({
-      email: e.value,
-      name: [e.first_name, e.last_name].filter(Boolean).join(' ') || null,
-      position: e.position,
-      source: 'finder',
-      confidence: e.confidence,
-    }))
-    .sort((a, b) => rank(b) - rank(a));
-  await sql`
-    insert into public.contact_lookups (key, contacts) values (${key}, ${sql.json(contacts as never)})
-    on conflict (key) do update set contacts = excluded.contacts, looked_up_at = now()`;
-  return contacts;
-}
-
-/** Recruiters first, then leaders, then shared mailboxes; more confident first within each. */
-function rank(c: ColdEmailContact) {
-  const role = HIRING_POSITION.test(c.position ?? '') ? 300 : LEADER_POSITION.test(c.position ?? '') ? 200 : c.name ? 100 : 0;
-  return role + (c.confidence ?? 0);
-}
 
 const DraftSchema = z.object({
   subject: z.string().describe('The subject line, under 70 characters'),
@@ -185,12 +87,14 @@ export async function draftColdEmail(id: string, opts: { lastAttempt: boolean })
     location: string | null;
     description: string | null;
     website: string | null;
+    apply_url: string | null;
     score: number | null;
     matched_skills: string[] | null;
     application: Partial<ApplicationProfile> | null;
   }[]>`
     select c.user_id, c.listing_id, c.status, c.title, c.company, l.location, l.description_text as description,
-           s.website, m.score, m.matched_skills, p.data as application
+           case when s.provider = any(${[...AGGREGATORS]}::text[]) then null else s.website end as website, l.apply_url,
+           m.score, m.matched_skills, p.data as application
     from public.cold_emails c
     left join public.job_listings l on l.id = c.listing_id
     left join public.job_sources s on s.id = l.source_id
@@ -201,13 +105,12 @@ export async function draftColdEmail(id: string, opts: { lastAttempt: boolean })
   if (!row.listing_id || row.description === null) return fail(id, 'This job is no longer listed.');
   if (!llmConfigured()) return fail(id, 'Cold email needs the AI model to be configured.');
 
-  // Contacts: the posting's own hiring addresses first (the company asked for email there), then the finder's.
-  const fromPosting = postingContacts(row.description).map(
-    (email): ColdEmailContact => ({ email, name: null, position: null, source: 'posting', confidence: null }),
-  );
-  const found = await finderContacts(row.website, row.company);
-  const contacts = [...fromPosting, ...found.filter((f) => !fromPosting.some((p) => p.email === f.email))].slice(0, 8);
-  const recipient = contacts[0] ?? null;
+  // The posting's own addresses, then the company's website, then Hunter, then guesses (apps/worker/src/contacts.ts).
+  const contacts = await findContacts({
+    listingId: row.listing_id, description: row.description, company: row.company, website: row.website, applyUrl: row.apply_url,
+  });
+  // A guess is offered, never chosen for the candidate.
+  const recipient = contacts.find((c) => c.source !== 'guess') ?? null;
   const tailored = await tailoredFor(row.user_id, row.listing_id);
 
   const [resume] = await sql<{ text: string | null; name: string | null; names: string[] | null }[]>`
@@ -225,7 +128,7 @@ export async function draftColdEmail(id: string, opts: { lastAttempt: boolean })
     .filter((l) => l !== null && l !== undefined)
     .join('\n');
   const to = recipient
-    ? `Name: ${recipient.name ?? 'unknown'}\nPosition: ${recipient.position ?? (recipient.source === 'posting' ? "the company's hiring inbox" : 'unknown')}`
+    ? `Name: ${recipient.name ?? 'unknown'}\nPosition: ${recipient.position ?? (recipient.name ? 'unknown' : "the company's hiring inbox")}`
     : `Unknown: write to the ${row.company} team`;
   const model = coldEmailModel();
   const { data, usage } = await structured({

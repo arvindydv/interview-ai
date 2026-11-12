@@ -11,7 +11,8 @@
     "applier": "node dist/applier.js",
     "dev:applier": "tsx watch src/applier.ts",
     "test:applier": "tsx test/applier.e2e.ts",
-    "browser": "node dist/browserServer.js"
+    "browser": "node dist/browserServer.js",
+    "test": "node --import tsx --test \"test/*.test.ts\""
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.134.0",
@@ -22,6 +23,7 @@
     "playwright-core": "1.56.1",
     "postgres": "^3.4.9",
     "sanitize-html": "^2.18.1",
+    "undici": "^7.30.1",
     "zod": "^4.6.7"
   },
   "devDependencies": {

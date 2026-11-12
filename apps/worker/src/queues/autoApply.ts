@@ -1,7 +1,7 @@
 import { Queue, UnrecoverableError, Worker, type Job } from 'bullmq';
 import type { EmailJob } from '@parakeet/emails';
 import {
-  AUTO_APPLY_LIMITS, AUTO_APPLY_PROVIDERS, EMPTY_APPLICATION_PROFILE, activeJobsPlan, autoApplyUrl, missingProfileFields, type ApplicationProfile,
+  AUTO_APPLY_LIMITS, AUTO_APPLY_PROVIDERS, EMPTY_APPLICATION_PROFILE, FRESH_DAYS, MATCH_SCORE_BAND, activeJobsPlan, autoApplyUrl, missingProfileFields, type ApplicationProfile,
   type AutoApplyProvider, type AutoApplyReason, type FormQuestion, type PreparedAnswer, type ResumeProfile,
 } from '@parakeet/shared';
 import { sql } from '../db.js';
@@ -177,6 +177,7 @@ export async function planUser(userId: string) {
     join public.job_sources s on s.id = l.source_id
     where m.user_id = ${userId} and m.score >= ${settings.min_score}
       and l.closed_at is null and l.duplicate_of is null
+      and (l.posted_at is null or l.posted_at >= now() - make_interval(days => ${FRESH_DAYS}))
       and s.provider in ${sql(AUTO_APPLY_PROVIDERS as unknown as string[])}
       and not exists (
         select 1 from public.auto_applications a
@@ -187,7 +188,7 @@ export async function planUser(userId: string) {
         select 1 from public.job_applications j
         where j.user_id = ${userId} and j.status <> 'saved'
           and (j.listing_id = l.id or (lower(j.company) = lower(l.company) and lower(j.title) = lower(l.title))))
-    order by m.score desc, l.posted_at desc nulls last
+    order by floor(m.score / ${MATCH_SCORE_BAND}) desc, l.posted_at desc nulls last, m.score desc
     limit ${room}`;
 
   // The same role can appear twice in one batch (two listings); keep the first.

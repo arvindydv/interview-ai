@@ -309,7 +309,8 @@ export async function runTailoring(tailoredId: string, opts: { model?: string; l
   }[]>`
     select t.user_id, coalesce(j.text, r.text) as resume_text, coalesce(j.file, r.file) as file,
            coalesce(j.parsed_json, r.parsed_json) as profile, t.title, t.company, l.location,
-           l.description_text as description
+           -- A job the candidate pasted (Assisted Apply) has no listing, only its description.
+           coalesce(l.description_text, t.description) as description
     from public.tailored_resumes t
     left join public.resumes r on r.id = t.resume_id
     left join public.job_resumes j on j.id = t.job_resume_id

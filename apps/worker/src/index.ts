@@ -5,6 +5,7 @@ import { closeAutoApplyQueue, startAutoApplyWorker } from './queues/autoApply.js
 import { startColdEmailWorker } from './queues/coldEmail.js';
 import { startEmailWorker } from './queues/email.js';
 import { startHistoryWorker } from './queues/history.js';
+import { closeJobBotQueue, startJobBotWorker } from './queues/jobBot.js';
 import { closeDiscoveryQueue, startDiscoveryWorker } from './queues/discovery.js';
 import { closeListingsQueue, startListingsWorker } from './queues/listings.js';
 import { closeMatchesQueue, startMatchesWorker } from './queues/matches.js';
@@ -15,12 +16,12 @@ import { startTailorWorker } from './queues/tailor.js';
 
 // Background jobs (spec §3.2). Resume parsing, Interview Pack builds, summaries, scoring, retention
 // and usage roll-ups get their own queues here as they land.
-const workers = [startSystemWorker(), startEmailWorker(), startProfileWorker(), startPracticeWorker(), startHistoryWorker(), startListingsWorker(), startMatchesWorker(), startDiscoveryWorker(), startTailorWorker(), startAutoApplyWorker(), startColdEmailWorker()];
-console.log(`[worker] listening on queues "system", "email", "profile", "practice", "history", "listings", "matches", "discovery", "tailor", "autoapply" (${env.REDIS_URL})`);
+const workers = [startSystemWorker(), startEmailWorker(), startProfileWorker(), startPracticeWorker(), startHistoryWorker(), startListingsWorker(), startMatchesWorker(), startDiscoveryWorker(), startTailorWorker(), startAutoApplyWorker(), startColdEmailWorker(), startJobBotWorker()];
+console.log(`[worker] listening on queues "system", "email", "profile", "practice", "history", "listings", "matches", "discovery", "tailor", "autoapply", "coldemail" (${env.REDIS_URL})`);
 void verifyMailer();
 
 const shutdown = async () => {
-  await Promise.allSettled([...workers.map((w) => w.close()), closeListingsQueue(), closeMatchesQueue(), closeDiscoveryQueue(), closeAutoApplyQueue()]);
+  await Promise.allSettled([...workers.map((w) => w.close()), closeListingsQueue(), closeMatchesQueue(), closeDiscoveryQueue(), closeAutoApplyQueue(), closeJobBotQueue()]);
   transport.close();
   await sql.end();
   process.exit(0);

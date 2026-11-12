@@ -160,7 +160,9 @@ function ColdEmails() {
                     <span className="font-normal text-muted">at {e.company}</span>
                   </p>
                   <p className="truncate text-xs text-muted">
-                    {e.status === 'sent' ? `To ${e.toName ? `${e.toName} · ` : ''}${e.to}` : e.error || e.subject || 'No recipient yet'}
+                    {e.status === 'sent'
+                      ? `To ${e.toName ?? e.to}${e.sends.filter((x) => x.status === 'sent').length > 1 ? ` and ${e.sends.filter((x) => x.status === 'sent').length - 1} more` : ''}`
+                      : e.error || e.subject || 'No recipient yet'}
                     {' · '}
                     {timeAgo(e.sentAt ?? e.updatedAt)}
                   </p>

@@ -1,5 +1,6 @@
 import sanitizeHtml from 'sanitize-html';
 import type { ListingProvider, Workplace } from '@parakeet/shared';
+import { httpFetch } from './http.js';
 
 // Fetches open postings from a public job board API and normalises them: companies' own boards
 // (Greenhouse, Lever, Ashby, Workable: the endpoints each provider documents for embedding careers
@@ -24,6 +25,8 @@ export interface Posting {
   companyLogo?: string | null;
   /** Where an aggregator says the job was first posted, e.g. "naukri.com". */
   postedOn?: string | null;
+  /** When the source says the posting expires (Himalayas): it's closed from then on. */
+  expiresAt?: Date | null;
 }
 
 /** The board doesn't exist or the provider rejected the request; retrying won't help. */
@@ -36,9 +39,14 @@ const MAX_DESCRIPTION_CHARS = 100_000;
 
 /**
  * `detailPages` caps the per-job pages read for providers that need them (Freshteam, Zoho Recruit);
- * discovery only needs a few postings to recognise a board.
+ * discovery only needs a few postings to recognise a board. `known` is the board's jobs already stored,
+ * by apply link: Workday reuses them instead of reading each one's page again.
  */
-export async function fetchBoard(provider: ListingProvider, board: string, { detailPages = DETAIL_PAGES_MAX } = {}): Promise<Posting[]> {
+export async function fetchBoard(
+  provider: ListingProvider,
+  board: string,
+  { detailPages = DETAIL_PAGES_MAX, known }: { detailPages?: number; known?: Map<string, Posting> } = {},
+): Promise<Posting[]> {
   const slug = encodeURIComponent(board);
   switch (provider) {
     case 'greenhouse':
@@ -52,8 +60,10 @@ export async function fetchBoard(provider: ListingProvider, board: string, { det
     case 'smartrecruiters':
       // Discovery asks for a few postings; a sync reads up to each board's own cap.
       return smartRecruiters(board, detailPages === DETAIL_PAGES_MAX ? SMARTRECRUITERS_MAX : detailPages);
+    case 'teamtailor':
+      return teamtailor(board, detailPages === DETAIL_PAGES_MAX ? TEAMTAILOR_MAX_PAGES : 1);
     case 'workday':
-      return workday(board, detailPages === DETAIL_PAGES_MAX ? WORKDAY_MAX : detailPages);
+      return detailPages === DETAIL_PAGES_MAX ? workday(board, WORKDAY_MAX, WORKDAY_LIST_MAX, known) : workday(board, detailPages, detailPages);
     case 'keka':
       return keka(board);
     case 'freshteam':
@@ -68,6 +78,7 @@ export async function fetchBoard(provider: ListingProvider, board: string, { det
       return jobicy();
     case 'adzuna':
     case 'jooble':
+    case 'jsearch':
       throw new BoardNotFoundError(`${provider} is searched, not read as a board (listings/search.ts)`);
   }
 }
@@ -76,7 +87,7 @@ export const USER_AGENT = 'FridayJobs/1.0 (job listings sync)';
 
 /** A careers page as text; a redirect away from it means the company has no board there. */
 async function getPage(url: string): Promise<string> {
-  const res = await fetch(url, { headers: { 'user-agent': USER_AGENT }, redirect: 'manual', signal: AbortSignal.timeout(60_000) });
+  const res = await httpFetch(url, { headers: { 'user-agent': USER_AGENT }, redirect: 'manual', signal: AbortSignal.timeout(60_000) });
   if (res.status === 404 || (res.status >= 300 && res.status < 400)) throw new BoardNotFoundError(`${url}: HTTP ${res.status}`);
   if (res.status === 429) throw new RateLimitedError(`${url}: HTTP 429`);
   if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
@@ -84,7 +95,7 @@ async function getPage(url: string): Promise<string> {
 }
 
 async function getJson(url: string): Promise<any> {
-  const res = await fetch(url, {
+  const res = await httpFetch(url, {
     headers: { accept: 'application/json', 'user-agent': USER_AGENT },
     signal: AbortSignal.timeout(60_000),
   });
@@ -194,8 +205,19 @@ function workable(body: any): Posting[] {
 const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** Postings read per sync from the boards that need a request per job for its description. */
-const SMARTRECRUITERS_MAX = 150;
-const WORKDAY_MAX = 100;
+const SMARTRECRUITERS_MAX = 250;
+const WORKDAY_MAX = 250;
+/** Workday list entries read (20 a request) to find a board's newest postings: a search lists 2,000 at most. */
+const WORKDAY_LIST_MAX = 2000;
+
+/** Days since a Workday list entry was posted ("Posted Today", "Posted 3 Days Ago", "Posted 30+ Days Ago"). */
+export function workdayAge(postedOn: unknown): number {
+  const s = String(postedOn ?? '').toLowerCase();
+  if (s.includes('today')) return 0;
+  if (s.includes('yesterday')) return 1;
+  const m = /(\d+)\+?\s*days?/.exec(s);
+  return m ? Number(m[1]) : 31;
+}
 
 /**
  * SmartRecruiters (board = the company identifier, e.g. "ServiceNow"): its public Posting API, newest
@@ -204,9 +226,11 @@ const WORKDAY_MAX = 100;
 async function smartRecruiters(board: string, max: number): Promise<Posting[]> {
   if (!/^[A-Za-z0-9_-]{2,80}$/.test(board)) throw new BoardNotFoundError(`Invalid board "${board}"`);
   const base = `https://api.smartrecruiters.com/v1/companies/${board}/postings`;
+  // Only the company's jobs in India when it has any.
+  const india = ((await getJson(`${base}?limit=1&country=in`)).totalFound ?? 0) > 0;
   const list: any[] = [];
   for (let offset = 0; list.length < max; offset += 100) {
-    const page = await getJson(`${base}?limit=100&offset=${offset}`);
+    const page = await getJson(`${base}?limit=100&offset=${offset}${india ? '&country=in' : ''}`);
     list.push(...(page.content ?? []));
     if (!page.content?.length || offset + 100 >= (page.totalFound ?? 0)) break;
   }
@@ -244,21 +268,20 @@ async function smartRecruiters(board: string, max: number): Promise<Posting[]> {
 
 /**
  * Workday (board = "<tenant>.<wdN>/<site>", e.g. "nvidia.wd5/NVIDIAExternalCareerSite"): the JSON its
- * public career site loads, allowed by each site's robots.txt. The newest postings, each with a detail
- * request for its description.
+ * public career site loads, allowed by each site's robots.txt. The newest postings in India when the
+ * site has any (global employers list thousands elsewhere), each with a detail request for its description.
  */
-async function workday(board: string, max: number): Promise<Posting[]> {
+async function workday(board: string, max: number, listMax: number, known?: Map<string, Posting>): Promise<Posting[]> {
   const m = /^([a-z0-9-]+)\.(wd\d{1,3})\/([A-Za-z0-9_-]+)$/.exec(board);
   if (!m) throw new BoardNotFoundError(`Invalid board "${board}"`);
   const [, tenant, dc, site] = m;
   const origin = `https://${tenant}.${dc}.myworkdayjobs.com`;
   const api = `${origin}/wday/cxs/${tenant}/${site}`;
-  const list: any[] = [];
-  for (let offset = 0; list.length < max; offset += 20) {
-    const res = await fetch(`${api}/jobs`, {
+  const search = async (appliedFacets: Record<string, string[]>, offset: number): Promise<any> => {
+    const res = await httpFetch(`${api}/jobs`, {
       method: 'POST',
       headers: { 'user-agent': USER_AGENT, 'content-type': 'application/json', accept: 'application/json' },
-      body: JSON.stringify({ appliedFacets: {}, limit: 20, offset, searchText: '' }),
+      body: JSON.stringify({ appliedFacets, limit: 20, offset, searchText: '' }),
       redirect: 'manual',
       signal: AbortSignal.timeout(60_000),
     });
@@ -267,13 +290,34 @@ async function workday(board: string, max: number): Promise<Posting[]> {
     if (res.status === 404 || res.status === 422) throw new BoardNotFoundError(`${board}: HTTP ${res.status}`);
     if (res.status === 429) throw new RateLimitedError(`${board}: HTTP 429`);
     if (!res.ok) throw new Error(`${board}: HTTP ${res.status}`);
-    const page: any = await res.json();
-    list.push(...(page.jobPostings ?? []));
-    if (!page.jobPostings?.length || offset + 20 >= (page.total ?? 0)) break;
+    return res.json();
+  };
+  const first = await search({}, 0);
+  const india = workdayIndiaFacet(first.facets ?? []);
+  // Workday gives the total on the first page only, and filtered by location some sites (Accenture) no
+  // longer list newest first: the list is read whole (up to listMax). Jobs already stored are kept as
+  // they are; the newest of the rest, up to max, get a detail request (a few seconds each).
+  const list = new Map<string, any>();
+  let total = 0;
+  for (let offset = 0; offset < listMax; offset += 20) {
+    const page: any = offset === 0 && !india ? first : await search(india ?? {}, offset);
+    if (offset === 0) total = page.total ?? 0;
+    for (const j of page.jobPostings ?? []) if (j.externalPath && !list.has(j.externalPath)) list.set(j.externalPath, j);
+    if (!page.jobPostings?.length || offset + 20 >= total) break;
     await pause(150);
   }
+  const newest = [...list.values()].sort((a, b) => workdayAge(a.postedOn) - workdayAge(b.postedOn));
+  // Stored by apply link, on the tenant's domain or on myworkdaysite.com: both end in the job's path.
+  const byPath = new Map([...(known?.values() ?? [])].map((p) => [p.applyUrl.slice(p.applyUrl.indexOf('/job/')), p]));
   const out: Posting[] = [];
-  for (const item of list.filter((j) => j.externalPath).slice(0, max)) {
+  let read = 0;
+  for (const item of newest) {
+    const stored = byPath.get(item.externalPath);
+    if (stored) {
+      out.push(stored);
+      continue;
+    }
+    if (read++ >= max) continue;
     const d = await getJson(`${api}${item.externalPath}`).catch(() => null);
     const info = d?.jobPostingInfo;
     if (!info?.title) continue;
@@ -297,6 +341,40 @@ async function workday(board: string, max: number): Promise<Posting[]> {
   return out;
 }
 
+/**
+ * The search filter for jobs in India: each site names its location facets its own way
+ * ("locationCountry", "Location_Country", "locations"…). A value named exactly "India" (a country
+ * facet) when there is one, else every India location in the facet listing the most such jobs. Null
+ * when the site has none, and then the whole site is read.
+ */
+export function workdayIndiaFacet(facets: any[]): Record<string, string[]> | null {
+  let exact: Record<string, string[]> | null = null;
+  const partial = new Map<string, { ids: string[]; count: number }>();
+  const walk = (list: any[]) => {
+    for (const f of list) {
+      for (const v of f.values ?? []) {
+        if (v.values) {
+          walk([v]);
+          continue;
+        }
+        const name = String(v.descriptor ?? '').trim();
+        if (!v.id || !(v.count > 0)) continue;
+        if (/^india$/i.test(name)) exact ??= { [f.facetParameter]: [v.id] };
+        else if (/\bindia\b/i.test(name)) {
+          const p = partial.get(f.facetParameter) ?? { ids: [], count: 0 };
+          p.ids.push(v.id);
+          p.count += v.count;
+          partial.set(f.facetParameter, p);
+        }
+      }
+    }
+  };
+  walk(facets);
+  if (exact) return exact;
+  const best = [...partial].sort((a, b) => b[1].count - a[1].count)[0];
+  return best ? { [best[0]]: best[1].ids } : null;
+}
+
 /** Subdomain boards (Keka, Freshteam): one DNS label. */
 const label = (board: string) => {
   if (!/^[a-z0-9-]{1,63}$/.test(board)) throw new BoardNotFoundError(`Invalid board "${board}"`);
@@ -308,7 +386,7 @@ const KEKA_JOB_TYPES: Record<number, string> = { 1: 'Part-time', 2: 'Full-time' 
 /** Keka: the JSON its careers page loads, every open job with its full description. */
 async function keka(board: string): Promise<Posting[]> {
   const base = `https://${label(board)}.keka.com/careers`;
-  const res = await fetch(`${base}/api/jobs/default/active`, {
+  const res = await httpFetch(`${base}/api/jobs/default/active`, {
     headers: { accept: 'application/json', 'user-agent': USER_AGENT },
     // Non-customers and disabled portals redirect to an error page.
     redirect: 'manual',
@@ -475,7 +553,11 @@ async function zohoRecruit(board: string, detailPages: number): Promise<Posting[
 /** Himalayas pages its search 20 at a time; this caps a sync at a few thousand jobs. */
 const HIMALAYAS_MAX_PAGES = 200;
 
-/** Remote jobs open to people in India, and worldwide ones. */
+/**
+ * Remote jobs open to people in India, and worldwide ones. Their terms (himalayas.app/docs/remote-jobs-api):
+ * credit Himalayas with a link, apply only through applicationLink, remove jobs once they expire, and
+ * never pass them on to other job boards, Google Jobs or LinkedIn.
+ */
 async function himalayas(): Promise<Posting[]> {
   const out: Posting[] = [];
   for (let page = 1; page <= HIMALAYAS_MAX_PAGES; page++) {
@@ -501,11 +583,13 @@ async function himalayas(): Promise<Posting[]> {
         postedAt: typeof j.pubDate === 'number' ? new Date(j.pubDate * 1000) : null,
         company: companyName(j.companyName),
         companyLogo: j.companyLogo || null,
+        expiresAt: typeof j.expiryDate === 'number' ? new Date(j.expiryDate * 1000) : null,
       });
     }
     // Pages can come back a job or two short, so stop on an empty page or past the total.
     if (!jobs.length || page * 20 >= (body.totalCount ?? 0)) break;
-    await pause(400);
+    // Keyless calls share Himalayas' public allowance; a key allows 60 a minute. Stay under that.
+    await pause(1_100);
   }
   return out;
 }
@@ -532,13 +616,19 @@ function remoteok(body: any): Posting[] {
   });
 }
 
-const JOBICY_MAX_PAGES = 5;
+/** Jobicy's feed covers the last 7 days, 100 a page; this is far above a week's volume. */
+const JOBICY_MAX_PAGES = 40;
 
+/**
+ * Jobicy (jobi.cy/apidocs): every job published in the last 7 days, through cursor pages. A job that
+ * leaves the 7-day window may still be open, so syncs don't close Jobicy jobs by absence; they ask
+ * jobicyStatus instead. Its terms: credit Jobicy with a link, apply via the feed's URL, poll at most hourly.
+ */
 async function jobicy(): Promise<Posting[]> {
   const out: Posting[] = [];
   let cursor: string | undefined;
   for (let page = 0; page < JOBICY_MAX_PAGES; page++) {
-    const body = await getJson(`https://jobicy.com/api/v2/remote-jobs?count=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`);
+    const body = await getJson(`https://jobicy.com/api/jobs?count=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`);
     for (const j of body.jobs ?? []) {
       const html = sanitize(j.jobDescription ?? '');
       out.push({
@@ -560,6 +650,70 @@ async function jobicy(): Promise<Posting[]> {
     if (!body.hasMore || !body.nextCursor) break;
     cursor = body.nextCursor;
     await pause(1000);
+  }
+  return out;
+}
+
+/** Jobicy job ids its status endpoint says are closed (expired or filled). "unknown" isn't taken as closed. */
+export async function jobicyClosed(ids: string[]): Promise<string[]> {
+  const closed: string[] = [];
+  const numeric = ids.filter((id) => /^\d{1,12}$/.test(id));
+  for (let i = 0; i < numeric.length; i += 100) {
+    if (i) await pause(1000);
+    const body = await getJson(`https://jobicy.com/api/jobs/status?ids=${numeric.slice(i, i + 100).join(',')}`);
+    for (const j of body.jobs ?? []) if (j.status === 'closed') closed.push(String(j.id));
+  }
+  return closed;
+}
+
+/** Teamtailor pages its feed 100 at a time. */
+const TEAMTAILOR_PAGE = 100;
+const TEAMTAILOR_MAX_PAGES = 20;
+const TEAMTAILOR_WORKPLACE: Record<string, Workplace> = { fully: 'remote', remote: 'remote', hybrid: 'hybrid', none: 'onsite' };
+
+/** One XML element's text, CDATA and entities undone. */
+function xmlText(xml: string, tag: string): string {
+  const m = new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)</${tag}>`).exec(xml);
+  if (!m) return '';
+  const raw = m[1].trim();
+  const cdata = /^<!\[CDATA\[([\s\S]*)\]\]>$/.exec(raw);
+  return cdata ? cdata[1] : decodeEntities(raw);
+}
+
+/**
+ * Teamtailor (board = the careers site's host, e.g. "acme.teamtailor.com" or "careers.acme.com"): the
+ * RSS feed every Teamtailor careers site publishes at /jobs.rss, with each job's full description,
+ * locations, department and remote status.
+ */
+async function teamtailor(board: string, maxPages: number): Promise<Posting[]> {
+  if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(board)) throw new BoardNotFoundError(`Invalid board "${board}"`);
+  const out: Posting[] = [];
+  for (let page = 0; page < maxPages; page++) {
+    const xml = await getPage(`https://${board}/jobs.rss?offset=${page * TEAMTAILOR_PAGE}`);
+    if (!/<rss\b/.test(xml) || !xml.includes('teamtailor')) throw new BoardNotFoundError(`${board}: not a Teamtailor feed`);
+    const items = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)].map((m) => m[1]);
+    for (const item of items) {
+      const html = sanitize(xmlText(item, 'description'));
+      const places = [...item.matchAll(/<tt:location>([\s\S]*?)<\/tt:location>/g)].map((m) =>
+        [xmlText(m[1], 'tt:city') || xmlText(m[1], 'tt:name'), xmlText(m[1], 'tt:country')].map(clean).filter(Boolean).join(', '),
+      );
+      const remote = clean(xmlText(item, 'remoteStatus')).toLowerCase();
+      out.push({
+        externalId: clean(xmlText(item, 'guid')) || clean(xmlText(item, 'link')),
+        title: clean(xmlText(item, 'title')),
+        department: clean(xmlText(item, 'tt:department')) || null,
+        location: [...new Set(places.filter(Boolean))].join(' · ') || (TEAMTAILOR_WORKPLACE[remote] === 'remote' ? 'Remote' : ''),
+        workplace: TEAMTAILOR_WORKPLACE[remote] ?? null,
+        employmentType: null,
+        salary: null,
+        descriptionHtml: html,
+        descriptionText: toText(html),
+        applyUrl: clean(xmlText(item, 'link')),
+        postedAt: date(xmlText(item, 'pubDate')),
+      });
+    }
+    if (items.length < TEAMTAILOR_PAGE) break;
+    await pause(500);
   }
   return out;
 }

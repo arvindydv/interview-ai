@@ -4,8 +4,11 @@
 
 export type ColdEmailStatus = 'drafting' | 'ready' | 'sent' | 'failed';
 
-/** Where a contact came from: the job description, the email finder (Hunter.io), or the candidate. */
-export type ContactSource = 'posting' | 'finder' | 'user';
+/**
+ * Where a contact came from: the job description, the company's own website, the paid email finder
+ * (Hunter.io), a common hiring mailbox at a domain that takes email (not verified), or the candidate.
+ */
+export type ContactSource = 'posting' | 'website' | 'finder' | 'guess' | 'user';
 
 export interface ColdEmailContact {
   email: string;
@@ -15,6 +18,22 @@ export interface ColdEmailContact {
   source: ContactSource;
   /** The finder's confidence that the address is right, 0–100. Null for the posting's own addresses. */
   confidence: number | null;
+}
+
+/** One recipient's copy of a cold email. */
+export interface ColdEmailSend {
+  to: string;
+  toName: string | null;
+  status: 'sending' | 'sent' | 'failed';
+  error: string | null;
+  sentAt: string | null;
+  gmailUrl: string | null;
+}
+
+/** POST /v1/job-feed/:id/cold-email/send: what happened to each recipient. */
+export interface ColdEmailSendResult {
+  email: ColdEmail;
+  results: { to: string; status: 'sent' | 'failed' | 'skipped'; message: string | null }[];
 }
 
 export interface ColdEmail {
@@ -38,6 +57,8 @@ export interface ColdEmail {
   sentAt: string | null;
   /** Opens the sent email in Gmail. */
   gmailUrl: string | null;
+  /** Everyone it was sent to (or is being sent to), oldest first. */
+  sends: ColdEmailSend[];
   updatedAt: string;
 }
 
@@ -59,6 +80,8 @@ export const COLD_EMAIL_LIMITS = {
   retrySeconds: 30,
   /** A draft still 'drafting' after this is treated as lost (worker restart): it can be written again. */
   draftingSeconds: 600,
+  /** People one job's email can go to: a few at the company, never a mailing list. */
+  recipientsPerJob: 5,
   maxSubjectChars: 200,
   maxBodyChars: 5000,
 } as const;
@@ -115,4 +138,97 @@ export function senderName(first: string | null | undefined, last: string | null
   const l = (last ?? '').trim();
   if (!l || f.toLowerCase().endsWith(l.toLowerCase())) return f;
   return f ? `${f} ${l}` : l;
+}
+
+/** Shared hiring mailboxes, most common first: suggested (as unverified guesses) when nothing else is found. */
+export const GUESSED_MAILBOXES = ['careers', 'jobs', 'hr', 'talent', 'recruiting'] as const;
+
+const DOT = /\s*[[({]\s*dot\s*[\])}]\s*/gi;
+/** "careers [at] acme [dot] com" and similar, as people write addresses to keep spam bots off them. */
+const OBFUSCATED = /([a-z0-9._%+-]+)\s*[[({]\s*at\s*[\])}]\s*([a-z0-9-]+(?:\s*[[({]\s*dot\s*[\])}]\s*[a-z0-9-]+)+)/gi;
+
+const ENTITY: Record<string, string> = { '#64': '@', commat: '@', '#46': '.', period: '.', amp: '&', nbsp: ' ', '#x40': '@' };
+
+/** True when `email` is at `domain` or one of its subdomains (not a widget's or a host's address). */
+const atDomain = (email: string, domain: string) => {
+  const host = email.split('@')[1] ?? '';
+  return host === domain || host.endsWith(`.${domain}`);
+};
+
+/**
+ * The hiring addresses a company publishes on one of its own web pages: in its text (including
+ * "careers [at] acme [dot] com"), and in mailto links. Only addresses at the company's domain, filtered
+ * like a job description's (never accommodations, privacy or support).
+ */
+export function pageContacts(html: string, domain: string): string[] {
+  const text = html
+    .replace(/<(script|style|noscript|svg)[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<br\s*\/?>|<\/(p|div|li|h[1-6]|tr|section)>/gi, '. ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&(#64|commat|#46|period|amp|nbsp|#x40);/gi, (_, e: string) => ENTITY[e.toLowerCase()] ?? ' ')
+    .replace(OBFUSCATED, (_, user: string, host: string) => `${user}@${host.replace(DOT, '.')}`)
+    .replace(/\s+/g, ' ');
+  const fromText = postingContacts(text);
+  // A mailto link's address may not be in the text ("Email our team"): only shared hiring mailboxes count then.
+  const fromLinks = [...html.matchAll(/href\s*=\s*["']mailto:([^"'?#]+)/gi)]
+    .map((m) => {
+      try {
+        return hiringAddress(decodeURIComponent(m[1]));
+      } catch {
+        return null;
+      }
+    })
+    .filter((e): e is string => e !== null);
+  return [...new Set([...fromText, ...fromLinks])].filter((e) => atDomain(e, domain));
+}
+
+/**
+ * Whether robots.txt lets `agent` fetch `path`: the most specific group for the agent (else `*`), and
+ * the longest matching Allow/Disallow rule, with `*` and `$` wildcards.
+ */
+export function robotsAllows(robots: string, agent: string, path: string): boolean {
+  const groups: { agents: string[]; rules: { allow: boolean; pattern: string }[] }[] = [];
+  let current: (typeof groups)[number] | null = null;
+  let lastWasAgent = false;
+  for (const raw of robots.split(/\r?\n/)) {
+    const line = raw.replace(/#.*$/, '').trim();
+    const m = /^([a-z-]+)\s*:\s*(.*)$/i.exec(line);
+    if (!m) continue;
+    const key = m[1].toLowerCase();
+    const value = m[2].trim();
+    if (key === 'user-agent') {
+      if (!current || !lastWasAgent) groups.push((current = { agents: [], rules: [] }));
+      current.agents.push(value.toLowerCase());
+      lastWasAgent = true;
+    } else {
+      lastWasAgent = false;
+      if (current && (key === 'allow' || key === 'disallow') && value) current.rules.push({ allow: key === 'allow', pattern: value });
+    }
+  }
+  const name = agent.toLowerCase();
+  const group = groups.find((g) => g.agents.some((a) => a !== '*' && name.includes(a))) ?? groups.find((g) => g.agents.includes('*'));
+  if (!group) return true;
+  let best: { allow: boolean; length: number } | null = null;
+  for (const rule of group.rules) {
+    const re = new RegExp(`^${rule.pattern.replace(/[.+?^{}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\\\$$/, '$')}`);
+    if (re.test(path) && (!best || rule.pattern.length > best.length || (rule.pattern.length === best.length && rule.allow))) {
+      best = { allow: rule.allow, length: rule.pattern.length };
+    }
+  }
+  return best?.allow ?? true;
+}
+
+/** "Hi Marta," / "Hello Acme team," / "Dear Hiring Team at Acme," on the email's first line. */
+const GREETING = /^(\s*)(hi|hello|hey|dear)\b[^\n,]{0,60},/i;
+
+/**
+ * The email for one recipient: its greeting addresses them by first name ("Hi Anisa,"), or the company's
+ * team when the name isn't known. An email whose first line isn't a greeting is left as written.
+ */
+export function personalize(body: string, recipientName: string | null, company: string): string {
+  const m = GREETING.exec(body);
+  if (!m) return body;
+  const first = recipientName?.trim().split(/\s+/)[0];
+  const salutation = m[2].toLowerCase() === 'dear' ? 'Dear' : m[2][0].toUpperCase() + m[2].slice(1).toLowerCase();
+  return `${m[1]}${salutation} ${first || `${company} team`},${body.slice(m[0].length)}`;
 }

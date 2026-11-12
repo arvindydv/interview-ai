@@ -3,13 +3,17 @@ import type { ListingProvider } from '@parakeet/shared';
 import { sql } from '../db.js';
 import { env } from '../env.js';
 import { RateLimitedError, boardOwner, fetchBoard, type Posting } from '../listings/boards.js';
+import { careersBoards } from '../listings/careersLink.js';
+import { INDIA_COMPANIES } from '../listings/indiaCompanies.js';
 import { INDIA_STARTUPS } from '../listings/indiaStartups.js';
 import { queueSourceSync } from './listings.js';
 
 // Finds startups' job boards. "discovery.run" refreshes the candidate list (hiring companies in Y
-// Combinator's directory, plus listings/indiaStartups.ts), then probes the companies that are due on
-// each provider's public board API. A board that has openings and mentions the company becomes a job
-// source, synced with the others every 30 minutes. Misses are retried monthly.
+// Combinator's directory, plus listings/indiaStartups.ts), then, for each company that's due, follows
+// the careers link on its own website to the board it uses (listings/careersLink.ts), or else probes
+// each provider's public board API with slugs guessed from its name. A board that has openings (and,
+// when guessed, mentions the company) becomes a job source, synced with the others every 30 minutes.
+// Misses are retried monthly.
 
 export const DISCOVERY_QUEUE = 'discovery';
 
@@ -25,6 +29,8 @@ const RETRY_INCOMPLETE_DAYS = 7;
 const PROVIDERS: ListingProvider[] = ['ashby', 'greenhouse', 'lever', 'workable'];
 /** Read one page per job, so synced less often. */
 const PAGE_PROVIDERS = new Set<ListingProvider>(['freshteam', 'zohorecruit']);
+/** Big boards read page by page, synced like the curated ones. */
+const SLOW_PROVIDERS = new Set<ListingProvider>(['workday', 'smartrecruiters']);
 /** Careers platforms common in India, tried for Indian companies only. */
 const INDIA_PROVIDERS: ListingProvider[] = ['keka', 'freshteam', 'zohorecruit'];
 
@@ -67,7 +73,9 @@ function slugsFor(name: string, website: string | null, extra?: string): string[
 }
 
 async function loadCandidates() {
-  const rows: Candidate[] = INDIA_STARTUPS.map((c) => ({
+  // Both India lists, each website once.
+  const india = [...new Map([...INDIA_STARTUPS, ...INDIA_COMPANIES].map((c) => [c.website, c])).values()];
+  const rows: Candidate[] = india.map((c) => ({
     key: `india:${c.website}`,
     origin: 'india',
     name: c.name,
@@ -127,6 +135,16 @@ function isTheirs(c: Candidate, postings: Posting[]): boolean {
  * asked (rate limit, timeout, network error, or `paused` for this run), so a miss is re-checked sooner.
  */
 async function probe(c: Candidate, paused: Set<ListingProvider>) {
+  // The board the company's own site links to: no guessing, and the link says whose it is.
+  for (const link of await careersBoards(c.website)) {
+    if (paused.has(link.provider)) continue;
+    try {
+      const postings = await fetchBoard(link.provider, link.board, { detailPages: 3 });
+      if (postings.length) return { hit: link, complete: true };
+    } catch (err) {
+      if (err instanceof RateLimitedError) paused.add(link.provider);
+    }
+  }
   let complete = true;
   const providers = c.origin === 'india' ? [...PROVIDERS, ...INDIA_PROVIDERS] : PROVIDERS;
   for (const slug of c.slugs) {
@@ -181,7 +199,7 @@ async function run(job: Job<{ limit?: number }>) {
         const [source] = await sql<{ id: string }[]>`
           insert into public.job_sources (provider, board, company, website, origin, startup, yc_batch, sync_every)
           values (${hit.provider}, ${hit.board}, ${c.name}, ${c.website}, ${c.origin}, true, ${c.yc_batch},
-                  ${PAGE_PROVIDERS.has(hit.provider) ? '2 hours' : '30 minutes'})
+                  ${PAGE_PROVIDERS.has(hit.provider) ? '2 hours' : SLOW_PROVIDERS.has(hit.provider) ? '6 hours' : '30 minutes'})
           on conflict (provider, board) do update set
             startup = true, yc_batch = coalesce(job_sources.yc_batch, excluded.yc_batch),
             website = coalesce(job_sources.website, excluded.website)

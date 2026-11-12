@@ -1,7 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import {
-  COLD_EMAIL_LIMITS, senderName, type ColdEmail, type ColdEmailContact, type ColdEmailStatus, type GmailStatus,
+  COLD_EMAIL_LIMITS, personalize, senderName, type ColdEmail, type ColdEmailContact, type ColdEmailSend, type ColdEmailSendResult,
+  type ColdEmailStatus, type GmailStatus,
 } from '@parakeet/shared';
 import { createHash, randomBytes } from 'node:crypto';
 import { requireAuth } from '../lib/auth.js';
@@ -37,12 +38,17 @@ interface Row {
   sent_at: Date | null;
   gmail_thread_id: string | null;
   updated_at: Date;
+  sends: { to: string; to_name: string | null; status: ColdEmailSend['status']; error: string | null; sent_at: string | null; thread: string | null }[];
 }
 
 const COLUMNS = sql`
   c.id, c.listing_id, c.title, c.company, c.status, c.contacts, c.to_email, c.to_name, c.subject, c.body, c.match_score,
   c.error, c.sent_at, c.gmail_thread_id, c.updated_at,
-  coalesce(t.file_name, r.file_name) as attachment, t.id is not null as attachment_tailored`;
+  coalesce(t.file_name, r.file_name) as attachment, t.id is not null as attachment_tailored,
+  coalesce((
+    select json_agg(json_build_object('to', x.to_email, 'to_name', x.to_name, 'status', x.status, 'error', x.error,
+                                      'sent_at', x.sent_at, 'thread', x.gmail_thread_id) order by x.sent_at nulls last, x.sending_at)
+    from public.cold_email_sends x where x.cold_email_id = c.id), '[]'::json) as sends`;
 
 /** The resume that goes with the email: the tailored one when it's ready, else the candidate's latest upload. */
 const ATTACHMENT_JOINS = sql`
@@ -50,6 +56,8 @@ const ATTACHMENT_JOINS = sql`
   left join lateral (
     select file_name from public.resumes where user_id = c.user_id and file is not null order by created_at desc limit 1
   ) r on true`;
+
+const gmailUrl = (thread: string | null) => (thread ? `https://mail.google.com/mail/u/0/#sent/${thread}` : null);
 
 const toColdEmail = (r: Row): ColdEmail => ({
   id: r.id,
@@ -67,12 +75,24 @@ const toColdEmail = (r: Row): ColdEmail => ({
   attachmentTailored: r.attachment_tailored,
   error: r.error,
   sentAt: r.sent_at?.toISOString() ?? null,
-  gmailUrl: r.gmail_thread_id ? `https://mail.google.com/mail/u/0/#sent/${r.gmail_thread_id}` : null,
+  gmailUrl: gmailUrl(r.gmail_thread_id),
+  sends: r.sends.map((x) => ({
+    to: x.to,
+    toName: x.to_name,
+    status: x.status,
+    error: x.error,
+    sentAt: x.sent_at ? new Date(x.sent_at).toISOString() : null,
+    gmailUrl: gmailUrl(x.thread),
+  })),
   updatedAt: r.updated_at.toISOString(),
 });
 
+const address = z.email().max(254).transform((s) => s.trim().toLowerCase());
 const sendBody = z.object({
-  to: z.email().max(254).transform((s) => s.trim().toLowerCase()),
+  // One address, or several: each gets their own email.
+  to: z
+    .union([address.transform((a) => [a]), z.array(address).min(1).max(COLD_EMAIL_LIMITS.recipientsPerJob)])
+    .transform((list) => [...new Set(list)]),
   subject: z.string().trim().min(1).max(COLD_EMAIL_LIMITS.maxSubjectChars),
   body: z.string().trim().min(20).max(COLD_EMAIL_LIMITS.maxBodyChars),
 });
@@ -99,9 +119,12 @@ interface PendingGmail {
 }
 const PENDING_TTL_S = 600;
 
+/** Emails sent in the last day, and ones being sent right now (a send with no answer yet may have gone out). */
+const SENT_OR_SENDING = (userId: string) => sql`
+  user_id = ${userId} and (sent_at > now() - interval '1 day' or (status = 'sending' and sending_at > now() - interval '5 minutes'))`;
+
 const sentToday = async (userId: string) => {
-  const [{ n }] = await sql<{ n: number }[]>`
-    select count(*)::int as n from public.cold_emails where user_id = ${userId} and sent_at > now() - interval '1 day'`;
+  const [{ n }] = await sql<{ n: number }[]>`select count(*)::int as n from public.cold_email_sends where ${SENT_OR_SENDING(userId)}`;
   return n;
 };
 
@@ -263,12 +286,21 @@ export default async function coldEmailRoutes(app: FastifyInstance) {
       return { email: toColdEmail(row) };
     });
 
-    // Sends the email, as the candidate edited it, from their Gmail with the resume attached.
-    app.post<{ Params: { id: string } }>('/v1/job-feed/:id/cold-email/send', async (req, reply): Promise<{ email: ColdEmail } | void> => {
+    // Sends the email, as the candidate edited it, from their Gmail with the resume attached: to one person,
+    // or to several at the company, each getting their own copy greeted by name.
+    app.post<{ Params: { id: string } }>('/v1/job-feed/:id/cold-email/send', async (req, reply): Promise<ColdEmailSendResult | void> => {
       const parsed = sendBody.safeParse(req.body);
       if (!z.uuid().safeParse(req.params.id).success) return reply.notFound('No such job.');
       if (!parsed.success) {
-        return reply.code(400).send({ error: 'bad_request', message: parsed.error.issues.some((i) => i.path[0] === 'to') ? 'Enter a valid email address.' : 'Add a subject and a message.' });
+        const toIssue = parsed.error.issues.find((i) => i.path[0] === 'to');
+        return reply.code(400).send({
+          error: 'bad_request',
+          message: !toIssue
+            ? 'Add a subject and a message.'
+            : toIssue.code === 'too_big'
+              ? `Send to at most ${COLD_EMAIL_LIMITS.recipientsPerJob} people for one job.`
+              : 'Enter valid email addresses.',
+        });
       }
       const { to, subject, body } = parsed.data;
       const userId = req.user.id;
@@ -276,7 +308,14 @@ export default async function coldEmailRoutes(app: FastifyInstance) {
       const [account] = await sql<{ email: string; refresh_token: Buffer }[]>`
         select email, refresh_token from public.gmail_accounts where user_id = ${userId}`;
       if (!account) return reply.code(409).send({ error: 'gmail_not_connected', message: 'Connect your Gmail to send.' });
-      if (to === account.email) return reply.code(400).send({ error: 'bad_request', message: 'That’s your own address. Enter the recruiter’s.' });
+      if (to.includes(account.email)) return reply.code(400).send({ error: 'bad_request', message: 'That’s your own address. Enter the recruiter’s.' });
+
+      const [email] = await sql<{ id: string; status: ColdEmailStatus; company: string; contacts: ColdEmailContact[] }[]>`
+        select id, status, company, contacts from public.cold_emails where user_id = ${userId} and listing_id = ${req.params.id}`;
+      // A sent email can still go to more people; a draft that's being written or failed can't go anywhere.
+      if (!email || (email.status !== 'ready' && email.status !== 'sent')) {
+        return reply.code(409).send({ error: 'conflict', message: !email ? 'Write the email first.' : 'The email isn’t ready yet.' });
+      }
 
       // Access first: if Gmail can't be reached or access is gone, nothing has been claimed or sent.
       let token: string;
@@ -291,32 +330,48 @@ export default async function coldEmailRoutes(app: FastifyInstance) {
         return reply.code(502).send({ error: 'send_failed', message: 'We couldn’t reach Gmail. Nothing was sent; try again in a moment.' });
       }
 
-      // Claims the send, under a per-user lock so the daily limit holds across parallel sends: a double
-      // click, a second tab or a retry after a timeout can't send it twice.
-      const claim = await sql.begin(async (tx) => {
+      // Claims each recipient, under a per-user lock so the daily limit holds across parallel sends. Someone
+      // already sent to, or being sent to right now (a double click, a second tab), is skipped; a failed
+      // send, or one that got no answer for five minutes, can be tried again.
+      const { claimed, room } = await sql.begin(async (tx) => {
         await tx`select pg_advisory_xact_lock(hashtext(${`coldemail:${userId}`}))`;
-        const [{ n }] = await tx<{ n: number }[]>`
-          select count(*)::int as n from public.cold_emails
-          where user_id = ${userId} and (sent_at > now() - interval '1 day' or sending_at > now() - interval '5 minutes')`;
-        if (n >= COLD_EMAIL_LIMITS.sendsPerDay) return 'limit' as const;
-        const [row] = await tx<{ id: string }[]>`
-          update public.cold_emails set sending_at = now(), updated_at = now()
-          where user_id = ${userId} and listing_id = ${req.params.id} and status = 'ready' and sent_at is null
-            and (sending_at is null or sending_at < now() - interval '5 minutes')
-          returning id`;
-        return row ?? null;
+        const [{ n }] = await tx<{ n: number }[]>`select count(*)::int as n from public.cold_email_sends where ${SENT_OR_SENDING(userId)}`;
+        const room = Math.max(0, COLD_EMAIL_LIMITS.sendsPerDay - n);
+        const claimed: string[] = [];
+        for (const address of to) {
+          if (claimed.length >= room) break;
+          const name = email.contacts.find((c) => c.email === address)?.name ?? null;
+          const [row] = await tx<{ to_email: string }[]>`
+            insert into public.cold_email_sends (cold_email_id, user_id, to_email, to_name)
+            values (${email.id}, ${userId}, ${address}, ${name})
+            on conflict (cold_email_id, to_email) do update set status = 'sending', sending_at = now(), error = null
+              where cold_email_sends.status = 'failed'
+                 or (cold_email_sends.status = 'sending' and cold_email_sends.sending_at < now() - interval '5 minutes')
+            returning to_email`;
+          if (row) claimed.push(row.to_email);
+        }
+        return { claimed, room };
       });
-      if (claim === 'limit') {
-        return reply.code(429).send({ error: 'rate_limited', message: `You can send ${COLD_EMAIL_LIMITS.sendsPerDay} cold emails a day, so they keep landing in inboxes. Try again tomorrow.` });
+      // Why each one that wasn't claimed was skipped.
+      const existing = await sql<{ to_email: string; status: ColdEmailSend['status'] }[]>`
+        select to_email, status from public.cold_email_sends where cold_email_id = ${email.id} and to_email = any(${to})`;
+      const results: ColdEmailSendResult['results'] = to
+        .filter((a) => !claimed.includes(a))
+        .map((a) => {
+          const prior = existing.find((e) => e.to_email === a)?.status;
+          const message =
+            prior === 'sent' ? 'Already sent to them.' : prior === 'sending' ? 'Being sent right now.' : `Over today’s limit of ${COLD_EMAIL_LIMITS.sendsPerDay}.`;
+          return { to: a, status: 'skipped' as const, message };
+        });
+      if (!claimed.length) {
+        if (!room) {
+          return reply.code(429).send({ error: 'rate_limited', message: `You can send ${COLD_EMAIL_LIMITS.sendsPerDay} cold emails a day, so they keep landing in inboxes. Try again tomorrow.` });
+        }
+        return reply.code(409).send({ error: 'conflict', message: to.length > 1 ? 'You’ve already sent this to everyone selected.' : 'You’ve already sent this to them.' });
       }
-      const claimed = claim;
-      if (!claimed) {
-        const [cur] = await sql<{ status: ColdEmailStatus }[]>`
-          select status from public.cold_emails where user_id = ${userId} and listing_id = ${req.params.id}`;
-        const message = !cur ? 'Write the email first.' : cur.status === 'sent' ? 'This email has already been sent.' : cur.status === 'ready' ? 'Already sending this email.' : 'The email isn’t ready yet.';
-        return reply.code(409).send({ error: 'conflict', message });
-      }
-      const release = () => sql`update public.cold_emails set sending_at = null where id = ${claimed.id}`;
+      const releaseAll = (addresses: string[], error: string) =>
+        sql`update public.cold_email_sends set status = 'failed', error = ${error}
+            where cold_email_id = ${email.id} and to_email = any(${addresses}) and status = 'sending'`;
 
       const [att] = await sql<{ file: Buffer | null; file_name: string | null; first: string | null; last: string | null; resume_name: string | null }[]>`
         select coalesce(t.file, r.file) as file, coalesce(t.file_name, r.file_name) as file_name, p.data->>'firstName' as first, p.data->>'lastName' as last, r.parsed_json->>'name' as resume_name
@@ -326,70 +381,98 @@ export default async function coldEmailRoutes(app: FastifyInstance) {
           select file, file_name, parsed_json from public.resumes where user_id = c.user_id and file is not null order by created_at desc limit 1
         ) r on true
         left join public.application_profiles p on p.user_id = c.user_id
-        where c.id = ${claimed.id}`;
+        where c.id = ${email.id}`;
       if (!att?.file) {
-        await release();
+        await releaseAll(claimed, 'No resume file to attach.');
         return reply.code(409).send({ error: 'no_resume_file', message: 'Upload your resume as a PDF or Word file to attach it.' });
       }
       // DOCX is a zip ("PK"); everything else Friday keeps is a PDF.
       const docx = att.file[0] === 0x50 && att.file[1] === 0x4b;
-      const mime = buildMime({
-        fromName: senderName(att.first, att.last) || att.resume_name || '',
-        fromEmail: account.email,
-        to,
-        subject,
-        text: body,
-        attachment: {
-          name: att.file_name ?? `Resume.${docx ? 'docx' : 'pdf'}`,
-          type: docx ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' : 'application/pdf',
-          data: att.file,
-        },
-      });
+      const attachment = {
+        name: att.file_name ?? `Resume.${docx ? 'docx' : 'pdf'}`,
+        type: docx ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' : 'application/pdf',
+        data: att.file,
+      };
+      const fromName = senderName(att.first, att.last) || att.resume_name || '';
 
-      let sent: { id: string; threadId: string };
-      try {
-        sent = await sendGmail(token, mime);
-      } catch (err) {
-        // Gmail turned it down (4xx): nothing went out. A 5xx or no answer at all may have sent it, so those
-        // keep the claim for five minutes.
-        if (err instanceof GmailSendError && err.status < 500) {
-          await release();
-          req.log.warn({ status: err.status, message: err.message }, 'gmail refused cold email');
-          if (err.status === 401 || err.status === 403) forgetAccessToken(userId);
-          return reply.code(502).send({ error: 'send_failed', message: `Gmail didn’t send it: ${err.message}` });
-        }
-        // No answer from Gmail: it may have gone out. The claim holds for five minutes so it isn't sent twice right away.
-        req.log.error({ err }, 'cold email send failed');
-        return reply.code(502).send({ error: 'send_failed', message: 'We couldn’t reach Gmail. Check your Sent folder before trying again in a few minutes.' });
-      }
-
-      // It went out: record it, retrying, as a row left 'ready' could be sent again once the claim expires.
-      for (let attempt = 1; ; attempt++) {
+      let firstSent: { to: string; id: string; threadId: string } | null = null;
+      for (const [i, address] of claimed.entries()) {
+        // One at a time, a moment apart: several emails to one company in the same second look automated.
+        if (i) await new Promise((r) => setTimeout(r, 1500));
+        const name = email.contacts.find((c) => c.email === address)?.name ?? null;
+        const text = personalize(body, name, email.company);
         try {
-          await sql`
-            update public.cold_emails set
-              status = 'sent', sent_at = now(), to_email = ${to},
-              to_name = (select c->>'name' from jsonb_array_elements(contacts) c where c->>'email' = ${to} limit 1),
-              subject = ${subject}, body = ${body}, gmail_message_id = ${sent.id}, gmail_thread_id = ${sent.threadId},
-              error = null, updated_at = now()
-            where id = ${claimed.id}`;
-          break;
+          const sent = await sendGmail(token, buildMime({ fromName, fromEmail: account.email, to: address, subject, text, attachment }));
+          firstSent ??= { to: address, ...sent };
+          // It went out: record it, retrying, as a send left 'sending' could go again once its claim expires.
+          for (let attempt = 1; ; attempt++) {
+            try {
+              await sql`
+                update public.cold_email_sends set status = 'sent', sent_at = now(), error = null,
+                  gmail_message_id = ${sent.id}, gmail_thread_id = ${sent.threadId}
+                where cold_email_id = ${email.id} and to_email = ${address}`;
+              break;
+            } catch (err) {
+              req.log.error({ err, attempt, gmailMessageId: sent.id }, 'recording a sent cold email failed');
+              if (attempt >= 5) throw err;
+              await new Promise((r) => setTimeout(r, 500 * attempt));
+            }
+          }
+          results.push({ to: address, status: 'sent', message: null });
         } catch (err) {
-          req.log.error({ err, attempt, gmailMessageId: sent.id }, 'recording a sent cold email failed');
-          if (attempt >= 5) throw err;
-          await new Promise((r) => setTimeout(r, 500 * attempt));
+          // Gmail turned it down (4xx): nothing went out. A 5xx or no answer may have sent it, so that one
+          // keeps its claim for five minutes and the rest are left for another try.
+          if (err instanceof GmailSendError && err.status < 500) {
+            req.log.warn({ status: err.status, message: err.message }, 'gmail refused cold email');
+            if (err.status === 401 || err.status === 403) forgetAccessToken(userId);
+            await releaseAll([address], `Gmail didn’t send it: ${err.message}`);
+            results.push({ to: address, status: 'failed', message: `Gmail didn’t send it: ${err.message}` });
+            if (err.status === 401 || err.status === 403 || err.status === 429) {
+              const rest = claimed.slice(i + 1);
+              await releaseAll(rest, 'Not sent: Gmail stopped the sending.');
+              results.push(...rest.map((a) => ({ to: a, status: 'failed' as const, message: 'Not sent: Gmail stopped the sending.' })));
+              break;
+            }
+            continue;
+          }
+          req.log.error({ err }, 'cold email send failed');
+          await sql`update public.cold_email_sends set error = 'No answer from Gmail: check your Sent folder.'
+                    where cold_email_id = ${email.id} and to_email = ${address}`;
+          results.push({ to: address, status: 'failed', message: 'We couldn’t reach Gmail. Check your Sent folder before trying again in a few minutes.' });
+          const rest = claimed.slice(i + 1);
+          await releaseAll(rest, 'Not sent: Gmail stopped answering.');
+          results.push(...rest.map((a) => ({ to: a, status: 'failed' as const, message: 'Not sent: Gmail stopped answering.' })));
+          break;
         }
       }
-      // Track it with the candidate's other applications, without moving one that's already further along.
-      await sql`
-        insert into public.job_applications (user_id, listing_id, title, company, location, apply_url, status, applied_at)
-        select ${userId}, l.id, l.title, l.company, l.location, l.apply_url, 'applied', now()
-        from public.job_listings l where l.id = ${req.params.id}
-        on conflict (user_id, listing_id) do update set
-          status = case when job_applications.status = 'saved' then 'applied' else job_applications.status end,
-          applied_at = coalesce(job_applications.applied_at, now()), updated_at = now()`;
-      const [row] = await sql<Row[]>`select ${COLUMNS} from public.cold_emails c ${ATTACHMENT_JOINS} where c.id = ${claimed.id}`;
-      return { email: toColdEmail(row) };
+
+      if (firstSent) {
+        // The email's own columns keep its first send (for lists); later sends only add to cold_email_sends.
+        // Every right-hand side reads the row as it was before this update.
+        await sql`
+          update public.cold_emails set
+            status = 'sent', sent_at = coalesce(sent_at, now()),
+            to_email = case when sent_at is null then ${firstSent.to} else to_email end,
+            to_name = case when sent_at is null
+              then (select c->>'name' from jsonb_array_elements(contacts) c where c->>'email' = ${firstSent.to} limit 1) else to_name end,
+            gmail_message_id = coalesce(gmail_message_id, ${firstSent.id}), gmail_thread_id = coalesce(gmail_thread_id, ${firstSent.threadId}),
+            subject = ${subject}, body = ${body}, error = null, updated_at = now()
+          where id = ${email.id}`;
+        // Track it with the candidate's other applications, without moving one that's already further along.
+        await sql`
+          insert into public.job_applications (user_id, listing_id, title, company, location, apply_url, status, applied_at)
+          select ${userId}, l.id, l.title, l.company, l.location, l.apply_url, 'applied', now()
+          from public.job_listings l where l.id = ${req.params.id}
+          on conflict (user_id, listing_id) do update set
+            status = case when job_applications.status = 'saved' then 'applied' else job_applications.status end,
+            applied_at = coalesce(job_applications.applied_at, now()), updated_at = now()`;
+      }
+      const [row] = await sql<Row[]>`select ${COLUMNS} from public.cold_emails c ${ATTACHMENT_JOINS} where c.id = ${email.id}`;
+      const ordered = to.map((a) => results.find((r) => r.to === a)!).filter(Boolean);
+      if (!firstSent) {
+        return reply.code(502).send({ error: 'send_failed', message: ordered.find((r) => r.status === 'failed')?.message ?? 'Nothing was sent.', email: toColdEmail(row), results: ordered });
+      }
+      return { email: toColdEmail(row), results: ordered };
     });
   });
 }

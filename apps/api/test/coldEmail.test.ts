@@ -69,3 +69,26 @@ test('the email is plain text with the resume attached, and headers cannot be in
   assert.ok(mime.includes(Buffer.from('Hi Acme team,\r\n\r\nThanks.').toString('base64')));
   assert.ok(mime.trimEnd().endsWith('--'));
 });
+
+test("a company's own pages give its hiring addresses, never support, privacy or someone else's", async () => {
+  const { pageContacts } = await import('@parakeet/shared');
+  const html = `<main><p>Join us! Send your CV to <a href="mailto:careers@wingify.com">careers@wingify.com</a>.</p>
+    <p>Need an accommodation? Write to accessibility@wingify.com</p></main>
+    <footer>hello [at] wingify [dot] com · support@wingify.com · <a href="mailto:jobs@wingify.com?subject=Hi">Email our team</a>
+    · errors@sentry.io · <a href="mailto:privacy@wingify.com">Privacy</a></footer>
+    <script>const leak = "hr@wingify.com"</script>`;
+  assert.deepEqual(pageContacts(html, 'wingify.com'), ['careers@wingify.com', 'hello@wingify.com', 'jobs@wingify.com']);
+  assert.deepEqual(pageContacts('<p>Careers: talent&#64;in.acme.com</p>', 'acme.com'), ['talent@in.acme.com']);
+});
+
+test('robots.txt is respected', async () => {
+  const { robotsAllows } = await import('@parakeet/shared');
+  const robots = 'User-agent: *\nDisallow: /careers/private\nDisallow: /admin\nAllow: /admin/public\n\nUser-agent: FridayJobs\nDisallow: /team$';
+  assert.equal(robotsAllows(robots, 'FridayJobs', '/careers'), true);
+  assert.equal(robotsAllows(robots, 'FridayJobs', '/team'), false, 'its own group applies');
+  assert.equal(robotsAllows(robots, 'FridayJobs', '/team/alice'), true, '$ anchors the end');
+  assert.equal(robotsAllows(robots, 'OtherBot', '/careers/private/x'), false);
+  assert.equal(robotsAllows(robots, 'OtherBot', '/admin/public/a'), true, 'the longer Allow wins');
+  assert.equal(robotsAllows('User-agent: *\nDisallow: /', 'FridayJobs', '/careers'), false);
+  assert.equal(robotsAllows('', 'FridayJobs', '/careers'), true);
+});

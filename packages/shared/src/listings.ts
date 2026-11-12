@@ -4,15 +4,16 @@ import type { ResumeProfile } from './profile.js';
 // served publicly by GET /v1/listings and GET /v1/listings/:id.
 
 export const LISTING_PROVIDERS = [
-  'greenhouse', 'lever', 'ashby', 'workable', 'smartrecruiters', 'workday', 'keka', 'freshteam', 'zohorecruit', 'himalayas',
-  'remoteok', 'jobicy', 'adzuna', 'jooble',
+  'greenhouse', 'lever', 'ashby', 'workable', 'smartrecruiters', 'teamtailor', 'workday', 'keka', 'freshteam', 'zohorecruit', 'himalayas',
+  'remoteok', 'jobicy', 'adzuna', 'jooble', 'jsearch',
 ] as const;
 export type ListingProvider = (typeof LISTING_PROVIDERS)[number];
 
 /**
  * Job boards that carry many companies' postings: remote-job boards (Himalayas, Remote OK, Jobicy) and
- * job search engines (Adzuna, Jooble). Their terms ask that each job credits them with a followed link,
- * and that applying goes through their link.
+ * job search engines (Adzuna, Jooble, and JSearch, which returns Google for Jobs results: postings from
+ * LinkedIn, Naukri, Indeed and others). Their terms ask that each job credits them with a followed
+ * link, and that applying goes through their link.
  */
 export const AGGREGATOR_NAMES: Partial<Record<ListingProvider, string>> = {
   himalayas: 'Himalayas',
@@ -20,6 +21,7 @@ export const AGGREGATOR_NAMES: Partial<Record<ListingProvider, string>> = {
   jobicy: 'Jobicy',
   adzuna: 'Adzuna',
   jooble: 'Jooble',
+  jsearch: 'JSearch',
 };
 export const AGGREGATORS: ReadonlySet<ListingProvider> = new Set(Object.keys(AGGREGATOR_NAMES) as ListingProvider[]);
 
@@ -30,13 +32,17 @@ export const AGGREGATOR_SITES: Partial<Record<ListingProvider, string>> = {
   jobicy: 'https://jobicy.com',
   adzuna: 'https://www.adzuna.in',
   jooble: 'https://in.jooble.org',
+  jsearch: 'https://www.openwebninja.com/api/jsearch',
 };
 
 /**
  * Job search engines, synced by searching (for the roles users want) rather than reading a whole
  * board. They only give a description excerpt, and a job missing from one sync isn't closed.
  */
-export const SEARCH_PROVIDERS: ReadonlySet<ListingProvider> = new Set(['adzuna', 'jooble']);
+export const SEARCH_PROVIDERS: ReadonlySet<ListingProvider> = new Set(['adzuna', 'jooble', 'jsearch']);
+
+/** Search engines that give only an excerpt of the description (JSearch gives all of it). */
+export const EXCERPT_PROVIDERS: ReadonlySet<ListingProvider> = new Set(['adzuna', 'jooble']);
 
 export const WORKPLACES = ['remote', 'hybrid', 'onsite'] as const;
 export type Workplace = (typeof WORKPLACES)[number];
@@ -158,6 +164,7 @@ export const PLATFORMS = [
   { id: 'ycombinator', label: 'Y Combinator startups' },
   { id: 'adzuna', label: 'Adzuna' },
   { id: 'jooble', label: 'Jooble' },
+  { id: 'jsearch', label: 'LinkedIn, Naukri, Indeed (JSearch)' },
   { id: 'himalayas', label: 'Himalayas' },
   { id: 'remoteok', label: 'Remote OK' },
   { id: 'jobicy', label: 'Jobicy' },
@@ -210,6 +217,14 @@ export interface FeedFacets {
 
 /** Lowest match score shown in each matched view. */
 export const MATCH_THRESHOLDS = { recommended: 60, top: 80 } as const;
+
+/**
+ * Recommendations (Recommended, Top matches, Swipe, Auto Apply) leave out postings older than this:
+ * many careers pages keep "evergreen" roles open for months. All jobs still shows them.
+ */
+export const FRESH_DAYS = 60;
+/** Match scores this close count as equally good, so the newer posting comes first. */
+export const MATCH_SCORE_BAND = 5;
 
 export const APPLICATION_STATUSES = ['saved', 'applied', 'interviewing', 'offer', 'rejected'] as const;
 export type ApplicationStatus = (typeof APPLICATION_STATUSES)[number];
@@ -325,7 +340,7 @@ const norm = (s: string) =>
     .normalize('NFKD')
     .replace(/[̀-ͯ]/g, '')
     .toLowerCase()
-    .replace(/\([^)]*\)/g, ' ')
+    .replace(/\([^)]*\)|\[[^\]]*\]/g, ' ')
     .replace(/&/g, ' and ');
 const words = (s: string) => s.replace(/[^a-z0-9+#]+/g, ' ').replace(/\s+/g, ' ').trim();
 

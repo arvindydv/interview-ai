@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import {
-  AGGREGATORS, AGGREGATOR_NAMES, AGGREGATOR_SITES, LISTING_LIMITS, SEARCH_PROVIDERS, WORKPLACES, type ListingCompany, type ListingDetail, type ListingPage, type ListingProvider,
+  AGGREGATORS, AGGREGATOR_NAMES, AGGREGATOR_SITES, LISTING_LIMITS, EXCERPT_PROVIDERS, WORKPLACES, type ListingCompany, type ListingDetail, type ListingPage, type ListingProvider,
   type ListingSummary, type Workplace,
 } from '@parakeet/shared';
 import { sql } from '../lib/db.js';
@@ -107,7 +107,7 @@ export default async function listingRoutes(app: FastifyInstance) {
     return {
       ...toSummary(r),
       descriptionHtml: r.description_html,
-      descriptionPartial: SEARCH_PROVIDERS.has(r.provider),
+      descriptionPartial: EXCERPT_PROVIDERS.has(r.provider),
       applyUrl: r.apply_url,
       provider: r.provider,
       closed: r.closed_at !== null,

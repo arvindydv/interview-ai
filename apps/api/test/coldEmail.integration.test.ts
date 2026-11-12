@@ -207,24 +207,74 @@ describe('cold email', { skip: !serviceKey && 'set SUPABASE_SERVICE_ROLE_KEY to 
     assert.equal((await call('GET', '/v1/cold-emails')).json<{ items: ColdEmail[] }>().items.length, 1);
   });
 
-  test('stops at the daily limit', async () => {
-    await sql`
-      insert into public.cold_emails (user_id, title, company, status, sent_at)
-      select ${userId}, 'Old', 'Co', 'sent', now() from generate_series(2, ${COLD_EMAIL_LIMITS.sendsPerDay})`;
+  test('sends each person their own email, greeted by name, never twice, and stops at the daily limit', async () => {
     const [{ id: other }] = await sql<{ id: string }[]>`
       insert into public.job_listings (source_id, external_id, title, company, apply_url, description_text)
       values (${sourceId}, ${randomUUID()}, 'Data Engineer', 'QA Co', 'https://jobs.lever.co/x/z', 'Build pipelines.') returning id`;
-    await sql`insert into public.cold_emails (user_id, listing_id, title, company, status, subject, body) values (${userId}, ${other}, 'Data Engineer', 'QA Co', 'ready', 's', 'b')`;
-    const res = await call('POST', `/v1/job-feed/${other}/cold-email/send`, { to: 'a@qa.co', subject: 'Data role', body: 'Hi there, about the data role.' });
+    const contacts = [
+      { email: 'marta@qa.co', name: 'Marta Grzesik', position: 'Senior Recruiter', source: 'finder', confidence: 85 },
+      { email: 'anisa@qa.co', name: 'Anisa Coffey', position: 'Recruiter', source: 'finder', confidence: 85 },
+      { email: 'careers@qa.co', name: null, position: null, source: 'website', confidence: null },
+    ];
+    await sql`
+      insert into public.cold_emails (user_id, listing_id, title, company, status, contacts, subject, body)
+      values (${userId}, ${other}, 'Data Engineer', 'QA Co', 'ready', ${sql.json(contacts)}, 's', 'b')`;
+    // No tailored resume for this job: the candidate's own upload is attached.
+    await sql`insert into public.resumes (user_id, file_name, mime_type, text, status, file) values (${userId}, 'Asha Rao.pdf', 'application/pdf', 'Asha', 'ready', ${Buffer.from('%PDF own')})`;
+    const message = { subject: 'Data Engineer role', body: 'Hi Marta,\n\nI am writing about the Data Engineer role.' };
+    const before = sentRaw.length;
+
+    let res = await call('POST', `/v1/job-feed/${other}/cold-email/send`, { ...message, to: ['marta@qa.co', 'anisa@qa.co', 'careers@qa.co'] });
+    assert.equal(res.statusCode, 200, res.body);
+    assert.deepEqual(res.json().results.map((r: { status: string }) => r.status), ['sent', 'sent', 'sent']);
+    const mails = sentRaw.slice(before);
+    assert.equal(mails.length, 3, 'one email each, never one email to everyone');
+    const greeting = (mime: string) => {
+      const part = mime.split('Content-Transfer-Encoding: base64\r\n\r\n')[1].split('\r\n--')[0];
+      return Buffer.from(part.replace(/\r\n/g, ''), 'base64').toString('utf8').split('\r\n')[0];
+    };
+    assert.deepEqual(mails.map((m) => [m.match(/^To: (.+)$/m)![1], greeting(m)]), [
+      ['marta@qa.co', 'Hi Marta,'],
+      ['anisa@qa.co', 'Hi Anisa,'],
+      ['careers@qa.co', 'Hi QA Co team,'],
+    ]);
+    const email = res.json().email as ColdEmail;
+    assert.equal(email.status, 'sent');
+    assert.deepEqual(email.sends.map((x) => [x.to, x.status]), [['marta@qa.co', 'sent'], ['anisa@qa.co', 'sent'], ['careers@qa.co', 'sent']]);
+
+    // Again, plus someone new: only the new person gets it.
+    res = await call('POST', `/v1/job-feed/${other}/cold-email/send`, { ...message, to: ['anisa@qa.co', 'new@qa.co'] });
+    assert.deepEqual(res.json().results, [
+      { to: 'anisa@qa.co', status: 'skipped', message: 'Already sent to them.' },
+      { to: 'new@qa.co', status: 'sent', message: null },
+    ]);
+    assert.equal(sentRaw.length, before + 4);
+    // Everyone already has it.
+    assert.equal((await call('POST', `/v1/job-feed/${other}/cold-email/send`, { ...message, to: ['marta@qa.co'] })).statusCode, 409);
+    assert.equal((await call('POST', `/v1/job-feed/${other}/cold-email/send`, { ...message, to: ['a@qa.co', 'b@qa.co', 'c@qa.co', 'd@qa.co', 'e@qa.co', 'f@qa.co'] })).statusCode, 400);
+
+    // The daily limit: with one send left, the first person gets it and the rest are told why not.
+    const used = (await sql<{ n: number }[]>`select count(*)::int as n from public.cold_email_sends where user_id = ${userId}`)[0].n;
+    const [{ id: filler }] = await sql<{ id: string }[]>`
+      insert into public.cold_emails (user_id, title, company, status) values (${userId}, 'Old', 'Co', 'sent') returning id`;
+    await sql`
+      insert into public.cold_email_sends (cold_email_id, user_id, to_email, status, sent_at)
+      select ${filler}, ${userId}, 'old' || g || '@co.co', 'sent', now() from generate_series(1, ${COLD_EMAIL_LIMITS.sendsPerDay - used - 1}) g`;
+    res = await call('POST', `/v1/job-feed/${other}/cold-email/send`, { ...message, to: ['x@qa.co', 'y@qa.co'] });
+    assert.deepEqual(res.json().results, [
+      { to: 'x@qa.co', status: 'sent', message: null },
+      { to: 'y@qa.co', status: 'skipped', message: `Over today’s limit of ${COLD_EMAIL_LIMITS.sendsPerDay}.` },
+    ]);
+    res = await call('POST', `/v1/job-feed/${other}/cold-email/send`, { ...message, to: ['y@qa.co'] });
     assert.equal(res.statusCode, 429);
-    await sql`delete from public.cold_emails where user_id = ${userId} and listing_id is null`;
+    await sql`delete from public.cold_emails where id = ${filler}`;
   });
 
   test('a revoked Gmail is disconnected and the email is not lost', async () => {
-    const [{ listing_id }] = await sql<{ listing_id: string }[]>`
-      select listing_id from public.cold_emails where user_id = ${userId} and status = 'ready'`;
-    // A user with no resume file can't attach one.
-    await sql`insert into public.resumes (user_id, file_name, mime_type, text, status, file) values (${userId}, 'r.pdf', 'application/pdf', 'Asha', 'ready', ${Buffer.from('%PDF own')})`;
+    const [{ id: listing_id }] = await sql<{ id: string }[]>`
+      insert into public.job_listings (source_id, external_id, title, company, apply_url, description_text)
+      values (${sourceId}, ${randomUUID()}, 'ML Engineer', 'QA Co', 'https://jobs.lever.co/x/m', 'Train models.') returning id`;
+    await sql`insert into public.cold_emails (user_id, listing_id, title, company, status, subject, body) values (${userId}, ${listing_id}, 'ML Engineer', 'QA Co', 'ready', 's', 'b')`;
     tokenAnswer = 'revoked';
     const { forgetAccessToken } = await import('../src/lib/gmail.js');
     forgetAccessToken(userId);
@@ -232,7 +282,9 @@ describe('cold email', { skip: !serviceKey && 'set SUPABASE_SERVICE_ROLE_KEY to 
     assert.equal(res.statusCode, 409);
     assert.equal(res.json().error, 'gmail_not_connected');
     assert.equal((await sql`select 1 from public.gmail_accounts where user_id = ${userId}`).length, 0);
-    const [row] = await sql<{ status: string; sending_at: Date | null }[]>`select status, sending_at from public.cold_emails where user_id = ${userId} and listing_id = ${listing_id}`;
-    assert.deepEqual(row, { status: 'ready', sending_at: null });
+    const [row] = await sql<{ status: string; sends: number }[]>`
+      select status, (select count(*)::int from public.cold_email_sends x where x.cold_email_id = c.id) as sends
+      from public.cold_emails c where user_id = ${userId} and listing_id = ${listing_id}`;
+    assert.deepEqual(row, { status: 'ready', sends: 0 }, 'nothing claimed: it can be sent once Gmail is connected again');
   });
 });

@@ -18,3 +18,6 @@ packages/emails/preview/
 # Worker Python (python/resume_doc.py)
 apps/worker/.venv/
 __pycache__/
+
+# Adzuna probe responses (apps/worker/test/adzuna.probe.ts)
+apps/worker/.adzuna-probe/

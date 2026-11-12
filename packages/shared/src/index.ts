@@ -10,3 +10,6 @@ export * from './listings.js';
 export * from './autoApply.js';
 export * from './jobsPlans.js';
 export * from './coldEmail.js';
+export * from './listingQuality.js';
+export * from './jobBot.js';
+export * from './connectors.js';

@@ -46,11 +46,30 @@ const schema = z.object({
   ADZUNA_APP_ID: z.string().optional(),
   ADZUNA_APP_KEY: z.string().optional(),
   /** Searches per sync (four a day): 20 keeps within the free plan's 2,500 a month. */
+  /**
+   * Adzuna's terms need a commercial licence after a 14-day trial, so it isn't synced, even with keys
+   * set, until this is "true" (once the licence is confirmed). The controlled probe
+   * (test/adzuna.probe.ts) reads the keys directly and is unaffected.
+   */
+  ADZUNA_SYNC_ENABLED: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
   ADZUNA_CALLS_PER_SYNC: z.coerce.number().int().min(1).max(200).default(20),
   JOOBLE_API_KEY: z.string().optional(),
   /** Jooble keys are issued for one country's site. */
   JOOBLE_HOST: z.string().default('jooble.org'),
-  JOOBLE_CALLS_PER_SYNC: z.coerce.number().int().min(1).max(200).default(20),
+  /**
+   * Searches per sync (one sync a day). Jooble's free key allows 500 requests in its lifetime, not per
+   * month: 4 a day lasts about four months. Ask Jooble for a partner key before raising it.
+   */
+  JOOBLE_CALLS_PER_SYNC: z.coerce.number().int().min(1).max(200).default(4),
+  /**
+   * JSearch (RapidAPI: rapidapi.com/letscrape-6bRBa3QguO5/api/jsearch, key from the RapidAPI dashboard):
+   * Google for Jobs results, which include postings from LinkedIn, Naukri and Indeed. Off until set.
+   */
+  JSEARCH_API_KEY: z.string().optional(),
+  /** Searches per sync (one sync a day): 6 keeps within the free plan's 200 requests a month. */
+  JSEARCH_CALLS_PER_SYNC: z.coerce.number().int().min(1).max(200).default(6),
+  /** Only postings this recent: today, 3days, week or month. */
+  JSEARCH_DATE_POSTED: z.enum(['today', '3days', 'week', 'month']).default('3days'),
 
   // Friday Jobs cold email: finds recruiters' and hiring managers' addresses by company domain
   // (hunter.io, API key from hunter.io/api-keys). Unset: only addresses in the posting, or ones the
@@ -58,6 +77,14 @@ const schema = z.object({
   HUNTER_API_KEY: z.string().optional(),
   /** Cold emails: Sonnet-tier by default, as they go to a person in the candidate's name. */
   LLM_COLD_EMAIL_MODEL: z.string().optional(),
+
+  // Friday Jobs platform bot (src/jobBot): applies on LinkedIn, Naukri and Indeed for the accounts listed
+  // here (comma-separated emails), signed in with sessions kept on this machine. Empty: off for everyone.
+  JOB_BOT_USER_EMAILS: z.string().default(''),
+  /** Where sessions and resume copies live, one folder per user. Default ~/.friday-job-bot. */
+  JOB_BOT_HOME: z.string().optional(),
+  /** Chrome for the bot (default: the system Chrome or Chromium). */
+  JOB_BOT_CHROME: z.string().optional(),
 });
 
 // Empty values in .env mean "not set".

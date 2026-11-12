@@ -149,3 +149,11 @@ export const coldEmailQueue = new Queue<{ coldEmailId: string }>(COLD_EMAIL_QUEU
     removeOnFail: { age: 7 * 24 * 3600 },
   },
 });
+
+// Friday Jobs platform bot (LinkedIn, Naukri, Indeed), run by apps/worker (queues/jobBot.ts): "jobbot.run"
+// { userId } applies now; "jobbot.connect" { userId, platform } opens the sign-in window.
+export const JOB_BOT_QUEUE = 'jobbot';
+export const jobBotQueue = new Queue<{ userId: string; platform?: string }>(JOB_BOT_QUEUE, {
+  connection,
+  defaultJobOptions: { attempts: 1, removeOnComplete: { age: 7 * 24 * 3600 }, removeOnFail: { age: 7 * 24 * 3600 } },
+});

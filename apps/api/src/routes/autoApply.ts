@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import {
-  AUTO_APPLY_LIMITS, AUTO_APPLY_PROVIDERS, AUTO_APPLY_STATUSES, EMPTY_APPLICATION_PROFILE, JOBS_PLANS, activeJobsPlan, autoApplyUrl,
+  AUTO_APPLY_LIMITS, FRESH_DAYS, MATCH_SCORE_BAND, AUTO_APPLY_PROVIDERS, AUTO_APPLY_STATUSES, EMPTY_APPLICATION_PROFILE, JOBS_PLANS, activeJobsPlan, autoApplyUrl,
   missingProfileFields, type ApplicationProfile, type JobsAnalytics, type JobsPlan, type JobsPlanStatus, type SwipeCard, type SwipeResult,
   type AutoApplication, type AutoApplicationDetail, type AutoApplyOverview, type AutoApplyProvider, type AutoApplyReason,
   type AutoApplySettings, type AutoApplyStatus, type AutoApplyTask, type FormQuestion, type PreparedAnswer, type AutoApplyDevice,
@@ -514,11 +514,12 @@ export default async function autoApplyRoutes(app: FastifyInstance) {
       join public.job_sources s on s.id = l.source_id
       where m.user_id = ${userId} and m.score >= ${AUTO_APPLY_LIMITS.minScore}
         and l.closed_at is null and l.duplicate_of is null
+        and (l.posted_at is null or l.posted_at >= now() - make_interval(days => ${FRESH_DAYS}))
         and s.provider in ${sql(AUTO_APPLY_PROVIDERS as unknown as string[])}
         and not exists (select 1 from public.job_swipes w where w.user_id = ${userId} and w.listing_id = l.id)
         and not exists (select 1 from public.auto_applications a where a.user_id = ${userId} and a.listing_id = l.id)
         and not exists (select 1 from public.job_applications j where j.user_id = ${userId} and j.listing_id = l.id and j.status <> 'saved')
-      order by m.score desc, l.posted_at desc nulls last
+      order by floor(m.score / ${MATCH_SCORE_BAND}) desc, l.posted_at desc nulls last, m.score desc
       limit ${limit}`;
     return { cards: rows.map(({ posted_at, ...r }) => ({ ...r, postedAt: posted_at?.toISOString() ?? null })) };
   });

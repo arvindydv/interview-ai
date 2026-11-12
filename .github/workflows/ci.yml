@@ -28,7 +28,7 @@ jobs:
       - run: pnpm --filter @parakeet/shared --filter @parakeet/emails exec tsc -p tsconfig.json
       - run: pnpm -r typecheck
       # Unit tests; the integration tests skip themselves without a local Supabase.
-      - run: pnpm --filter @parakeet/api --filter @parakeet/web test
+      - run: pnpm --filter @parakeet/api --filter @parakeet/web --filter @parakeet/worker test
 
   docker:
     name: Docker ${{ matrix.app }}

@@ -27,6 +27,8 @@ import jobResumeRoutes from './routes/jobResumes.js';
 import coldEmailRoutes from './routes/coldEmail.js';
 import adminAuthRoutes from './routes/admin/auth.js';
 import adminOverviewRoutes from './routes/admin/overview.js';
+import adminJobsRoutes from './routes/admin/jobs.js';
+import jobBotRoutes from './routes/jobBot.js';
 import adminUserRoutes from './routes/admin/users.js';
 import adminReportRoutes from './routes/admin/reports.js';
 
@@ -67,10 +69,12 @@ await app.register(listingRoutes);
 await app.register(jobFeedRoutes);
 await app.register(autoApplyRoutes);
 await app.register(coldEmailRoutes);
+await app.register(jobBotRoutes);
 await app.register(applierRoutes);
 await app.register(jobResumeRoutes);
 await app.register(adminAuthRoutes);
 await app.register(adminOverviewRoutes);
+await app.register(adminJobsRoutes);
 await app.register(adminUserRoutes);
 await app.register(adminReportRoutes);
 

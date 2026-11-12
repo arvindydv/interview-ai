@@ -12,6 +12,11 @@ const schema = z.object({
   // Only needed if the Supabase project still signs tokens with the legacy shared secret (HS256).
   SUPABASE_JWT_SECRET: z.string().optional(),
   DATABASE_URL: z.url(),
+  /** Friday Jobs analytics: monthly spend on the listings pipeline, for cost per 1,000 new jobs. Unset: not shown. */
+  JOBS_INFRA_MONTHLY_USD: z.coerce.number().min(0).optional(),
+  JOBS_API_MONTHLY_USD: z.coerce.number().min(0).optional(),
+  /** Accounts allowed to use the platform bot (comma-separated emails); must match the worker's. */
+  JOB_BOT_USER_EMAILS: z.string().default(''),
   /**
    * Auto Apply from Friday's servers: sha256 (hex) of the applier's token (apps/worker/src/applier.ts,
    * APPLIER_TOKEN there). Unset: the applier's routes refuse everything.

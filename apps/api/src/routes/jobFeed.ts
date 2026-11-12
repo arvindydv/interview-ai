@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import {
   AGGREGATORS, AGGREGATOR_NAMES, AGGREGATOR_SITES, APPLICATION_STATUSES, COMPANY_TYPES, PLATFORMS, FEED_SORTS, FEED_VIEWS, JOB_TYPES,
-  LISTING_LIMITS, MATCH_THRESHOLDS, PREFERENCE_LIMITS, SEARCH_PROVIDERS, TAILOR_LIMITS, WORKPLACES, resumeRoles, type ApplicationStatus,
+  FRESH_DAYS, LISTING_LIMITS, MATCH_SCORE_BAND, MATCH_THRESHOLDS, PREFERENCE_LIMITS, EXCERPT_PROVIDERS, TAILOR_LIMITS, WORKPLACES, resumeRoles, type ApplicationStatus,
   type CompanyType, type FeedDetail, type FeedFacets, type FeedItem, type FeedPage, type FeedView, type JobPreferences, type Platform,
   type JobType, type JobsSummary, type ListingProvider, type ResumeProfile, type TailoredResume, type TailoredResumeRecord,
   type TailorStatus, type WebJob, type WebJobPage, type Workplace,
@@ -146,6 +146,7 @@ const PLATFORM_SQL: Record<Platform, ReturnType<typeof sql>> = {
   jobicy: sql`(s.provider = 'jobicy')`,
   adzuna: sql`(s.provider = 'adzuna')`,
   jooble: sql`(s.provider = 'jooble')`,
+  jsearch: sql`(s.provider = 'jsearch')`,
 };
 
 /** Who is hiring (see COMPANY_TYPES), over listing `l` and source `s`. */
@@ -204,8 +205,12 @@ function viewSql(view: Exclude<FeedView, 'saved' | 'applied'>, userId: string) {
     join public.job_sources s on s.id = l.source_id
     left join public.job_applications a on a.user_id = m.user_id and a.listing_id = l.id
     where m.user_id = ${userId} and l.closed_at is null and l.duplicate_of is null and m.score >= ${MATCH_THRESHOLDS[view]}
+      and ${FRESH}
       and (a.status is null or a.status = 'saved')`;
 }
+
+/** Recommendations leave out stale postings (FRESH_DAYS); a posting with no date is kept. */
+const FRESH = sql`(l.posted_at is null or l.posted_at >= now() - make_interval(days => ${FRESH_DAYS}))`;
 
 /** Columns of an item, for listing `l` with optional match `m`, application `a` and source `s`. */
 const ITEM_COLUMNS = sql`
@@ -260,10 +265,10 @@ export default async function jobFeedRoutes(app: FastifyInstance) {
       select
         (select count(*)::int ${viewSql('recommended', userId)} and l.posted_at >= now() - interval '7 days') as "newThisWeek",
         (select count(*)::int from public.job_matches m join public.job_listings l on l.id = m.listing_id
-          where m.user_id = ${userId} and l.closed_at is null and m.score >= ${MATCH_THRESHOLDS.recommended}
+          where m.user_id = ${userId} and l.closed_at is null and l.duplicate_of is null and m.score >= ${MATCH_THRESHOLDS.recommended} and ${FRESH}
             and not exists (select 1 from public.job_applications a where a.user_id = m.user_id and a.listing_id = m.listing_id and a.status <> 'saved')) as recommended,
         (select count(*)::int from public.job_matches m join public.job_listings l on l.id = m.listing_id
-          where m.user_id = ${userId} and l.closed_at is null and m.score >= ${MATCH_THRESHOLDS.top}
+          where m.user_id = ${userId} and l.closed_at is null and l.duplicate_of is null and m.score >= ${MATCH_THRESHOLDS.top} and ${FRESH}
             and not exists (select 1 from public.job_applications a where a.user_id = m.user_id and a.listing_id = m.listing_id and a.status <> 'saved')) as top,
         (select count(*)::int from public.job_applications where user_id = ${userId} and status = 'saved') as saved,
         (select count(*)::int from public.job_applications where user_id = ${userId} and status <> 'saved') as applied`;
@@ -347,7 +352,7 @@ export default async function jobFeedRoutes(app: FastifyInstance) {
       const directFirst = view === 'all' ? sql`` : sql`l.agency,`;
       const order =
         sort === 'match'
-          ? sql`${directFirst} m.score desc nulls last, l.posted_at desc nulls last`
+          ? sql`${directFirst} floor(m.score / ${MATCH_SCORE_BAND}) desc nulls last, l.posted_at desc nulls last, m.score desc nulls last`
           : sql`${directFirst} ${relevance} l.posted_at desc nulls last, m.score desc nulls last`;
       rows = await sql`
         select ${ITEM_COLUMNS}, count(*) over ()::int as total
@@ -467,7 +472,7 @@ export default async function jobFeedRoutes(app: FastifyInstance) {
     return {
       ...toItem(r),
       descriptionHtml: r.description_html,
-      descriptionPartial: SEARCH_PROVIDERS.has(r.provider),
+      descriptionPartial: EXCERPT_PROVIDERS.has(r.provider),
       applyUrl: r.apply_url,
       provider: r.provider,
     };
