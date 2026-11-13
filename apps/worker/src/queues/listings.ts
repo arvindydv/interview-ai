@@ -66,7 +66,40 @@ async function syncAll() {
       and provider <> all(${skipped}::text[])`;
   await queue.addBulk(sources.map((s) => ({ name: 'listings.sync', data: { sourceId: s.id }, opts: SYNC_OPTS })));
   await sql`delete from public.job_source_runs where started_at < now() - interval '120 days'`;
-  return { queued: sources.length };
+  const stale = await closeStaleListings();
+  return { queued: sources.length, ...stale };
+}
+
+/** A board that hasn't been read successfully for this many sync intervals (and at least BOARD_STALE_DAYS). */
+const BOARD_STALE_SYNCS = 3;
+const BOARD_STALE_DAYS = 3;
+
+/**
+ * Listings nothing confirms are still open: their source was disabled, or hasn't been read
+ * successfully for a while (a board that keeps failing, a search engine whose key was removed). A
+ * normal sync closes what left a board; this catches sources that stopped syncing at all, so the feed,
+ * matches and Auto Apply never offer a job that may be gone. Exported for tests.
+ */
+export async function closeStaleListings() {
+  const disabled = await sql`
+    update public.job_listings l set closed_at = now()
+    from public.job_sources s
+    where s.id = l.source_id and l.closed_at is null and not s.enabled`;
+  const stale = await sql`
+    update public.job_listings l set closed_at = now()
+    from public.job_sources s
+    where s.id = l.source_id and l.closed_at is null and s.enabled
+      and l.last_seen_at < now() - case
+        when s.provider = any(${[...SEARCH_PROVIDERS, ...CLOSE_BY_STATUS]}::text[]) then make_interval(days => ${SEARCH_STALE_DAYS})
+        else greatest(make_interval(days => ${BOARD_STALE_DAYS}), s.sync_every * ${BOARD_STALE_SYNCS})
+      end`;
+  return { closedDisabled: disabled.count, closedStale: stale.count };
+}
+
+/** The board no longer exists (404, renamed): none of its jobs can be applied to. */
+export async function closeGoneBoard(sourceId: string) {
+  const r = await sql`update public.job_listings set closed_at = now() where source_id = ${sourceId} and closed_at is null`;
+  return r.count;
 }
 
 /** Syncs one source now, e.g. a board discovery just found, instead of waiting for the next round. */
@@ -152,7 +185,7 @@ async function storedPostings(sourceId: string): Promise<Map<string, Posting>> {
 /** Sources whose jobs leave the feed while still open: closed only when the source says so. */
 const CLOSE_BY_STATUS = new Set<ListingProvider>(['jobicy']);
 
-async function syncSource(job: Job<{ sourceId?: string }>) {
+export async function syncSource(job: Pick<Job<{ sourceId?: string }>, "data" | "attemptsMade" | "opts">) {
   const [source] = await sql<SourceRow[]>`
     select id, provider, board, company, enabled from public.job_sources where id = ${job.data.sourceId!}`;
   if (!source?.enabled) return { skipped: 'source removed or disabled' };
@@ -180,7 +213,10 @@ async function syncSource(job: Job<{ sourceId?: string }>) {
     if (err instanceof BoardNotFoundError || isLastAttempt) {
       await sql`update public.job_sources set last_error = ${message} where id = ${source.id}`;
     }
-    if (err instanceof BoardNotFoundError) throw new UnrecoverableError(message);
+    if (err instanceof BoardNotFoundError) {
+      await closeGoneBoard(source.id);
+      throw new UnrecoverableError(message);
+    }
     throw err;
   }
 }

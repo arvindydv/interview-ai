@@ -232,6 +232,19 @@ export async function answerForm(form: FormQuestion[], ctx: AnswerContext): Prom
       answers.set(q.key, { key: q.key, label: q.label, value: reuse, source: 'user' });
       continue;
     }
+    // A free-text question the profile answers outright (notice period, CTC): filled from it, no model.
+    const known = knownFact(q, ctx.profile);
+    if (known !== null) {
+      answers.set(q.key, { key: q.key, label: q.label, value: known, source: 'profile' });
+      continue;
+    }
+    // A fact only the candidate can give, which their profile leaves unknown: never sent to the model,
+    // so it can't be guessed. Required ones pause the application (needs_answers); the answer they
+    // give is saved and reused.
+    if (unknownFact(q, ctx.profile, ctx.resume)) {
+      answers.set(q.key, { key: q.key, label: q.label, value: null, source: 'ai' });
+      continue;
+    }
     // A cover letter file is optional almost everywhere; leave it unless required.
     if (q.type === 'file' && !q.required) {
       answers.set(q.key, { key: q.key, label: q.label, value: null, source: 'ai' });
@@ -311,6 +324,72 @@ export async function answerForm(form: FormQuestion[], ctx: AnswerContext): Prom
     return v === null || v === undefined || (Array.isArray(v) ? v.length === 0 : !v.trim());
   });
   return { answers: list, missing, usage };
+}
+
+/**
+ * The profile's own answer to a free-text question about notice period or CTC, word for word (null when
+ * the question has options, which the model maps, or the profile doesn't say). Same patterns as unknownFact.
+ */
+export function knownFact(q: FormQuestion, p: ApplicationProfile): string | null {
+  if (q.options.length || (q.type !== 'text' && q.type !== 'textarea' && q.type !== 'number')) return null;
+  const l = `${q.label} ${q.description ?? ''}`.toLowerCase();
+  if (/(expected|desired|asking|salary expectation).{0,30}(ctc|salary|compensation|pay)|expected ctc|salary expectations?/.test(l)) {
+    return p.expectedSalary.trim() || null;
+  }
+  if (/(current|present|last|previous|existing|fixed).{0,30}(ctc|salary|compensation|pay)|\bcurrent ctc\b/.test(l)) {
+    return p.currentSalary.trim() || null;
+  }
+  if (/notice period|how soon can you (join|start)|joining time|earliest (start|joining)|when can you (join|start)/.test(l)) {
+    if (p.noticePeriodDays !== null) {
+      if (q.type === 'number' || /\bin days\b|\(days\)|number of days/.test(l)) return String(p.noticePeriodDays);
+      return p.noticePeriodDays === 0 ? 'Immediately' : `${p.noticePeriodDays} days`;
+    }
+    return p.earliestStart.trim() || null;
+  }
+  return null;
+}
+
+const YEARS_WITH = /\b(?:how many|number of|total)?\s*(?:years?|yrs?)\b.{0,40}?\b(?:experience|worked|working|hands[- ]on)\b.{0,20}?\b(?:with|in|using|on|of)\s+([^?]{2,60})/i;
+
+/**
+ * The profile topic a question asks about when the candidate hasn't answered it (null when the profile,
+ * or the resume for years with a tool, settles it, or the question isn't one of these). These are facts
+ * about the candidate: CTC, notice period, work authorization and sponsorship, relocation, travel,
+ * clearance, consents, and years of experience with something their resume doesn't show.
+ */
+export function unknownFact(q: FormQuestion, p: ApplicationProfile, resume: ResumeProfile | null): string | null {
+  const l = `${q.label} ${q.description ?? ''}`.toLowerCase();
+  if (/(expected|desired|asking|salary expectation).{0,30}(ctc|salary|compensation|pay)|expected ctc|salary expectations?/.test(l)) {
+    return p.expectedSalary.trim() ? null : 'Expected salary';
+  }
+  if (/(current|present|last|previous|existing|fixed).{0,30}(ctc|salary|compensation|pay)|\bcurrent ctc\b/.test(l)) {
+    return p.currentSalary.trim() ? null : 'Current salary';
+  }
+  if (/notice period|how soon can you (join|start)|joining time|earliest (start|joining)|when can you (join|start)/.test(l)) {
+    return p.noticePeriodDays !== null || p.earliestStart.trim() ? null : 'Notice period';
+  }
+  if (/sponsor|authori[sz]ed to work|work authori[sz]ation|work permit|right to work|visa status|legally (eligible|permitted|able) to work/.test(l)) {
+    return p.workAuthorization.length || p.otherCountries ? null : 'Where you can work';
+  }
+  if (/relocat/.test(l)) return p.willingToRelocate === null ? 'Relocation' : null;
+  if (/willing(ness)? to travel|\btravel (up to|requirements?)|able to travel/.test(l)) return p.willingToTravel === null ? 'Travel' : null;
+  if (/(hold|have|possess).{0,40}security clearance/.test(l)) return p.securityClearance === null ? 'Security clearance' : null;
+  if (/background (check|verification|screening)/.test(l)) return p.backgroundCheckConsent === null ? 'Background check' : null;
+  const years = YEARS_WITH.exec(l);
+  if (years) {
+    const topic = years[1].replace(/[?.:]+$/, '').trim();
+    if (/^(the )?(industry|total|overall|professional|relevant|work|software|it)\b/.test(topic) || /total|overall/.test(l)) {
+      return resume?.totalYearsExperience == null ? 'Total years of experience' : null;
+    }
+    // Years with a tool the resume names are worked out from it; a tool it never mentions is the candidate's to answer.
+    const named = (resume?.skills ?? []).some((s) => {
+      const a = norm(s.name);
+      const b = norm(topic);
+      return a.length > 1 && (b.includes(a) || a.includes(b));
+    });
+    return named ? null : `Years with ${topic}`;
+  }
+  return null;
 }
 
 /** Keeps an answer only if it fits the question: listed options for selects, sane length for text. */

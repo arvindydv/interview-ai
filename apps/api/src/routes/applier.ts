@@ -63,6 +63,10 @@ interface ClaimedRow {
   has_cover: boolean;
 }
 
+/** AUTO_APPLY_CLOUD_FORM_PROVIDERS as a list: the providers whose employer forms Friday's servers may fill. */
+const cloudFormProviders = () =>
+  env.AUTO_APPLY_CLOUD_FORM_PROVIDERS.split(',').map((p) => p.trim().toLowerCase()).filter(Boolean);
+
 export default async function applierRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireApplier);
 
@@ -90,8 +94,13 @@ export default async function applierRoutes(app: FastifyInstance) {
           from public.auto_applications a
           join public.auto_apply_settings s on s.user_id = a.user_id
           where a.status = 'prepared' and not a.needs_browser and (a.retry_at is null or a.retry_at <= now())
+            -- Only applications routed to Friday's servers (an operator-enabled provider; queues/autoApply.ts).
+            and a.channel = 'cloud_form' and a.cancelled_at is null
             and a.tailored_resume_id is not null
             and a.provider in ${sql(AUTO_APPLY_CLOUD_PROVIDERS as unknown as string[])}
+            -- And still on the operator's list here too: a stale row or a worker configured differently
+            -- can't send a provider nobody enabled. An empty list (the default) claims nothing.
+            and a.provider = any(${cloudFormProviders()}::text[])
             and s.enabled and s.cloud_submit and s.consented_at is not null
             ${only ? sql`and a.user_id = ${only}` : sql``}
             and not exists (
@@ -107,7 +116,7 @@ export default async function applierRoutes(app: FastifyInstance) {
           claimed_by = ${claim}, claimed_at = now(), submit_clicked_at = null, updated_at = now()
       from pick
       -- The extension may have taken it meanwhile.
-      where a.id = pick.id and a.status = 'prepared' and not a.needs_browser
+      where a.id = pick.id and a.status = 'prepared' and not a.needs_browser and a.channel = 'cloud_form' and a.cancelled_at is null
       returning a.id, a.user_id, a.listing_id, a.provider, a.apply_url, a.title, a.company, a.form, a.answers,
                 (select t.file_name from public.tailored_resumes t where t.id = a.tailored_resume_id) as file_name,
                 (select t.content->>'format' from public.tailored_resumes t where t.id = a.tailored_resume_id) as format,

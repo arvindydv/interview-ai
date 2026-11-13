@@ -28,6 +28,7 @@ describe('platform bot: Assisted Apply and evidence', { skip: !serviceKey && 'se
 
   before(async () => {
     process.env.JOB_BOT_USER_EMAILS = email;
+    process.env.JOB_BOT_EXPERIMENTAL = 'true';
     const { env } = await import('../src/env.js');
     ({ sql } = await import('../src/lib/db.js'));
     // Nothing reaches the shared queue: a running dev worker would otherwise tailor for the test user.

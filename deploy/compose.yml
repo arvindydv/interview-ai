@@ -65,17 +65,34 @@ services:
     stop_grace_period: 30s
     mem_limit: 512m
 
+  # Always on: queues, schedules (listings sync, matching, Auto Apply preparation, daily report,
+  # retention) and API submissions all run here, whether or not anyone's laptop is. Jobs live in Redis
+  # (AOF), so a restart resumes them; Auto Apply's tick returns stalled work to the queue.
   worker:
     <<: *service
     image: ${REGISTRY:?}/parakeet-worker:${TAG:?}
     env_file: ${PARAKEET_HOME:-/opt/parakeet}/env/worker.env
     environment:
       REDIS_URL: redis://redis:6379
-      NODE_OPTIONS: --max-old-space-size=256
+      # Measured (docs/FRIDAY_JOBS_DEPLOYMENT.md §Sizing): ~100 MB idle, ~250 MB in a full listings sync.
+      NODE_OPTIONS: --max-old-space-size=320
     depends_on:
       redis: { condition: service_healthy }
+    # Healthy while this container's worker process keeps its Redis heartbeat (src/heartbeat.ts, every
+    # 30 s); a hung event loop stops beating and Docker reports it unhealthy.
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - --input-type=module
+        - -e
+        - "import { Queue } from 'bullmq'; import { hostname } from 'node:os'; const q = new Queue('system', { connection: { url: process.env.REDIS_URL } }); const c = await q.getBackend().client; const k = await c.keys('worker:heartbeat:' + hostname() + ':*'); await q.close(); process.exit(k.length ? 0 : 1);"
+      interval: 60s
+      timeout: 10s
+      start_period: 90s
+      retries: 3
     stop_grace_period: 60s # let a running job (resume analysis, email) finish
-    mem_limit: 384m
+    mem_limit: 512m
 
   # Auto Apply from Friday's servers, in two containers so job boards' pages never run next to a secret.
   # Off until COMPOSE_PROFILES=cloud-apply is in /opt/parakeet/config.env (it needs ~1 GB more memory
@@ -122,40 +139,6 @@ services:
       browser: { condition: service_started }
     stop_grace_period: 9m # an application being sent finishes (runs are capped at 8 minutes)
     mem_limit: 192m
-
-  redis: { condition: service_healthy }
-    stop_grace_period: 30s
-    mem_limit: 512m
-
-  worker:
-    <<: *service
-    image: ${REGISTRY:?}/parakeet-worker:${TAG:?}
-    env_file: ${PARAKEET_HOME:-/opt/parakeet}/env/worker.env
-    environment:
-      REDIS_URL: redis://redis:6379
-      NODE_OPTIONS: --max-old-space-size=256
-    depends_on:
-      redis: { condition: service_healthy }
-    stop_grace_period: 60s # let a running job (resume analysis, email) finish
-    mem_limit: 384m
-
-  # Auto Apply from Friday's servers: the worker image, its own process, as each application is a
-  # Chromium tab. Chrome's sandbox needs user namespaces, which Docker's default seccomp profile blocks,
-  # so it runs without one; this container holds nothing but what the worker has.
-  applier:
-    <<: *service
-    image: ${REGISTRY:?}/parakeet-worker:${TAG:?}
-    command: ["node", "dist/applier.js"]
-    env_file: ${PARAKEET_HOME:-/opt/parakeet}/env/worker.env
-    environment:
-      REDIS_URL: redis://redis:6379
-      AUTO_APPLY_CHROME_NO_SANDBOX: '1'
-      AUTO_APPLY_CLOUD_SLOTS: '2'
-    depends_on:
-      redis: { condition: service_healthy }
-    stop_grace_period: 60s # let an application being sent finish
-    shm_size: 512m
-    mem_limit: 1536m
 
   redis:
     <<: *service

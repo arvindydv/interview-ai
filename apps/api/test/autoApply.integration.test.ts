@@ -33,7 +33,7 @@ describe('auto apply', { skip: !serviceKey && 'set SUPABASE_SERVICE_ROLE_KEY to 
   };
 
   /** A listing, a match and an application in the given state, with a tailored resume ready to send. */
-  async function seed(opts: { status?: string; reason?: string | null; score?: number; title?: string; form?: unknown[]; answers?: unknown[] } = {}) {
+  async function seed(opts: { status?: string; reason?: string | null; score?: number; title?: string; form?: unknown[]; answers?: unknown[]; channel?: string } = {}) {
     const title = opts.title ?? `Engineer ${randomUUID().slice(0, 6)}`;
     const [l] = await sql<{ id: string }[]>`
       insert into public.job_listings (source_id, external_id, title, company, apply_url, description_text)
@@ -46,9 +46,10 @@ describe('auto apply', { skip: !serviceKey && 'set SUPABASE_SERVICE_ROLE_KEY to 
     const answers = opts.answers ?? [{ key: 'name', label: 'Full name', value: 'Asha Rao', source: 'profile' }];
     const [a] = await sql<{ id: string }[]>`
       insert into public.auto_applications (user_id, listing_id, tailored_resume_id, provider, apply_url, title, company, score, status,
-                                            reason_code, form, answers, plan_day)
+                                            reason_code, form, answers, plan_day, channel)
       values (${userId}, ${l.id}, ${t.id}, 'lever', ${`https://jobs.lever.co/${board}/${l.id}/apply`}, ${title}, 'QA Co', ${opts.score ?? 80},
-              ${opts.status ?? 'prepared'}, ${opts.reason ?? null}, ${sql.json(form as never)}, ${sql.json(answers as never)}, current_date)
+              ${opts.status ?? 'prepared'}, ${opts.reason ?? null}, ${sql.json(form as never)}, ${sql.json(answers as never)}, current_date,
+              ${opts.channel ?? 'cloud_form'})
       returning id`;
     return { listingId: l.id, appId: a.id };
   }
@@ -67,6 +68,8 @@ describe('auto apply', { skip: !serviceKey && 'set SUPABASE_SERVICE_ROLE_KEY to 
   before(async () => {
     // The applier's token (routes/applier.ts), set before the API reads its environment.
     process.env.APPLIER_TOKEN_SHA256 = createHash('sha256').update(APPLIER_TOKEN).digest('hex');
+    // Server form filling is off unless an operator lists providers; these tests are that operator.
+    process.env.AUTO_APPLY_CLOUD_FORM_PROVIDERS = 'greenhouse,lever,ashby,workable,smartrecruiters';
     const { env } = await import('../src/env.js');
     ({ sql } = await import('../src/lib/db.js'));
     const supabase = async (path: string, body: unknown) => {
@@ -111,10 +114,7 @@ describe('auto apply', { skip: !serviceKey && 'set SUPABASE_SERVICE_ROLE_KEY to 
     for (const job of await queues.autoApplyQueue.getJobs(['waiting', 'delayed', 'prioritized', 'paused'])) {
       if (job && (job.data?.userId === userId || appIds.has(job.data?.applicationId))) await job.remove().catch(() => {});
     }
-    await Promise.all(
-      [queues.systemQueue, queues.systemQueueEvents, queues.emailQueue, queues.profileQueue, queues.practiceQueue, queues.historyQueue,
-       queues.tailorQueue, queues.matchesQueue, queues.autoApplyQueue, queues.coldEmailQueue].map((q) => q.close()),
-    );
+    await queues.closeQueues();
     const { redis } = await import('../src/lib/redis.js');
     await redis.quit();
   });
@@ -507,6 +507,15 @@ describe('auto apply', { skip: !serviceKey && 'set SUPABASE_SERVICE_ROLE_KEY to 
       // A late or repeated report for a claim that's over changes nothing.
       assert.equal((await asApplier('POST', `/v1/applier/applications/${a.appId}/report`, { outcome: 'failed', clicked: false }, task!.claim)).statusCode, 409);
 
+      // A provider the operator didn't enable is never claimed, even with channel cloud_form on the row.
+      const { env: apiEnv } = await import('../src/env.js');
+      const enabled = apiEnv.AUTO_APPLY_CLOUD_FORM_PROVIDERS;
+      apiEnv.AUTO_APPLY_CLOUD_FORM_PROVIDERS = 'greenhouse';
+      assert.equal(await claimCloud(), null, 'lever is not on the operator list');
+      apiEnv.AUTO_APPLY_CLOUD_FORM_PROVIDERS = '';
+      assert.equal(await claimCloud(), null, 'an empty list claims nothing');
+      apiEnv.AUTO_APPLY_CLOUD_FORM_PROVIDERS = enabled;
+
       assert.equal((await claimCloud())?.id, b.appId);
       await call('DELETE', `/v1/auto-apply/devices/${device.device.id}`);
       await sql`update public.auto_applications set status = 'skipped' where id in (${b.appId}, ${workday.appId}, ${browserOnly.appId})`;
@@ -557,6 +566,60 @@ describe('auto apply', { skip: !serviceKey && 'set SUPABASE_SERVICE_ROLE_KEY to 
       await call('POST', `/v1/auto-apply/applications/${b.appId}/report`, { outcome: 'failed', message: 'no confirmation', afterSubmit: true });
       assert.equal((await appRow(b.appId)).reason_code, 'unverified');
       await sql`update public.auto_apply_settings set cloud_submit = true where user_id = ${userId}`;
+    });
+
+    test('claims honour the channel: servers take only cloud_form, browsers never api or assisted', async () => {
+      // Out of the way (not the unverified ones the analytics test counts).
+      await sql`update public.auto_applications set status = 'skipped', reason_code = 'removed_by_user'
+        where user_id = ${userId} and (status = 'prepared' or (status = 'pending' and reason_code <> 'unverified'))`;
+      const api = await seed({ score: 97, channel: 'api' });
+      const assisted = await seed({ score: 96, channel: 'assisted' });
+      const ext = await seed({ score: 95, channel: 'extension' });
+      assert.equal(await claimCloud(), null, 'nothing routed to the servers');
+      const device = (await call('POST', '/v1/auto-apply/devices', { name: 'Chrome on Linux' })).json() as AutoApplyDeviceToken;
+      assert.equal((await claimAs(device.token))?.id, ext.appId, 'the extension skips api and assisted');
+      assert.equal(await claimAs(device.token), null);
+      assert.equal((await appRow(api.appId)).status, 'prepared');
+      assert.equal((await appRow(assisted.appId)).status, 'prepared');
+      await sql`update public.auto_applications set status = 'skipped' where id in ${sql([api.appId, assisted.appId, ext.appId])}`;
+      await sql`update public.auto_apply_devices set revoked_at = now() where user_id = ${userId} and revoked_at is null`;
+    });
+
+    test('cancel: a waiting application is skipped; one being sent is marked and its real outcome recorded', async () => {
+      const waiting = await seed({ score: 90 });
+      let res = await call('POST', `/v1/auto-apply/applications/${waiting.appId}/cancel`);
+      assert.deepEqual(res.json(), { status: 'skipped' });
+      assert.deepEqual([(await appRow(waiting.appId)).status, (await appRow(waiting.appId)).reason_code], ['skipped', 'removed_by_user']);
+      assert.equal(await claimCloud(), null, 'a cancelled application is never claimed');
+
+      const sending = await seed({ score: 90 });
+      const task = await claimCloud();
+      assert.equal(task?.id, sending.appId);
+      res = await call('POST', `/v1/auto-apply/applications/${sending.appId}/cancel`);
+      assert.deepEqual(res.json(), { status: 'cancelling' });
+      // The servers stopped at a CAPTCHA (nothing sent): cancelled, not handed on.
+      res = await asApplier('POST', `/v1/applier/applications/${sending.appId}/report`, { outcome: 'captcha', clicked: false }, task!.claim);
+      assert.equal(res.json().status, 'skipped');
+
+      const sent = await seed({ score: 90 });
+      const t2 = await claimCloud();
+      await call('POST', `/v1/auto-apply/applications/${sent.appId}/cancel`);
+      res = await asApplier('POST', `/v1/applier/applications/${sent.appId}/report`,
+        { outcome: 'submitted', clicked: true, evidence: { url: 'https://jobs.lever.co/x/y/thanks', text: 'Application submitted' } }, t2!.claim);
+      assert.equal(res.json().status, 'submitted', 'the job board has it: that is what happened');
+      res = await call('POST', `/v1/auto-apply/applications/${sent.appId}/cancel`);
+      assert.equal(res.statusCode, 409, 'a sent application can’t be cancelled');
+      await sql`update public.auto_applications set status = 'skipped' where id = ${sent.appId}`;
+    });
+
+    test('assisted: the user applies themselves and confirms → submitted, labelled as theirs', async () => {
+      const a = await seed({ score: 90, channel: 'assisted', status: 'pending', reason: 'assisted' });
+      const res = await call('POST', `/v1/auto-apply/applications/${a.appId}/confirm`);
+      assert.deepEqual(res.json(), { status: 'submitted' });
+      const [r] = await sql<{ status: string; submitted_via: string | null }[]>`select status, submitted_via from public.auto_applications where id = ${a.appId}`;
+      assert.deepEqual([r.status, r.submitted_via], ['submitted', 'user']);
+      assert.equal((await call('POST', `/v1/auto-apply/applications/${a.appId}/confirm`)).statusCode, 409, 'only once');
+      await sql`update public.auto_applications set status = 'skipped' where id = ${a.appId}`;
     });
 
     test('a failure before submitting is tried again later', async () => {

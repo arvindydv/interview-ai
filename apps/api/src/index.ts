@@ -28,7 +28,11 @@ import coldEmailRoutes from './routes/coldEmail.js';
 import adminAuthRoutes from './routes/admin/auth.js';
 import adminOverviewRoutes from './routes/admin/overview.js';
 import adminJobsRoutes from './routes/admin/jobs.js';
+import adminAtsCredentialRoutes from './routes/admin/atsCredentials.js';
 import jobBotRoutes from './routes/jobBot.js';
+import accountRoutes from './routes/account.js';
+import adminWorkerHealthRoutes from './routes/admin/workerHealth.js';
+import appliedJobsRoutes from './routes/appliedJobs.js';
 import adminUserRoutes from './routes/admin/users.js';
 import adminReportRoutes from './routes/admin/reports.js';
 
@@ -37,7 +41,11 @@ import adminReportRoutes from './routes/admin/reports.js';
 setGlobalDispatcher(new Agent({ keepAliveTimeout: 60_000, keepAliveMaxTimeout: 10 * 60_000 }));
 
 const app = Fastify({
-  logger: { level: env.NODE_ENV === 'production' ? 'info' : 'debug' },
+  logger: {
+    level: env.NODE_ENV === 'production' ? 'info' : 'debug',
+    // Query strings can carry OAuth codes and signed-download tokens: never logged. Headers aren't logged.
+    serializers: { req: (req) => ({ method: req.method, url: req.url.replace(/\?.*$/, '?[redacted]'), remoteAddress: req.ip }) },
+  },
   // Real client IPs behind Caddy, for the free-trial network limit and the admin login rate limit.
   trustProxy: (_address: string, hop: number) => hop < env.TRUST_PROXY,
 });
@@ -70,11 +78,15 @@ await app.register(jobFeedRoutes);
 await app.register(autoApplyRoutes);
 await app.register(coldEmailRoutes);
 await app.register(jobBotRoutes);
+await app.register(accountRoutes);
+await app.register(appliedJobsRoutes);
 await app.register(applierRoutes);
 await app.register(jobResumeRoutes);
 await app.register(adminAuthRoutes);
 await app.register(adminOverviewRoutes);
 await app.register(adminJobsRoutes);
+await app.register(adminAtsCredentialRoutes);
+await app.register(adminWorkerHealthRoutes);
 await app.register(adminUserRoutes);
 await app.register(adminReportRoutes);
 

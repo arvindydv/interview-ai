@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import { Check, FileText, Plus, X } from 'lucide-react';
 import { PREFERENCE_LIMITS, WORKPLACES, WORKPLACE_LABELS, type JobPreferences, type Workplace } from '@parakeet/shared';
+import { AccountPrivacy } from '@/components/AccountPrivacy';
 import { ResumeUploadButton } from '@/components/ResumeUpload';
 import { Spinner } from '@/components/ui';
 import { api } from '@/lib/api';
@@ -214,6 +215,8 @@ export default function ProfilePage() {
           </button>
         </div>
       </section>
+
+      <AccountPrivacy />
     </div>
   );
 }

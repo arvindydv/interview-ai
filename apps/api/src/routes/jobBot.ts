@@ -14,7 +14,7 @@ import { env } from '../env.js';
 
 // Friday Jobs platform bot (packages/shared/src/jobBot.ts): settings, sign-in status per platform, the
 // applications it sent, and the questions it needs answered. The applying itself is the worker's
-// (queues/jobBot.ts). Only for accounts in JOB_BOT_USER_EMAILS.
+// (experimental/jobBotQueue.ts). Only with JOB_BOT_EXPERIMENTAL on, for accounts in JOB_BOT_USER_EMAILS.
 
 const platformSchema = z.enum(BOT_PLATFORMS);
 const settingsSchema = z.object({
@@ -45,7 +45,13 @@ const listQuery = z.object({
   page: z.coerce.number().int().min(1).max(500).default(1),
 });
 
+/**
+ * The experimental bot (LinkedIn/Indeed/Naukri automation) is off unless JOB_BOT_EXPERIMENTAL is on AND
+ * the account is allowlisted: those sites' terms prohibit automated applications. Assisted Apply, the
+ * answers and the applications list below are the production path and work for everyone.
+ */
 const allowed = (req: FastifyRequest) =>
+  env.JOB_BOT_EXPERIMENTAL &&
   env.JOB_BOT_USER_EMAILS.split(',').map((e) => e.trim().toLowerCase()).filter(Boolean).includes((req.user.email ?? '').toLowerCase());
 
 /** "Question? (options: a / b)" → the question alone; null for notes that aren't a question to answer. */
@@ -128,7 +134,7 @@ export default async function jobBotRoutes(app: FastifyInstance) {
   });
 
   app.put('/v1/job-bot/settings', async (req, reply) => {
-    if (!allowed(req)) return reply.code(403).send({ error: 'unavailable', message: 'The platform bot isn’t enabled for this account.' });
+    if (!allowed(req)) return reply.code(403).send({ error: 'unavailable', message: 'The experimental platform bot is off. Use Assisted Apply for LinkedIn, Indeed and Naukri jobs.' });
     const parsed = settingsSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: 'bad_request', message: 'Invalid settings.' });
     await ensureUser(req);
@@ -140,7 +146,7 @@ export default async function jobBotRoutes(app: FastifyInstance) {
 
   // Opens a Chrome window on the computer running the worker, on the site's own sign-in page.
   app.post('/v1/job-bot/connect/:platform', async (req, reply) => {
-    if (!allowed(req)) return reply.code(403).send({ error: 'unavailable', message: 'The platform bot isn’t enabled for this account.' });
+    if (!allowed(req)) return reply.code(403).send({ error: 'unavailable', message: 'The experimental platform bot is off. Use Assisted Apply for LinkedIn, Indeed and Naukri jobs.' });
     const platform = platformSchema.safeParse((req.params as { platform: string }).platform);
     if (!platform.success) return reply.code(400).send({ error: 'bad_request', message: 'Unknown platform.' });
     await ensureUser(req);
@@ -162,7 +168,7 @@ export default async function jobBotRoutes(app: FastifyInstance) {
   });
 
   app.post('/v1/job-bot/run', async (req, reply) => {
-    if (!allowed(req)) return reply.code(403).send({ error: 'unavailable', message: 'The platform bot isn’t enabled for this account.' });
+    if (!allowed(req)) return reply.code(403).send({ error: 'unavailable', message: 'The experimental platform bot is off. Use Assisted Apply for LinkedIn, Indeed and Naukri jobs.' });
     await jobBotQueue.add('jobbot.run', { userId: req.user.id }, { jobId: `run-${req.user.id}-${Date.now() - (Date.now() % 600_000)}` });
     return { ok: true };
   });

@@ -1,8 +1,8 @@
 import type { Metadata } from 'next';
-import { FeedView } from '@/components/FeedView';
+import { AppliedDashboard } from '@/components/AppliedDashboard';
 
-export const metadata: Metadata = { title: 'Applied', robots: { index: false } };
+export const metadata: Metadata = { title: 'Applied jobs', robots: { index: false } };
 
 export default function Page() {
-  return <FeedView view="applied" />;
+  return <AppliedDashboard />;
 }

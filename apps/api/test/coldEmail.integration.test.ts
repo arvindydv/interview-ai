@@ -95,10 +95,7 @@ describe('cold email', { skip: !serviceKey && 'set SUPABASE_SERVICE_ROLE_KEY to 
       await sql.end();
     }
     const queues = await import('../src/lib/queues.js');
-    await Promise.all(
-      [queues.systemQueue, queues.systemQueueEvents, queues.emailQueue, queues.profileQueue, queues.practiceQueue, queues.historyQueue,
-       queues.tailorQueue, queues.matchesQueue, queues.autoApplyQueue, queues.coldEmailQueue].map((q) => q.close()),
-    );
+    await queues.closeQueues();
     const { redis } = await import('../src/lib/redis.js');
     await redis.quit();
   });

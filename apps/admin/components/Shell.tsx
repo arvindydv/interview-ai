@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import {
-  Activity, BriefcaseBusiness, Database, Flag, LayoutDashboard, LogOut, Menu, ScrollText, Server, SlidersHorizontal, Users, X,
+  Activity, BriefcaseBusiness, Database, Flag, HeartPulse, LayoutDashboard, LogOut, Menu, ScrollText, Server, SlidersHorizontal, Users, X,
 } from 'lucide-react';
 import { getSession, signOut } from '@/lib/api';
 import { Logo, LogoMark } from './Logo';
@@ -15,6 +15,7 @@ const nav = [
   { href: '/interviews', icon: BriefcaseBusiness, label: 'Interviews' },
   { href: '/reports', icon: Flag, label: 'Reports' },
   { href: '/jobs', icon: Database, label: 'Jobs sources' },
+  { href: '/health', icon: HeartPulse, label: 'Worker health' },
   { href: '/system', icon: Server, label: 'System' },
   { href: '/settings', icon: SlidersHorizontal, label: 'Settings' },
   { href: '/audit', icon: ScrollText, label: 'Audit log' },

@@ -171,7 +171,7 @@ export default function AnalyticsPage() {
             </div>
             <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
               {([
-                ['Sent by Friday', data.autoApplyChannels.submitted.cloud],
+                ['Sent by Friday', data.autoApplyChannels.submitted.api + data.autoApplyChannels.submitted.cloud],
                 ['Sent from your browser', data.autoApplyChannels.submitted.browser],
                 ['Passed to your browser', data.autoApplyChannels.handedToBrowser],
                 ['Waited for you', data.autoApplyChannels.waitedForUser + data.autoApplyChannels.submitted.user],

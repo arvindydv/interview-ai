@@ -87,6 +87,15 @@ export async function applyReport(
     return 'pending';
   };
 
+  // Cancelled while it was being sent: recorded truthfully. A confirmed submission stands, one that may
+  // have gone out waits as unverified, and anything the job board didn't take is not tried again.
+  const [cur] = await sql<{ cancelled: boolean }[]>`select cancelled_at is not null as cancelled from public.auto_applications where id = ${app.id}`;
+  if (cur?.cancelled && report.outcome !== 'submitted' && !opts.clicked) {
+    if (!(await set('skipped', 'removed_by_user', 'You cancelled it.', sql`, submit_clicked_at = null`))) return null;
+    await event(app.id, userId, 'skipped', 'Cancelled; it was not sent', { via: opts.via, outcome: report.outcome });
+    return 'skipped';
+  }
+
   // Sent: counts only with the job board's confirmation.
   if (report.outcome === 'submitted') {
     if (verifySubmission(app.provider, evidence)) {
@@ -169,12 +178,15 @@ export async function applyReport(
 export async function channelStats(days: number, userId?: string): Promise<AutoApplyChannels> {
   const mine = userId ? sql`and user_id = ${userId}` : sql``;
   const [[a], [e]] = await Promise.all([
-    sql<{ cloud: number; browser: number; user: number; u_cloud: number; u_browser: number }[]>`
-      select count(*) filter (where status = 'submitted' and submitted_via = 'cloud')::int as cloud,
+    sql<{ api: number; cloud: number; browser: number; user: number; u_api: number; u_cloud: number; u_browser: number }[]>`
+      select count(*) filter (where status = 'submitted' and submitted_via = 'api')::int as api,
+             count(*) filter (where status = 'submitted' and submitted_via = 'cloud')::int as cloud,
              count(*) filter (where status = 'submitted' and coalesce(submitted_via, 'browser') = 'browser')::int as browser,
              count(*) filter (where status = 'submitted' and submitted_via = 'user')::int as "user",
+             count(*) filter (where status = 'pending' and reason_code = 'unverified' and channel = 'api')::int as u_api,
              count(*) filter (where status = 'pending' and reason_code = 'unverified' and submitted_via = 'cloud')::int as u_cloud,
-             count(*) filter (where status = 'pending' and reason_code = 'unverified' and coalesce(submitted_via, 'browser') = 'browser')::int as u_browser
+             count(*) filter (where status = 'pending' and reason_code = 'unverified' and coalesce(submitted_via, 'browser') = 'browser'
+                                and channel is distinct from 'api')::int as u_browser
       from public.auto_applications
       where updated_at >= now() - make_interval(days => ${days}) ${mine}`,
     sql<{ handed: number; waited: number; failures: number }[]>`
@@ -186,11 +198,11 @@ export async function channelStats(days: number, userId?: string): Promise<AutoA
   ]);
   const stopped = e.handed + e.waited;
   return {
-    submitted: { cloud: a.cloud, browser: a.browser, user: a.user },
-    unverified: { cloud: a.u_cloud, browser: a.u_browser },
+    submitted: { api: a.api, cloud: a.cloud, browser: a.browser, user: a.user },
+    unverified: { api: a.u_api, cloud: a.u_cloud, browser: a.u_browser },
     handedToBrowser: e.handed,
     waitedForUser: e.waited,
     cloudFailures: e.failures,
-    cloudShare: a.cloud + stopped ? Math.round((a.cloud / (a.cloud + stopped)) * 1000) / 1000 : 0,
+    cloudShare: a.api + a.cloud + stopped ? Math.round(((a.api + a.cloud) / (a.api + a.cloud + stopped)) * 1000) / 1000 : 0,
   };
 }

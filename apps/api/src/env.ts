@@ -15,7 +15,11 @@ const schema = z.object({
   /** Friday Jobs analytics: monthly spend on the listings pipeline, for cost per 1,000 new jobs. Unset: not shown. */
   JOBS_INFRA_MONTHLY_USD: z.coerce.number().min(0).optional(),
   JOBS_API_MONTHLY_USD: z.coerce.number().min(0).optional(),
-  /** Accounts allowed to use the platform bot (comma-separated emails); must match the worker's. */
+  // EXPERIMENTAL platform bot (apps/worker/src/experimental): LinkedIn/Indeed/Naukri automation in the
+  // user's own session. Off by default and never scheduled: those sites' terms prohibit automated
+  // applications, so production uses Assisted Apply. Both this flag and the allowlist must match the worker's.
+  JOB_BOT_EXPERIMENTAL: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
+  /** Accounts allowed to use the experimental bot (comma-separated emails). Empty: off for everyone. */
   JOB_BOT_USER_EMAILS: z.string().default(''),
   /**
    * Auto Apply from Friday's servers: sha256 (hex) of the applier's token (apps/worker/src/applier.ts,
@@ -93,10 +97,16 @@ const schema = z.object({
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   /** Encrypts stored Gmail refresh tokens: 32 random bytes, base64 (openssl rand -base64 32). Changing it disconnects every Gmail. */
   GMAIL_TOKEN_KEY: z.string().optional(),
+  /** Encrypts employer/partner ATS API keys (admin console → worker); must equal the worker's. */
+  ATS_CREDENTIALS_KEY: z.string().optional(),
+  /** Providers whose forms Friday's servers may fill; must equal the worker's. Empty: off. */
+  AUTO_APPLY_CLOUD_FORM_PROVIDERS: z.string().default(''),
   /** This API's public URL, for Google's OAuth redirect. */
   API_PUBLIC_URL: z.url().default('http://localhost:4000'),
   /** The Friday Jobs site, where Google sends the candidate back after connecting Gmail. */
   JOBS_URL: z.url().default('http://localhost:3300'),
+  /** Signs short-lived download links (tailored resumes on the Applied Jobs dashboard): 32+ random bytes. Required in production. */
+  DOWNLOAD_URL_SECRET: z.string().min(32).optional(),
 });
 
 // Empty values in .env mean "not set".

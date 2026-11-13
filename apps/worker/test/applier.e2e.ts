@@ -214,9 +214,11 @@ async function seed() {
       values (${userId}, ${l.id}, ${`QA Engineer ${id}`}, 'QA Co', 'ready', '{"format":"pdf"}', ${PDF}, 'Asha Rao Resume.pdf', 'Dear QA Co', ${COVER})
       returning id`;
     const [a] = await sql<{ id: string }[]>`
-      insert into public.auto_applications (user_id, listing_id, tailored_resume_id, provider, apply_url, title, company, score, status, form, answers, plan_day)
+      insert into public.auto_applications (user_id, listing_id, tailored_resume_id, provider, apply_url, title, company, score, status, form, answers, plan_day, channel)
       values (${userId}, ${l.id}, ${t.id}, ${s.provider}, ${s.url}, ${`QA Engineer ${id}`}, 'QA Co', ${--score}, 'prepared',
-              ${sql.json(s.form as never)}, ${sql.json(s.answers as never)}, current_date)
+              ${sql.json(s.form as never)}, ${sql.json(s.answers as never)}, current_date,
+              -- As the worker routes them with these providers on the operator's list (Workday never is).
+              ${s.provider === 'workday' ? 'extension' : 'cloud_form'})
       returning id`;
     apps[id] = a.id;
   }
@@ -279,7 +281,7 @@ try {
   // The API, with the applier's token.
   api = spawn(process.execPath, ['--import', 'tsx', 'src/index.ts'], {
     cwd: join(root, 'apps/api'),
-    env: { ...process.env, PORT: String(API_PORT), NODE_ENV: 'test', APPLIER_TOKEN_SHA256: createHash('sha256').update(APPLIER_TOKEN).digest('hex') },
+    env: { ...process.env, PORT: String(API_PORT), NODE_ENV: 'test', AUTO_APPLY_CLOUD_FORM_PROVIDERS: 'greenhouse,lever,ashby,workable,smartrecruiters', APPLIER_TOKEN_SHA256: createHash('sha256').update(APPLIER_TOKEN).digest('hex') },
     stdio: ['ignore', 'ignore', process.env.E2E_VERBOSE ? 'inherit' : 'ignore'],
   });
   for (let i = 0; ; i++) {

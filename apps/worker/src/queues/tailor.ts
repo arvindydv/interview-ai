@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { UnrecoverableError, Worker } from 'bullmq';
 import { z } from 'zod';
-import type { ResumeProfile, TailoredResume } from '@parakeet/shared';
+import { unsupportedTerms, type ResumeProfile, type TailoredResume } from '@parakeet/shared';
 import { sql } from '../db.js';
 import { env } from '../env.js';
 import { PermanentError, defaultModel, llmConfigured, structured } from '../llm.js';
@@ -105,10 +105,10 @@ export const tailorModel = () => env.LLM_TAILOR_MODEL ?? env.LLM_PROFILE_MODEL ?
 const numbers = (text: string) => text.match(/\d[\d,.]*/g)?.map((n) => n.replace(/[.,]+$/, '')) ?? [];
 
 /**
- * Keeps the edits that are safe to apply: an editable line, about the same length, and no number that
- * isn't already in the resume.
+ * Keeps the edits that are safe to apply: an editable line, about the same length, and no number or
+ * fact (skill, tool, degree, certification, employer) that isn't already in the resume.
  */
-function checkEdits(units: Unit[], edits: { id: string; text: string }[], resumeText: string) {
+export function checkEdits(units: Unit[], edits: { id: string; text: string }[], resumeText: string) {
   const byId = new Map(units.map((u) => [u.id, u]));
   const known = new Set(numbers(resumeText));
   const out: Record<string, string> = {};
@@ -119,6 +119,8 @@ function checkEdits(units: Unit[], edits: { id: string; text: string }[], resume
     // A little short is fine; the line just ends earlier.
     if (text.length > u.max || text.length < u.min * 0.9) continue;
     if (numbers(text).some((n) => !known.has(n))) continue;
+    // No skill, tool, degree, certification, acronym or employer the resume doesn't already name.
+    if (unsupportedTerms(text, resumeText).length) continue;
     out[u.id] = text;
   }
   return out;

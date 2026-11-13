@@ -1,8 +1,8 @@
 'use client';
-import { AlertTriangle, Building2, Cable, Database, Gauge, Globe2, RefreshCw, ShieldCheck, Tags } from 'lucide-react';
+import { AlertTriangle, Building2, Cable, CalendarDays, Database, Gauge, Globe2, RefreshCw, ShieldCheck, Tags } from 'lucide-react';
 import {
   CONNECTOR_STATUS_LABELS, TECH_CATEGORIES,
-  type ConnectorCapabilities, type ConnectorHealth, type ConnectorStatus, type ListingsAnalytics, type Permission,
+  type ConnectorCapabilities, type ConnectorHealth, type ConnectorStatus, type DailyJobsReport, type ListingsAnalytics, type Permission,
 } from '@parakeet/shared';
 import { adminApi } from '@/lib/api';
 import { ago, int, pct } from '@/lib/format';
@@ -60,6 +60,49 @@ function Connectors() {
   );
 }
 
+/**
+ * The worker's daily reports: how much of the inventory each channel can really apply to, and what was
+ * actually sent. Submitted counts only applications with evidence (job board confirmation or the
+ * candidate's own confirmation); queued, attempted and failed ones are never in it.
+ */
+function DailyReports() {
+  const [r] = useAsync(() => adminApi<DailyJobsReport[]>('/admin/jobs-reports?days=30'), []);
+  const latest = r.data?.[0];
+  return (
+    <Card title="Daily discovery and application capacity" icon={CalendarDays}>
+      {r.state === 'error' && <ErrorNote>{r.error}</ErrorNote>}
+      {r.data && !latest && <p className="text-sm text-muted">No report yet: the worker writes one at 00:30 India time (or run apps/worker/scripts/daily-report.ts).</p>}
+      {latest && (
+        <>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <Stat label="Unattended: employer API" value={latest.capacity.apiAuthorized} hint="needs an employer credential" />
+            <Stat label="Unattended: Friday servers" value={latest.capacity.cloudForm} hint="providers enabled by an operator" />
+            <Stat label="Candidate's browser (extension)" value={latest.capacity.extensionOnly} />
+            <Stat label="Assisted only" value={latest.capacity.assistedOnly} />
+          </div>
+          <p className="mt-2 text-xs text-faint">Open, unique tech jobs open to candidates in India on {latest.day}, by the most automatic channel each one is permitted.</p>
+          <Table head={['Day', 'New (fresh)', 'Closed', 'Tech · India open', 'Verified', 'You confirmed', 'Failed', 'Needs action', 'Model cost']}>
+            {r.data!.map((d) => (
+              <tr key={d.day}>
+                <td className="px-5 py-2.5 font-mono text-xs">{d.day}</td>
+                <td className="px-5 py-2.5 tabular-nums">{int(d.discovery.newListings)}</td>
+                <td className="px-5 py-2.5 tabular-nums">{int(d.discovery.closedListings)}</td>
+                <td className="px-5 py-2.5 tabular-nums">{int(d.discovery.indiaEligibleTechOpen)}</td>
+                <td className="px-5 py-2.5 tabular-nums">{int(d.applications.submittedVerified)}</td>
+                <td className="px-5 py-2.5 tabular-nums">{int(d.applications.submittedUserConfirmed)}</td>
+                <td className="px-5 py-2.5 tabular-nums">{int(d.applications.failed)}</td>
+                <td className="px-5 py-2.5 tabular-nums">{int(d.applications.needsAction)}</td>
+                <td className="px-5 py-2.5 tabular-nums">${d.applications.llmCostUsd.toFixed(2)}</td>
+              </tr>
+            ))}
+          </Table>
+          <p className="mt-2 px-5 text-xs text-faint">New: first seen that day, unique, from a source already being read, posted in the last three days. Needs action is a snapshot when the report ran.</p>
+        </>
+      )}
+    </Card>
+  );
+}
+
 export default function JobsAnalyticsPage() {
   const [r, reload] = useAsync(() => adminApi<ListingsAnalytics>('/admin/jobs-analytics'), []);
   const d = r.data;
@@ -98,6 +141,8 @@ export default function JobsAnalyticsPage() {
           </div>
 
           <Connectors />
+
+          <DailyReports />
 
           <Card title="Genuinely new tech jobs open to India, per day" icon={Gauge}>
             <DailyColumns data={d.newPerDay} unit="jobs" />

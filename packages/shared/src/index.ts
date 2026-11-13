@@ -13,3 +13,5 @@ export * from './coldEmail.js';
 export * from './listingQuality.js';
 export * from './jobBot.js';
 export * from './connectors.js';
+export * from './applyPipeline.js';
+export * from './matching.js';

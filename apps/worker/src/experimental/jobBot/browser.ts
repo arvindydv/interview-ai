@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import { chromium, type BrowserContext, type Page } from 'playwright-core';
-import { chromePath } from '../autoapply/cloud.js';
-import { env } from '../env.js';
+import { chromePath } from '../../autoapply/cloud.js';
+import { env } from '../../env.js';
 import { profileDir } from './config.js';
 
 // Chrome for the platform bot, with a profile per user in JOB_BOT_HOME holding their sessions.

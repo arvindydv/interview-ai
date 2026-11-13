@@ -10,6 +10,7 @@ import { bulkModel } from '../llm.js';
 import { answerForm } from '../autoapply/answers.js';
 import { FormUnavailableError, fetchForm } from '../autoapply/forms.js';
 import { createTailoring, pickResume, resumeLinks, runTailoring } from './tailor.js';
+import { ASSISTED_REASON, channelFor, cloudFormProviders } from '../submit/channel.js';
 
 // Friday Jobs Auto Apply, prepared on the server so it carries on while the user's computer is off.
 //
@@ -57,11 +58,11 @@ async function setStatus(
   reasonCode: AutoApplyReason | null,
   reason: string | null,
 ) {
-  // Only from Preparing: the user may have removed it meanwhile, and that stands.
+  // Only from Preparing, and never once cancelled: the user may have removed it meanwhile, and that stands.
   const [row] = await sql<{ id: string }[]>`
     update public.auto_applications
     set status = ${status}, reason_code = ${reasonCode}, reason = ${reason}, claimed_by = null, claimed_at = null, updated_at = now()
-    where id = ${id} and status = 'preparing'
+    where id = ${id} and status = 'preparing' and cancelled_at is null
     returning id`;
   if (row) await logEvent(id, userId, status, reason ?? `Marked ${status}`);
 }
@@ -72,25 +73,20 @@ async function prepareJob(id: string, delay = 0) {
 
 // ---- tick ----------------------------------------------------------------------------------------
 
-async function tick() {
-  // Preparations lost to a restart: queue them again.
-  const stalled = await sql<{ id: string; user_id: string }[]>`
-    update public.auto_applications set updated_at = now()
-    where status = 'preparing' and updated_at < now() - make_interval(mins => ${STALLED_PREPARE_MIN})
-    returning id, user_id`;
-  for (const a of stalled) {
-    await logEvent(a.id, a.user_id, 'resumed', 'Preparation stalled; started again');
-    await prepareJob(a.id);
-  }
-
+/**
+ * Submissions claimed but never reported (a crashed worker, applier or browser): back to Prepared when
+ * nothing was sent yet, "unverified" when it may have been (never resent), skipped when the user cancelled.
+ */
+export async function sweepLapsedClaims() {
   // Submissions claimed but never reported: back to Prepared for another try. Not once Friday's servers
   // pressed submit: the job board may have it, so the user is asked to confirm instead of it going twice.
   const lapsed = await sql<{ id: string; user_id: string; clicked: boolean }[]>`
     update public.auto_applications
-    set status = case when submit_clicked_at is null then 'prepared' else 'pending' end,
-        reason_code = case when submit_clicked_at is null then null else 'unverified' end,
-        reason = case when submit_clicked_at is null then null
-                      else 'Sent, but we couldn’t see the job board’s confirmation. Check your email for one, then confirm it here.' end,
+    set status = case when submit_clicked_at is not null then 'pending' when cancelled_at is not null then 'skipped' else 'prepared' end,
+        reason_code = case when submit_clicked_at is not null then 'unverified' when cancelled_at is not null then 'removed_by_user' end,
+        reason = case when submit_clicked_at is not null
+                      then 'Sent, but we couldn’t see the confirmation. Check your email for one, then confirm it here.'
+                      when cancelled_at is not null then 'You cancelled it.' end,
         claimed_by = null, claimed_at = null, updated_at = now()
     where status = 'pending' and reason_code = 'submitting'
       and claimed_at < now() - make_interval(mins => ${CLAIM_LEASE_MIN})
@@ -99,6 +95,27 @@ async function tick() {
     if (a.clicked) await logEvent(a.id, a.user_id, 'unverified', 'Stopped after submitting; no confirmation seen');
     else await logEvent(a.id, a.user_id, 'lease_expired', 'Submitting stopped before finishing; it will be tried again');
   }
+  return lapsed;
+}
+
+
+/** Preparations lost to a restart (no progress for STALLED_PREPARE_MIN): queued again. Never cancelled ones. */
+export async function resumeStalledPreparations() {
+  const stalled = await sql<{ id: string; user_id: string }[]>`
+    update public.auto_applications set updated_at = now()
+    where status = 'preparing' and cancelled_at is null and updated_at < now() - make_interval(mins => ${STALLED_PREPARE_MIN})
+    returning id, user_id`;
+  for (const a of stalled) {
+    await logEvent(a.id, a.user_id, 'resumed', 'Preparation stalled; started again');
+    await prepareJob(a.id);
+  }
+  return stalled;
+}
+
+export async function tick() {
+  const stalled = await resumeStalledPreparations();
+
+  const lapsed = await sweepLapsedClaims();
 
   // The job was taken down: nothing to apply to. Not ones being sent, nor ones already sent that wait
   // for the user to confirm (the job board has them; closing the listing doesn't undo that).
@@ -120,6 +137,8 @@ async function tick() {
     returning id, user_id`;
   for (const a of expired) await logEvent(a.id, a.user_id, 'skipped', 'Expired before it was submitted.');
 
+  const rechanneled = await rechannel();
+
   const users = await sql<{ user_id: string }[]>`
     select user_id from public.auto_apply_settings where enabled and consented_at is not null`;
   await queue.addBulk(
@@ -130,7 +149,52 @@ async function tick() {
       opts: { jobId: `plan-${u.user_id}`, removeOnComplete: true, removeOnFail: { age: 3600 } },
     })),
   );
-  return { stalled: stalled.length, lapsed: lapsed.length, closed: closed.length, expired: expired.length, planned: users.length };
+  return { stalled: stalled.length, lapsed: lapsed.length, closed: closed.length, expired: expired.length, rechanneled, planned: users.length };
+}
+
+/**
+ * Applications whose channel no longer matches what's in place get it chosen again: rows from before
+ * channels existed, cloud_form rows whose provider an operator took off AUTO_APPLY_CLOUD_FORM_PROVIDERS,
+ * api rows whose credential was revoked or flagged, assisted rows now that a browser is connected, and
+ * Prepared rows left with channel assisted (the user answered a question on one). Never one being sent.
+ */
+export async function rechannel(limit = 200) {
+  const cloud = [...cloudFormProviders()];
+  const rows = await sql<{ id: string; user_id: string; provider: string; board: string | null; channel: string | null; status: string }[]>`
+    select a.id, a.user_id, a.provider, s.board, a.channel, a.status
+    from public.auto_applications a
+    left join public.job_listings l on l.id = a.listing_id
+    left join public.job_sources s on s.id = l.source_id
+    where a.cancelled_at is null and (
+      (a.status = 'prepared' and (
+        a.channel is null or a.channel = 'assisted'
+        or (a.channel = 'cloud_form' and not (a.provider = any(${cloud}::text[])))
+        or (a.channel = 'api' and not exists (
+          select 1 from public.ats_credentials c
+          where c.provider = a.provider and c.board = s.board and c.revoked_at is null and c.last_error is null))))
+      or (a.status = 'pending' and a.reason_code = 'assisted' and exists (
+          select 1 from public.auto_apply_devices d
+          where d.user_id = a.user_id and d.revoked_at is null and d.last_seen_at > now() - interval '3 days')))
+    order by a.updated_at
+    limit ${limit}`;
+  let changed = 0;
+  for (const r of rows) {
+    const channel = await channelFor({ provider: r.provider, board: r.board, userId: r.user_id });
+    const assisted = channel === 'assisted';
+    if (channel === r.channel && (assisted ? r.status === 'pending' : r.status === 'prepared')) continue;
+    const [row] = await sql<{ id: string }[]>`
+      update public.auto_applications
+      set channel = ${channel}, status = ${assisted ? 'pending' : 'prepared'}, reason_code = ${assisted ? 'assisted' : null},
+          reason = ${assisted ? ASSISTED_REASON : null}, updated_at = now()
+      where id = ${r.id} and status = ${r.status} and cancelled_at is null
+        and (status = 'prepared' or reason_code = 'assisted')
+      returning id`;
+    if (row) {
+      changed++;
+      await logEvent(r.id, r.user_id, 'channel', `Submission route: ${channel}`, { from: r.channel, to: channel });
+    }
+  }
+  return changed;
 }
 
 // ---- plan ----------------------------------------------------------------------------------------
@@ -175,7 +239,7 @@ export async function planUser(userId: string) {
     from public.job_matches m
     join public.job_listings l on l.id = m.listing_id
     join public.job_sources s on s.id = l.source_id
-    where m.user_id = ${userId} and m.score >= ${settings.min_score}
+    where m.user_id = ${userId} and m.score >= ${settings.min_score} and m.eligible
       and l.closed_at is null and l.duplicate_of is null
       and (l.posted_at is null or l.posted_at >= now() - make_interval(days => ${FRESH_DAYS}))
       and s.provider in ${sql(AUTO_APPLY_PROVIDERS as unknown as string[])}
@@ -345,14 +409,24 @@ export async function prepare(job: Job<{ applicationId: string }>) {
       sources: countSources(answers),
     });
 
+    // 4. The route it goes out by: the most automatic one that is both implemented and permitted.
+    const channel = await channelFor({ provider: app.provider, board: app.board, userId });
+    await sql`update public.auto_applications set channel = ${channel}, updated_at = now() where id = ${id}`;
+    await logEvent(id, userId, 'channel', `Submission route: ${channel}`, { channel });
+
     if (missing.length) {
       const list = missing.map((q) => q.label).slice(0, 3).join('; ');
       await setStatus(id, userId, 'pending', 'needs_answers', `Needs your answer: ${list}${missing.length > 3 ? ` and ${missing.length - 3} more` : ''}`);
       await notifyAttention(userId);
       return { pending: missing.length };
     }
+    if (channel === 'assisted') {
+      await setStatus(id, userId, 'pending', 'assisted', ASSISTED_REASON);
+      await notifyAttention(userId);
+      return { assisted: true, questions: form.length };
+    }
     await setStatus(id, userId, 'prepared', null, null);
-    return { prepared: true, questions: form.length };
+    return { prepared: true, channel, questions: form.length };
   } catch (err) {
     if (err instanceof UnrecoverableError || lastAttempt) {
       await setStatus(id, userId, 'failed', 'form_unavailable', `Preparation failed: ${(err as Error).message.slice(0, 200)}`);
@@ -389,6 +463,7 @@ export async function notifyAttention(userId: string) {
 
 const ATTENTION_LABELS: Partial<Record<AutoApplyReason, string>> = {
   needs_answers: 'Need your answers',
+  assisted: 'Ready for you to submit',
   captcha: 'Need a CAPTCHA check',
   login_required: 'Need you to sign in to the job board',
   unverified: 'Need you to confirm they were sent',

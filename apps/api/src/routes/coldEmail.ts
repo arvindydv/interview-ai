@@ -12,6 +12,7 @@ import {
   GMAIL_SEND_SCOPE, GmailRevokedError, GmailSendError, accessToken, authUrl, buildMime, encryptToken, exchangeCode,
   forgetAccessToken, gmailConfigured, revokeToken, sendGmail, signState, verifyState,
 } from '../lib/gmail.js';
+import { audit } from '../lib/audit.js';
 import { coldEmailQueue } from '../lib/queues.js';
 import { redis } from '../lib/redis.js';
 import { ensureUser } from '../lib/users.js';
@@ -207,6 +208,7 @@ export default async function coldEmailRoutes(app: FastifyInstance) {
           email = excluded.email, refresh_token = excluded.refresh_token, scope = excluded.scope,
           connected_at = now(), updated_at = now()`;
       forgetAccessToken(req.user.id);
+      await audit({ userId: req.user.id, actor: 'user', action: 'gmail.connect', targetType: 'gmail_account', detail: { scope: pending.scope }, ip: req.ip });
       return { email: pending.email };
     });
 
@@ -218,6 +220,7 @@ export default async function coldEmailRoutes(app: FastifyInstance) {
         // Best effort: the account is disconnected here either way.
         await revokeToken(account.refresh_token).catch((err: Error) => req.log.warn({ err }, 'gmail revoke failed'));
       }
+      if (account) await audit({ userId: req.user.id, actor: 'user', action: 'gmail.disconnect', targetType: 'gmail_account', ip: req.ip });
       return { ok: true };
     });
 
@@ -446,6 +449,12 @@ export default async function coldEmailRoutes(app: FastifyInstance) {
         }
       }
 
+      await audit({
+        userId, actor: 'user', action: 'cold_email.send', targetType: 'cold_email', targetId: email.id,
+        // Counts only: recipients' addresses aren't copied into the audit log.
+        detail: { sent: results.filter((r) => r.status === 'sent').length, failed: results.filter((r) => r.status === 'failed').length },
+        ip: req.ip,
+      });
       if (firstSent) {
         // The email's own columns keep its first send (for lists); later sends only add to cold_email_sends.
         // Every right-hand side reads the row as it was before this update.

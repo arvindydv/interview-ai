@@ -150,10 +150,18 @@ export const coldEmailQueue = new Queue<{ coldEmailId: string }>(COLD_EMAIL_QUEU
   },
 });
 
-// Friday Jobs platform bot (LinkedIn, Naukri, Indeed), run by apps/worker (queues/jobBot.ts): "jobbot.run"
+// Friday Jobs platform bot (LinkedIn, Naukri, Indeed), an experimental, disabled-by-default module (apps/worker/src/experimental/jobBotQueue.ts; JOB_BOT_EXPERIMENTAL): "jobbot.run"
 // { userId } applies now; "jobbot.connect" { userId, platform } opens the sign-in window.
 export const JOB_BOT_QUEUE = 'jobbot';
 export const jobBotQueue = new Queue<{ userId: string; platform?: string }>(JOB_BOT_QUEUE, {
   connection,
   defaultJobOptions: { attempts: 1, removeOnComplete: { age: 7 * 24 * 3600 }, removeOnFail: { age: 7 * 24 * 3600 } },
 });
+
+/** Closes every queue above (tests and shutdown): one forgotten queue keeps a Redis connection open. */
+export const closeQueues = () =>
+  Promise.all(
+    [systemQueue, systemQueueEvents, emailQueue, profileQueue, practiceQueue, historyQueue, tailorQueue, matchesQueue, autoApplyQueue, coldEmailQueue, jobBotQueue].map(
+      (q) => q.close(),
+    ),
+  );

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { bulkModel, llmConfigured, structured } from '../llm.js';
+import { bulkModel, llmConfigured, structured } from '../../llm.js';
 import type { Question } from './answer.js';
 import type { Config } from './config.js';
 

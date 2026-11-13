@@ -7,10 +7,10 @@ import { chromium } from 'playwright-core';
 
 const home = mkdtempSync(join(tmpdir(), 'jobbot-'));
 process.env.JOB_BOT_HOME = home;
-const { answerFor, pickOption } = await import('../src/jobBot/answer.js');
-const { fillForm } = await import('../src/jobBot/form.js');
-const { lakhs } = await import('../src/jobBot/config.js');
-import type { Config } from '../src/jobBot/config.js';
+const { answerFor, pickOption } = await import('../src/experimental/jobBot/answer.js');
+const { fillForm } = await import('../src/experimental/jobBot/form.js');
+const { lakhs } = await import('../src/experimental/jobBot/config.js');
+import type { Config } from '../src/experimental/jobBot/config.js';
 
 const resume = join(home, 'resume.pdf');
 writeFileSync(resume, '%PDF-1.4 test');
@@ -106,10 +106,10 @@ test('salaries from the Application Profile are read as lakhs a year', () => {
 });
 
 test('every selector the bot uses is valid (a bad one fails every job)', async (t) => {
-  const { LINKEDIN_SELECTORS } = await import('../src/jobBot/platforms/linkedin.js');
-  const { NAUKRI_SELECTORS } = await import('../src/jobBot/platforms/naukri.js');
-  const { INDEED_SELECTORS } = await import('../src/jobBot/platforms/indeed.js');
-  const { humanCheck } = await import('../src/jobBot/browser.js');
+  const { LINKEDIN_SELECTORS } = await import('../src/experimental/jobBot/platforms/linkedin.js');
+  const { NAUKRI_SELECTORS } = await import('../src/experimental/jobBot/platforms/naukri.js');
+  const { INDEED_SELECTORS } = await import('../src/experimental/jobBot/platforms/indeed.js');
+  const { humanCheck } = await import('../src/experimental/jobBot/browser.js');
   const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? '/usr/bin/google-chrome-stable', headless: true }).catch(() => null);
   if (!browser) return t.skip('Chrome not installed');
   t.after(() => browser.close());

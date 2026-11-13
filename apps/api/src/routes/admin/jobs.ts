@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import {
-  CONNECTORS, INDIA_ELIGIBLE, LISTING_PROVIDERS, SOURCE_POLICIES, type ConnectorHealth,
+  CONNECTORS, INDIA_ELIGIBLE, type DailyJobsReport, LISTING_PROVIDERS, SOURCE_POLICIES, type ConnectorHealth,
   type Eligibility, type ListingProvider, type ListingsAnalytics, type SourceHealth, type TechCategory,
 } from '@parakeet/shared';
 import { requireAdmin } from '../../lib/adminAuth.js';
@@ -19,9 +19,17 @@ const ELIGIBLE = [...INDIA_ELIGIBLE];
 export default async function adminJobsRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAdmin);
 
+  // The worker's daily reports (queues/report.ts): discovery, capacity by channel, and real submissions.
+  app.get<{ Querystring: { days?: string } }>('/admin/jobs-reports', async (req): Promise<DailyJobsReport[]> => {
+    const days = Math.min(90, Math.max(1, Number(req.query.days) || 30));
+    const rows = await sql<{ data: DailyJobsReport }[]>`
+      select data from public.jobs_daily_reports where day > current_date - ${days}::int order by day desc`;
+    return rows.map((r) => r.data);
+  });
+
   // Every application connector with what it can do and how it's doing.
   app.get('/admin/connectors', async (): Promise<ConnectorHealth[]> => {
-    const [syncs, ats, bot] = await Promise.all([
+    const [syncs, ats, bot, creds] = await Promise.all([
       sql<{ provider: string; last_ok: Date | null; failed: number }[]>`
         select s.provider, max(r.finished_at) filter (where r.ok) as last_ok,
           count(*) filter (where r.ok is false and r.started_at > now() - interval '24 hours')::int as failed
@@ -32,7 +40,11 @@ export default async function adminJobsRoutes(app: FastifyInstance) {
       sql<{ platform: string; last: Date | null; n: number }[]>`
         select platform, max(updated_at) as last, count(*) filter (where updated_at > now() - interval '30 days')::int as n
         from public.job_bot_applications where outcome = 'applied' group by platform`,
+      sql<{ provider: string; n: number }[]>`
+        select provider, count(*)::int as n from public.ats_credentials
+        where revoked_at is null and last_error is null group by provider`,
     ]);
+    const credBy = new Map(creds.map((x) => [x.provider, x.n]));
     const syncBy = new Map(syncs.map((x) => [x.provider, x]));
     const atsBy = new Map(ats.map((x) => [x.provider, x]));
     const botBy = new Map(bot.map((x) => [x.platform, x]));
@@ -48,6 +60,7 @@ export default async function adminJobsRoutes(app: FastifyInstance) {
         syncFailures24h: c.sourceProviders.reduce((n, p) => n + (syncBy.get(p)?.failed ?? 0), 0),
         lastSubmissionAt: sub?.last?.toISOString() ?? null,
         submissions30d: sub?.n ?? 0,
+        apiCredentials: credBy.get(c.id) ?? 0,
       };
     });
   });

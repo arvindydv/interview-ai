@@ -6,7 +6,7 @@ import {
   type CompanyType, type FeedDetail, type FeedFacets, type FeedItem, type FeedPage, type FeedView, type JobPreferences, type Platform,
   type JobType, type JobsSummary, type ListingProvider, type ResumeProfile, type TailoredResume, type TailoredResumeRecord,
   type TailorStatus, type WebJob, type WebJobPage, type Workplace,
-  dedupeKey, isAgency,
+  dedupeKey, isAgency, DEFAULT_MATCH_CONFIG, resolveMatchConfig, type MatchExplanation,
 } from '@parakeet/shared';
 import { requireAuth } from '../lib/auth.js';
 import { sql } from '../lib/db.js';
@@ -40,6 +40,9 @@ interface ItemRow {
   skill_score: number | null;
   level_score: number | null;
   matched_skills: string[] | null;
+  eligible: boolean | null;
+  rejections: string[] | null;
+  strong_match: number;
   status: ApplicationStatus | null;
 }
 
@@ -73,6 +76,9 @@ const toItem = (r: ItemRow): FeedItem => ({
           skillScore: r.skill_score!,
           levelScore: r.level_score!,
           matchedSkills: r.matched_skills ?? [],
+          eligible: r.eligible ?? true,
+          strong: (r.eligible ?? true) && r.score >= r.strong_match,
+          rejections: r.rejections ?? [],
         },
 });
 
@@ -115,6 +121,19 @@ const preferencesBody = z.object({
   roles: preferenceList,
   locations: preferenceList,
   workplaces: z.array(z.enum(WORKPLACES)).max(WORKPLACES.length).transform((w) => [...new Set(w)]),
+  // Thresholds and weights; out-of-range numbers are clamped by resolveMatchConfig.
+  matchConfig: z
+    .object({
+      strongMatch: z.number().int(),
+      minScore: z.number().int(),
+      weights: z.object(Object.fromEntries(['title', 'skills', 'experience', 'location', 'salary', 'recency'].map((k) => [k, z.number().min(0).max(1)]))).partial(),
+      minSalaryLpa: z.number().min(0).max(1000).nullable(),
+      employmentTypes: z.array(z.enum(['full_time', 'part_time', 'contract', 'internship', 'temporary'])).max(5),
+      maxExperienceGapYears: z.number(),
+      maxPostedDays: z.number().int(),
+    })
+    .partial()
+    .optional(),
 });
 
 const ENTITIES: Record<string, string> = { amp: '&', quot: '"', '#39': "'", apos: "'", lt: '<', gt: '>', nbsp: ' ' };
@@ -205,19 +224,25 @@ function viewSql(view: Exclude<FeedView, 'saved' | 'applied'>, userId: string) {
     join public.job_sources s on s.id = l.source_id
     left join public.job_applications a on a.user_id = m.user_id and a.listing_id = l.id
     where m.user_id = ${userId} and l.closed_at is null and l.duplicate_of is null and m.score >= ${MATCH_THRESHOLDS[view]}
-      and ${FRESH}
+      and m.eligible and ${FRESH}
       and (a.status is null or a.status = 'saved')`;
 }
 
 /** Recommendations leave out stale postings (FRESH_DAYS); a posting with no date is kept. */
 const FRESH = sql`(l.posted_at is null or l.posted_at >= now() - make_interval(days => ${FRESH_DAYS}))`;
 
+/** Eligibility, rejections and the user's strong-match threshold, for match `m`. */
+const MATCH_EXTRA = sql`
+  m.eligible, array(select jsonb_array_elements_text(m.explanation->'rejections')) as rejections,
+  coalesce((select least(100, greatest(50, coalesce((p.match_config->>'strongMatch')::int, ${DEFAULT_MATCH_CONFIG.strongMatch})))
+             from public.job_preferences p where p.user_id = m.user_id), ${DEFAULT_MATCH_CONFIG.strongMatch}) as strong_match`;
+
 /** Columns of an item, for listing `l` with optional match `m`, application `a` and source `s`. */
 const ITEM_COLUMNS = sql`
   l.id, l.title, l.company, l.department, l.location, l.workplace, l.employment_type, l.salary, l.posted_at,
   case when s.provider = any(${[...AGGREGATORS]}::text[]) then null else s.website end as website,
   l.company_logo, l.posted_on, l.agency, s.provider, s.startup, s.yc_batch, l.closed_at is not null as closed,
-  m.score, m.title_score, m.skill_score, m.level_score, m.matched_skills, a.status`;
+  m.score, m.title_score, m.skill_score, m.level_score, m.matched_skills, a.status, ${MATCH_EXTRA}`;
 
 interface TailoredRow {
   id: string;
@@ -254,10 +279,10 @@ export default async function jobFeedRoutes(app: FastifyInstance) {
     const userId = req.user.id;
     await ensureUser(req);
     // The first visit creates the preferences row, which opts the user into match refreshes.
-    const [prefs] = await sql<(JobPreferences & { matched_at: Date | null; updated_at: Date })[]>`
+    const [prefs] = await sql<(JobPreferences & { match_config: unknown; matched_at: Date | null; updated_at: Date })[]>`
       insert into public.job_preferences (user_id) values (${userId})
       on conflict (user_id) do update set user_id = excluded.user_id
-      returning roles, locations, workplaces, matched_at, updated_at`;
+      returning roles, locations, workplaces, match_config, matched_at, updated_at`;
     const [resume] = await sql<{ status: 'parsing' | 'ready' | 'failed'; file_name: string; parsed_json: ResumeProfile | null; updated_at: Date }[]>`
       select status, file_name, parsed_json, updated_at from public.resumes
       where user_id = ${userId} order by created_at desc limit 1`;
@@ -265,10 +290,10 @@ export default async function jobFeedRoutes(app: FastifyInstance) {
       select
         (select count(*)::int ${viewSql('recommended', userId)} and l.posted_at >= now() - interval '7 days') as "newThisWeek",
         (select count(*)::int from public.job_matches m join public.job_listings l on l.id = m.listing_id
-          where m.user_id = ${userId} and l.closed_at is null and l.duplicate_of is null and m.score >= ${MATCH_THRESHOLDS.recommended} and ${FRESH}
+          where m.user_id = ${userId} and l.closed_at is null and l.duplicate_of is null and m.score >= ${MATCH_THRESHOLDS.recommended} and m.eligible and ${FRESH}
             and not exists (select 1 from public.job_applications a where a.user_id = m.user_id and a.listing_id = m.listing_id and a.status <> 'saved')) as recommended,
         (select count(*)::int from public.job_matches m join public.job_listings l on l.id = m.listing_id
-          where m.user_id = ${userId} and l.closed_at is null and l.duplicate_of is null and m.score >= ${MATCH_THRESHOLDS.top} and ${FRESH}
+          where m.user_id = ${userId} and l.closed_at is null and l.duplicate_of is null and m.score >= ${MATCH_THRESHOLDS.top} and m.eligible and ${FRESH}
             and not exists (select 1 from public.job_applications a where a.user_id = m.user_id and a.listing_id = m.listing_id and a.status <> 'saved')) as top,
         (select count(*)::int from public.job_applications where user_id = ${userId} and status = 'saved') as saved,
         (select count(*)::int from public.job_applications where user_id = ${userId} and status <> 'saved') as applied`;
@@ -292,7 +317,7 @@ export default async function jobFeedRoutes(app: FastifyInstance) {
         resumeStatus: resume?.status ?? null,
         resumeFileName: resume?.file_name ?? null,
       },
-      preferences: { roles: prefs.roles, locations: prefs.locations, workplaces: prefs.workplaces },
+      preferences: { roles: prefs.roles, locations: prefs.locations, workplaces: prefs.workplaces, matchConfig: resolveMatchConfig(prefs.match_config) },
       resumeRoles: resumeRoles(profile),
       counts,
       matching,
@@ -308,13 +333,18 @@ export default async function jobFeedRoutes(app: FastifyInstance) {
     if (!parsed.success) return reply.code(400).send({ error: 'bad_request', message: 'Invalid preferences.' });
     const { roles, locations, workplaces } = parsed.data;
     await ensureUser(req);
+    // A partial config is merged over what's stored; omitted, the stored config stays.
+    const [current] = await sql<{ match_config: unknown }[]>`select match_config from public.job_preferences where user_id = ${req.user.id}`;
+    const matchConfig = resolveMatchConfig({ ...resolveMatchConfig(current?.match_config), ...parsed.data.matchConfig,
+      weights: { ...resolveMatchConfig(current?.match_config).weights, ...parsed.data.matchConfig?.weights } });
     await sql`
-      insert into public.job_preferences (user_id, roles, locations, workplaces)
-      values (${req.user.id}, ${roles}, ${locations}, ${workplaces})
+      insert into public.job_preferences (user_id, roles, locations, workplaces, match_config)
+      values (${req.user.id}, ${roles}, ${locations}, ${workplaces}, ${sql.json(matchConfig as never)})
       on conflict (user_id) do update set
-        roles = excluded.roles, locations = excluded.locations, workplaces = excluded.workplaces, updated_at = now()`;
+        roles = excluded.roles, locations = excluded.locations, workplaces = excluded.workplaces,
+        match_config = excluded.match_config, updated_at = now()`;
     await refreshMatches(req.user.id, req.log);
-    return { roles, locations, workplaces };
+    return { roles, locations, workplaces, matchConfig };
   });
 
   app.get('/v1/job-feed', async (req, reply): Promise<FeedPage | void> => {
@@ -333,7 +363,7 @@ export default async function jobFeedRoutes(app: FastifyInstance) {
                l.department, coalesce(l.location, a.location) as location, l.workplace, l.employment_type, l.salary,
                l.posted_at, case when s.provider = any(${[...AGGREGATORS]}::text[]) then null else s.website end as website,
                l.company_logo, l.posted_on, l.agency, s.provider, s.startup, s.yc_batch, (l.id is null or l.closed_at is not null) as closed,
-               m.score, m.title_score, m.skill_score, m.level_score, m.matched_skills, a.status,
+               m.score, m.title_score, m.skill_score, m.level_score, m.matched_skills, a.status, ${MATCH_EXTRA},
                count(*) over ()::int as total
         from public.job_applications a
         left join public.job_listings l on l.id = a.listing_id
@@ -461,16 +491,18 @@ export default async function jobFeedRoutes(app: FastifyInstance) {
 
   app.get<{ Params: { id: string } }>('/v1/job-feed/:id', async (req, reply): Promise<FeedDetail | void> => {
     if (!z.uuid().safeParse(req.params.id).success) return reply.notFound('No such job.');
-    const [r] = await sql<(ItemRow & { description_html: string; apply_url: string; provider: ListingProvider })[]>`
-      select ${ITEM_COLUMNS}, l.description_html, l.apply_url
+    const [r] = await sql<(ItemRow & { description_html: string; apply_url: string; provider: ListingProvider; explanation: MatchExplanation | null })[]>`
+      select ${ITEM_COLUMNS}, l.description_html, l.apply_url, m.explanation
       from public.job_listings l
       join public.job_sources s on s.id = l.source_id
       left join public.job_matches m on m.user_id = ${req.user.id} and m.listing_id = l.id
       left join public.job_applications a on a.user_id = ${req.user.id} and a.listing_id = l.id
       where l.id = ${req.params.id}`;
     if (!r) return reply.notFound('This job is no longer available.');
+    const item = toItem(r);
     return {
-      ...toItem(r),
+      ...item,
+      match: item.match ? { ...item.match, explanation: r.explanation } : null,
       descriptionHtml: r.description_html,
       descriptionPartial: EXCERPT_PROVIDERS.has(r.provider),
       applyUrl: r.apply_url,

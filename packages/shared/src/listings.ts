@@ -249,6 +249,14 @@ export interface ListingMatch {
   /** 0–100: the seniority fits the user's years of experience. */
   levelScore: number;
   matchedSkills: string[];
+  /** False when the job fails a mandatory requirement (never auto-applied to). */
+  eligible: boolean;
+  /** At or above the user's strong-match threshold (MatchConfig.strongMatch, default 80). */
+  strong: boolean;
+  /** Why it's ineligible, when it is. */
+  rejections: string[];
+  /** The full explanation (job detail only). */
+  explanation?: import('./applyPipeline.js').MatchExplanation | null;
 }
 
 export interface FeedItem extends ListingSummary {
@@ -284,6 +292,8 @@ export interface JobPreferences {
   locations: string[];
   /** Empty: any. */
   workplaces: Workplace[];
+  /** Thresholds and weights; defaults (DEFAULT_MATCH_CONFIG) when never set. */
+  matchConfig?: import('./applyPipeline.js').MatchConfig;
 }
 
 /** GET /v1/job-feed/summary: everything the signed-in shell needs on load. */

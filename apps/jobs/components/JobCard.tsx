@@ -59,9 +59,19 @@ export function JobCard({
         {job.match && (
           <div className="flex shrink-0 flex-col items-center gap-1">
             <MatchRing score={job.match.score} size={50} />
-            <span className="text-[10px] font-semibold tracking-wide uppercase" style={{ color: matchTone(job.match.score).color }}>
-              {matchTone(job.match.score).label.split(' ')[0]}
-            </span>
+            {job.match.eligible === false ? (
+              <span className="text-[10px] font-semibold tracking-wide text-warn uppercase" title={job.match.rejections.join(' ')}>
+                Not eligible
+              </span>
+            ) : job.match.strong ? (
+              <span className="text-[10px] font-semibold tracking-wide uppercase" style={{ color: matchTone(job.match.score).color }}>
+                Strong
+              </span>
+            ) : (
+              <span className="text-[10px] font-semibold tracking-wide uppercase" style={{ color: matchTone(job.match.score).color }}>
+                {matchTone(job.match.score).label.split(' ')[0]}
+              </span>
+            )}
           </div>
         )}
       </div>

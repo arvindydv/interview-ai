@@ -775,5 +775,8 @@ export const clean = (s: unknown) => (typeof s === 'string' ? s.replace(/\s+/g, 
 export function date(s: unknown): Date | null {
   if (typeof s !== 'string') return null;
   const d = new Date(s);
-  return Number.isNaN(d.getTime()) ? null : d;
+  // Placeholder dates some boards send ("0000-12-31", far future) are no date at all; Postgres would
+  // also refuse year 0 and fail the whole sync.
+  if (Number.isNaN(d.getTime()) || d.getUTCFullYear() < 1995 || d.getTime() > Date.now() + 366 * 86400_000) return null;
+  return d;
 }

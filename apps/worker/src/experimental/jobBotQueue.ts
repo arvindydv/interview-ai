@@ -1,20 +1,28 @@
+import { rmSync } from 'node:fs';
 import { Queue, UnrecoverableError, Worker, type Job } from 'bullmq';
 import type { Page } from 'playwright-core';
 import { BOT_PLATFORMS, BOT_RESTRICTED_RETRY_HOURS, type BotPlatform, type BotSessionStatus } from '@parakeet/shared';
 import { sql } from '../db.js';
 import { env } from '../env.js';
-import { SiteBlocked, VerificationNeeded, between, humanCheck, openBrowser, sleep } from '../jobBot/browser.js';
-import { buildConfig } from '../jobBot/config.js';
-import { indeed } from '../jobBot/platforms/indeed.js';
-import { LinkedInDailyLimit, linkedin } from '../jobBot/platforms/linkedin.js';
-import { naukri } from '../jobBot/platforms/naukri.js';
-import type { JobRef, PlatformBot, Result } from '../jobBot/platforms/types.js';
+import { SiteBlocked, VerificationNeeded, between, humanCheck, openBrowser, sleep } from './jobBot/browser.js';
+import { buildConfig, userDir } from './jobBot/config.js';
+import { indeed } from './jobBot/platforms/indeed.js';
+import { LinkedInDailyLimit, linkedin } from './jobBot/platforms/linkedin.js';
+import { naukri } from './jobBot/platforms/naukri.js';
+import type { JobRef, PlatformBot, Result } from './jobBot/platforms/types.js';
 
-// Friday Jobs platform bot (packages/shared/src/jobBot.ts). "jobbot.tick" (every two hours, 9:00–21:00
-// IST) queues a run for each user who turned the bot on; "jobbot.run" applies on each connected
-// platform up to its daily limit, headless; "jobbot.connect" opens a visible window on the site's own
-// login page (or the page asking to verify) and waits for the user to finish there. One job at a time:
-// a user's Chrome profile can only be open once.
+// EXPERIMENTAL, DISABLED BY DEFAULT. Platform bot for LinkedIn, Indeed and Naukri, kept for reference
+// and allowlisted personal testing only. LinkedIn's User Agreement (§8.2) and Indeed's terms (§A.3,
+// §D.21) prohibit automated applications, and Naukri refuses automated browsers; production uses
+// Assisted Apply for these sites (apps/api/src/routes/jobBot.ts).
+//
+// It runs only when ALL of these hold: JOB_BOT_EXPERIMENTAL=true on the worker, the user's email is in
+// JOB_BOT_USER_EMAILS, and the user pressed Run or Connect. It is NEVER scheduled: there is no tick, and
+// startup removes the scheduler older versions created. Do not add one.
+//
+// "jobbot.run" applies on each connected platform up to its daily limit, headless; "jobbot.connect"
+// opens a visible window on the site's own login page and waits for the user. One job at a time: a
+// user's Chrome profile can only be open once.
 
 export const JOB_BOT_QUEUE = 'jobbot';
 const BOTS: Record<BotPlatform, PlatformBot> = { linkedin, naukri, indeed };
@@ -28,6 +36,7 @@ const queue = new Queue<Data>(JOB_BOT_QUEUE, { connection });
 const allowedEmails = () => new Set(env.JOB_BOT_USER_EMAILS.split(',').map((e) => e.trim().toLowerCase()).filter(Boolean));
 
 async function allowed(userId: string): Promise<boolean> {
+  if (!env.JOB_BOT_EXPERIMENTAL) return false;
   const [u] = await sql<{ email: string }[]>`select email from public.users where id = ${userId}`;
   return Boolean(u && allowedEmails().has(u.email.toLowerCase()));
 }
@@ -140,7 +149,7 @@ async function runPlatform(page: Page, userId: string, bot: PlatformBot, config:
 
 async function run(job: Job<Data>) {
   const userId = job.data.userId!;
-  if (!(await allowed(userId))) return { skipped: 'not enabled for this account (JOB_BOT_USER_EMAILS)' };
+  if (!(await allowed(userId))) return { skipped: 'not enabled (JOB_BOT_EXPERIMENTAL and JOB_BOT_USER_EMAILS)' };
   const { config, missing } = await buildConfig(userId);
   if (missing.length) return { skipped: `missing: ${missing.join(', ')}` };
   const platforms = (job.data.platform ? [job.data.platform] : [...BOT_PLATFORMS]).filter((p) => config.dailyLimit[p] > 0 || job.data.limit);
@@ -213,14 +222,11 @@ async function connect(job: Job<Data>) {
   }
 }
 
-async function tick() {
-  const users = await sql<{ user_id: string; email: string }[]>`
-    select s.user_id, u.email from public.job_bot_settings s join public.users u on u.id = s.user_id
-    where (s.settings ->> 'enabled')::boolean`;
-  const allow = allowedEmails();
-  const due = users.filter((u) => allow.has(u.email.toLowerCase()));
-  for (const u of due) await queueBotRun(u.user_id);
-  return { queued: due.length };
+/** The user disconnected the bot or deleted their Jobs data: their browser profile and resume copy go. */
+async function forget(userId: string) {
+  if (!/^[0-9a-f-]{36}$/i.test(userId)) throw new UnrecoverableError('bad user id');
+  rmSync(userDir(userId), { recursive: true, force: true });
+  return { forgotten: userId };
 }
 
 const RUN_OPTS = { attempts: 1, removeOnComplete: { age: 7 * 24 * 3600 }, removeOnFail: { age: 7 * 24 * 3600 } };
@@ -230,13 +236,21 @@ export async function queueBotRun(userId: string, extra: Omit<Data, 'userId'> = 
   await queue.add('jobbot.run', { userId, ...extra }, { ...RUN_OPTS, jobId: `run-${userId}-${Date.now() - (Date.now() % 600_000)}` });
 }
 
+/** Removes the automatic schedule older versions created; the bot is never scheduled. */
+export async function removeJobBotSchedule() {
+  await queue.removeJobScheduler('jobbot-tick').catch(() => false);
+}
+
+/** Starts the worker only when JOB_BOT_EXPERIMENTAL is on; returns null otherwise. */
 export function startJobBotWorker() {
+  void removeJobBotSchedule();
+  if (!env.JOB_BOT_EXPERIMENTAL) return null;
   const worker = new Worker<Data>(
     JOB_BOT_QUEUE,
     async (job) => {
-      if (job.name === 'jobbot.tick') return tick();
       if (job.name === 'jobbot.run') return run(job);
       if (job.name === 'jobbot.connect') return connect(job);
+      if (job.name === 'jobbot.forget') return forget(job.data.userId!);
       throw new UnrecoverableError(`No processor for job "${job.name}"`);
     },
     // Applying takes a minute or more per job, with pauses: a long lock.
@@ -244,13 +258,6 @@ export function startJobBotWorker() {
   );
   worker.on('completed', (job, result) => console.log(`[jobbot] ${job.name} #${job.id} done`, JSON.stringify(result)));
   worker.on('failed', (job, err) => console.error(`[jobbot] ${job?.name} #${job?.id} failed:`, err.message));
-  if (allowedEmails().size) {
-    queue
-      .upsertJobScheduler('jobbot-tick', { pattern: '0 9-21/2 * * *', tz: 'Asia/Kolkata' }, { name: 'jobbot.tick', data: {} })
-      .catch((err) => console.error('[jobbot] could not schedule runs:', err.message));
-  } else {
-    queue.removeJobScheduler('jobbot-tick').catch(() => {});
-  }
   return worker;
 }
 

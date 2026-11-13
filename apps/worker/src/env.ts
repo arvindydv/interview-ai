@@ -78,8 +78,29 @@ const schema = z.object({
   /** Cold emails: Sonnet-tier by default, as they go to a person in the candidate's name. */
   LLM_COLD_EMAIL_MODEL: z.string().optional(),
 
-  // Friday Jobs platform bot (src/jobBot): applies on LinkedIn, Naukri and Indeed for the accounts listed
-  // here (comma-separated emails), signed in with sessions kept on this machine. Empty: off for everyone.
+  // Authorized ATS submission (src/submit): employer/partner API keys in public.ats_credentials are
+  // AES-256-GCM encrypted with this key (32 bytes, base64: openssl rand -base64 32). Unset: no API submission.
+  ATS_CREDENTIALS_KEY: z.string().optional(),
+  /**
+   * Providers whose employer forms Friday's servers may fill (comma-separated, e.g. "greenhouse,lever").
+   * Empty (the default): server-side form filling is off and those applications go to the candidate's
+   * browser (extension) or Assisted Apply. An operator lists a provider only once it's approved.
+   */
+  AUTO_APPLY_CLOUD_FORM_PROVIDERS: z.string().default(''),
+
+  // Data retention (queues/retention.ts), in days. Each policy is documented there.
+  RETENTION_EVENT_DETAIL_DAYS: z.coerce.number().int().min(7).default(90),
+  RETENTION_EVIDENCE_TEXT_DAYS: z.coerce.number().int().min(30).default(180),
+  RETENTION_UNSENT_RESUME_FILE_DAYS: z.coerce.number().int().min(7).default(30),
+  RETENTION_SOURCE_RUN_DAYS: z.coerce.number().int().min(7).default(90),
+  RETENTION_AUDIT_LOG_DAYS: z.coerce.number().int().min(90).default(400),
+  RETENTION_CLOSED_LISTING_DAYS: z.coerce.number().int().min(14).default(60),
+
+  // EXPERIMENTAL platform bot (apps/worker/src/experimental): LinkedIn/Indeed/Naukri automation in the
+  // user's own session. Off by default and never scheduled: those sites' terms prohibit automated
+  // applications, so production uses Assisted Apply. Both this flag and the allowlist must match the worker's.
+  JOB_BOT_EXPERIMENTAL: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
+  /** Accounts allowed to use the experimental bot (comma-separated emails). Empty: off for everyone. */
   JOB_BOT_USER_EMAILS: z.string().default(''),
   /** Where sessions and resume copies live, one folder per user. Default ~/.friday-job-bot. */
   JOB_BOT_HOME: z.string().optional(),

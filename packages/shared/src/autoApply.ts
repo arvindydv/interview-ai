@@ -33,6 +33,7 @@ export type AutoApplyReason =
   | 'captcha' // the job board asked for a CAPTCHA challenge
   | 'login_required' // the job board wants the user to sign in
   | 'unverified' // submitted, but the confirmation wasn't seen
+  | 'assisted' // no automatic route: the user applies with the prepared resume and answers, then confirms
   // failed
   | 'tailoring_failed'
   | 'form_unavailable'
@@ -122,7 +123,8 @@ export function autoApplyUrl(provider: AutoApplyProvider, board: string, externa
 export const AUTO_APPLY_LIMITS = {
   minScore: 50,
   maxScore: 90,
-  defaultScore: 70,
+  /** The strong-match threshold (DEFAULT_MATCH_CONFIG.strongMatch). */
+  defaultScore: 80,
   /** The highest daily limit of any plan (jobsPlans.ts); each plan caps it lower. */
   maxPerDay: 500,
   /** Prepared applications not submitted within this many days are skipped as expired. */
@@ -471,16 +473,16 @@ export interface JobsAnalytics {
 
 /** Auto Apply in a period by who sent each application (also for all users, in the admin overview). */
 export interface AutoApplyChannels {
-  /** Confirmed by the job board (or by the user), by who sent them. Before server submission: browser. */
-  submitted: { cloud: number; browser: number; user: number };
+  /** Confirmed by the job board (or by the user), by who sent them. api: the employer's ATS API. Before server submission: browser. */
+  submitted: { api: number; cloud: number; browser: number; user: number };
   /** Sent, but no confirmation seen yet, by who sent them. */
-  unverified: { cloud: number; browser: number };
+  unverified: { api: number; cloud: number; browser: number };
   /** Friday's servers met a CAPTCHA or sign-in and passed the application to the user's browser. */
   handedToBrowser: number;
   /** ...with no browser connected, so it waited for the user. */
   waitedForUser: number;
   /** Server submissions that failed (each try), and that ended up Failed. */
   cloudFailures: number;
-  /** cloud / (cloud + handedToBrowser + waitedForUser): how much the servers finished alone, 0–1. */
+  /** (api + cloud) / (api + cloud + handedToBrowser + waitedForUser): how much finished with no one present, 0–1. */
   cloudShare: number;
 }

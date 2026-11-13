@@ -5,8 +5,8 @@ import {
   DEFAULT_JOB_BOT_SETTINGS, EMPTY_APPLICATION_PROFILE, resumeRoles,
   type ApplicationProfile, type BotPlatform, type BotSearch, type JobBotSettings, type ResumeProfile,
 } from '@parakeet/shared';
-import { sql } from '../db.js';
-import { env } from '../env.js';
+import { sql } from '../../db.js';
+import { env } from '../../env.js';
 
 // What the bot knows about the candidate, built from Friday Jobs: the Application Profile (contact
 // details, CTC, notice period, saved answers), the parsed resume (years per skill), job preferences

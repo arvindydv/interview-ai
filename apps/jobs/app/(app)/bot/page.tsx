@@ -1,18 +1,21 @@
 'use client';
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { AlertTriangle, ArrowUpRight, Ban, BadgeCheck, Bot, CheckCircle2, Download, FilePlus2, Play, Plug, ShieldAlert, Unplug, UserCheck } from 'lucide-react';
+import { AlertTriangle, ArrowUpRight, Ban, BadgeCheck, CheckCircle2, ClipboardCopy, Download, FilePlus2, FlaskConical, Hand, Play, Plug, ShieldAlert, Unplug, UserCheck } from 'lucide-react';
 import {
   BOT_LIMITS, BOT_PLATFORM_LABELS, BOT_PLATFORMS,
-  type BotApplication, type BotApplicationPage, type BotPlatform, type BotPlatformStatus, type JobBotSettings, type JobBotState,
+  type ApplicationProfile, type AutoApplyOverview, type BotApplication, type BotApplicationPage, type BotPlatform, type BotPlatformStatus,
+  type JobBotSettings, type JobBotState,
 } from '@parakeet/shared';
 import { Spinner } from '@/components/ui';
 import { api, apiFile, ApiError } from '@/lib/api';
 import { timeAgo } from '@/lib/format';
 
-// The platform bot: applies for the user on LinkedIn, Naukri and Indeed in the background (the worker
-// runs a headless Chrome signed in as them). Here: connect each site once, set limits and searches,
-// answer the questions it couldn't, and see every application it sent.
+// LinkedIn, Indeed and Naukri: Assisted Apply. None of them lets a third party submit applications for a
+// candidate (their terms forbid automation and their APIs are for employers and ATS partners), so Friday
+// prepares everything — a resume tailored to the pasted job and the candidate's saved answers — and the
+// candidate submits on the site, then confirms here. The old background bot is kept only as an
+// experimental, off-by-default feature (shown when the API reports it available for this account).
 
 const STATUS: Record<BotPlatformStatus['status'], { label: string; className: string }> = {
   connected: { label: 'Connected', className: 'text-emerald-700 bg-emerald-50 border-emerald-200' },
@@ -52,7 +55,7 @@ async function downloadResume(a: BotApplication) {
  * tailors your resume for it, you apply on the site, then confirm here.
  */
 function AssistedApply({ onChange, refreshKey }: { onChange: () => void; refreshKey: number }) {
-  const [form, setForm] = useState({ platform: 'naukri' as BotPlatform, url: '', title: '', company: '', description: '' });
+  const [form, setForm] = useState({ platform: 'linkedin' as BotPlatform, url: '', title: '', company: '', description: '' });
   const [items, setItems] = useState<BotApplication[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -97,10 +100,10 @@ function AssistedApply({ onChange, refreshKey }: { onChange: () => void; refresh
 
   return (
     <div className="card mt-4 p-4">
-      <p className="flex items-center gap-2 font-medium"><FilePlus2 size={16} /> Assisted Apply</p>
+      <p className="flex items-center gap-2 font-medium"><FilePlus2 size={16} /> Add a job</p>
       <p className="text-xs text-muted">
-        For jobs the bot can&rsquo;t apply to, like Naukri, which blocks it. Paste a job you found: Friday tailors your resume for it, you apply on
-        the site with that resume, then mark it applied here. Naukri&rsquo;s own auto-apply is Naukri Neo, part of Naukri360 Pro.
+        Paste a LinkedIn, Indeed or Naukri job you want. Friday tailors your resume to it (from your real experience only); you apply on the site
+        with that resume and your saved answers, then mark it applied. It then counts on your Applied Jobs dashboard as &ldquo;You confirmed&rdquo;.
       </p>
       <form onSubmit={add} className="mt-3 grid gap-2 sm:grid-cols-4">
         <select value={form.platform} onChange={(e) => setForm({ ...form, platform: e.target.value as BotPlatform })} className="input">
@@ -414,34 +417,53 @@ export default function BotPage() {
   return (
     <div className="mx-auto max-w-5xl px-4 pt-8 pb-16 sm:px-8">
       <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight sm:text-[28px]">
-        <Bot /> LinkedIn, Naukri &amp; Indeed bot
+        <Hand /> LinkedIn, Indeed &amp; Naukri: Assisted Apply
       </h1>
-      <p className="mt-1 text-muted">
-        Applies for you in the background with your resume and Application Profile, up to your daily limit on each site. Nothing opens on
-        your screen except the one-time sign-in.
+      <p className="mt-1 max-w-3xl text-muted">
+        These sites don&rsquo;t allow anyone but you to submit applications, so Friday does everything else: a resume tailored to each job and your
+        answers ready to paste. You press submit on the site, then tell us — it lands on your{' '}
+        <Link href="/applied" className="font-medium text-brand underline underline-offset-2">Applied Jobs</Link> dashboard.
       </p>
 
+      <ol className="mt-5 grid gap-2 sm:grid-cols-4">
+        {['Paste the job', 'Get your tailored resume', 'Apply on the site with your saved answers', 'Click “I applied”'].map((step, i) => (
+          <li key={step} className="card flex items-center gap-2 p-3 text-sm">
+            <span className="grid size-6 shrink-0 place-items-center rounded-full bg-brand text-xs font-semibold text-white">{i + 1}</span>
+            {step}
+          </li>
+        ))}
+      </ol>
+
       {error && <p className="mt-4 text-sm text-danger">{error}</p>}
-      {!state || !settings ? (
-        <div className="mt-6 grid gap-3 sm:grid-cols-3">{[0, 1, 2].map((i) => <div key={i} className="skeleton h-40" />)}</div>
-      ) : !state.available ? (
-        <div className="card mt-6 p-6 text-sm text-muted">The platform bot isn&rsquo;t enabled for this account.</div>
-      ) : (
-        <>
+
+      <AssistedApply onChange={() => setRefreshKey((k) => k + 1)} refreshKey={refreshKey} />
+      <PreparedAnswers />
+
+      {state?.available && settings && (
+        <details className="card mt-8 border-amber-200 p-4">
+          <summary className="flex cursor-pointer items-center gap-2 font-medium">
+            <FlaskConical size={16} className="text-amber-700" /> Experimental: platform bot
+            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800">Off by default</span>
+          </summary>
+          <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            Applying with automation goes against LinkedIn, Naukri and Indeed&rsquo;s user agreements, and they can restrict accounts they
+            suspect. This is enabled only for allowlisted accounts, never runs on a schedule, keeps to your daily limits, never solves
+            CAPTCHAs, and stops to let you verify when a site asks.
+          </p>
           {state.missing.length > 0 && (
-            <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
               <p className="flex items-center gap-2 font-medium"><AlertTriangle size={16} /> Before the bot can apply:</p>
               <ul className="mt-1 list-disc pl-6">{state.missing.map((m) => <li key={m}>{m}</li>)}</ul>
               <Link href="/auto-apply" className="mt-1 inline-block underline">Open the Application Profile</Link>
             </div>
           )}
 
-          <div className="card mt-6 flex flex-wrap items-center gap-3 p-4">
+          <div className="card mt-4 flex flex-wrap items-center gap-3 p-4">
             <label className="flex items-center gap-2 font-medium">
               <input type="checkbox" checked={settings.enabled} onChange={(e) => { const next = { ...settings, enabled: e.target.checked }; change(next); save(next); }} />
-              Apply automatically
+              Enabled
             </label>
-            <span className="text-sm text-muted">every two hours, 9 am – 9 pm</span>
+            <span className="text-sm text-muted">Runs only when you start it.</span>
             <button disabled={busy !== null || state.running} onClick={runNow} className="btn btn-brand ml-auto !text-xs">
               {state.running ? <><Spinner /> Running…</> : <><Play size={14} /> Run now</>}
             </button>
@@ -485,7 +507,7 @@ export default function BotPage() {
           {state.questions.length > 0 && (
             <div className="card mt-4 p-4">
               <p className="font-medium">Questions the bot couldn&rsquo;t answer ({state.questions.length})</p>
-              <p className="text-xs text-muted">Those jobs were held back. Answer once and the bot applies to them next run (Auto Apply uses your answers too). It never makes these up.</p>
+              <p className="text-xs text-muted">Those jobs were held back. Answer once and it&rsquo;s reused everywhere (Auto Apply uses your answers too). Friday never makes these up.</p>
               <ul className="divide-y divide-line">
                 {state.questions.map((q) => (
                   <QuestionRow key={q.question} question={q.question} jobs={q.jobs} onSaved={load} />
@@ -494,15 +516,65 @@ export default function BotPage() {
             </div>
           )}
 
-          <AssistedApply onChange={() => setRefreshKey((k) => k + 1)} refreshKey={refreshKey} />
-
           <Applications refreshKey={refreshKey} />
+        </details>
+      )}
+    </div>
+  );
+}
 
-          <p className="mt-6 text-xs text-muted">
-            Applying with automation goes against LinkedIn, Naukri and Indeed&rsquo;s user agreements, and they can restrict accounts they
-            suspect. The bot keeps to your daily limits, never solves CAPTCHAs, and stops a site to let you verify when it asks.
-          </p>
-        </>
+/** The candidate's own answers to what these sites ask, ready to copy into the form. Never invented. */
+function PreparedAnswers() {
+  const [profile, setProfile] = useState<ApplicationProfile | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
+  useEffect(() => {
+    api<AutoApplyOverview>('/v1/auto-apply').then((o) => setProfile(o.profile), () => {});
+  }, []);
+  if (!profile) return null;
+  const india = profile.workAuthorization.find((w) => /india/i.test(w.country));
+  const rows: [string, string][] = [
+    ['Notice period', profile.noticePeriodDays === null ? '' : profile.noticePeriodDays === 0 ? 'Immediate' : `${profile.noticePeriodDays} days`],
+    ['Current CTC', profile.currentSalary],
+    ['Expected CTC', profile.expectedSalary],
+    ['Willing to relocate', profile.willingToRelocate === null ? '' : profile.willingToRelocate ? 'Yes' : 'No'],
+    ['Authorized to work in India', india ? (india.authorized ? 'Yes' : 'No') : ''],
+    ['Current city', profile.city],
+    ['LinkedIn', profile.linkedin],
+    ['Phone', profile.phone],
+    ...profile.savedAnswers.slice(-12).map((a): [string, string] => [a.question, a.answer]),
+  ];
+  const known = rows.filter(([, v]) => v.trim());
+  const unknown = rows.filter(([, v]) => !v.trim()).map(([k]) => k);
+  const copy = (k: string, v: string) => {
+    void navigator.clipboard?.writeText(v).then(() => {
+      setCopied(k);
+      setTimeout(() => setCopied(null), 1500);
+    });
+  };
+  return (
+    <div className="card mt-4 p-4">
+      <p className="flex items-center gap-2 font-medium"><ClipboardCopy size={16} /> Your answers, ready to paste</p>
+      <p className="text-xs text-muted">From your Application Profile and answers you&rsquo;ve saved. Friday never guesses these.</p>
+      {known.length > 0 ? (
+        <ul className="mt-3 grid gap-2 sm:grid-cols-2">
+          {known.map(([k, v]) => (
+            <li key={k} className="flex items-center gap-2 rounded-lg border border-line px-3 py-2 text-sm">
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-xs text-muted">{k}</span>
+                <span className="block truncate">{v}</span>
+              </span>
+              <button onClick={() => copy(k, v)} className="btn btn-ghost !p-1.5 !text-xs" aria-label={`Copy ${k}`}>
+                {copied === k ? <CheckCircle2 size={14} className="text-emerald-600" /> : <ClipboardCopy size={14} />}
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {unknown.length > 0 && (
+        <p className="mt-3 text-xs text-muted">
+          Not answered yet: {unknown.join(', ')}.{' '}
+          <Link href="/auto-apply" className="font-medium text-brand underline underline-offset-2">Answer once in your profile</Link>
+        </p>
       )}
     </div>
   );

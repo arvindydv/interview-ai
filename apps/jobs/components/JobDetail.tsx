@@ -203,17 +203,55 @@ export function JobDetail({
             <div className="flex items-center gap-4">
               <MatchRing score={match.score} size={64} stroke={5} />
               <div>
-                <p className="font-semibold" style={{ color: tone.color }}>
-                  {tone.label}
+                <p className="font-semibold" style={{ color: match.eligible === false ? undefined : tone.color }}>
+                  {match.eligible === false ? <span className="text-warn">Not eligible</span> : match.strong ? 'Strong match' : tone.label}
                 </p>
-                <p className="text-sm text-muted">Based on your resume and preferences</p>
+                <p className="text-sm text-muted">Based on your resume, profile and preferences</p>
               </div>
             </div>
             <div className="mt-5 grid gap-4 sm:grid-cols-3">
               <Bar label="Role" value={match.titleScore} hint="Title vs. what you do" />
               <Bar label="Skills" value={match.skillScore} hint={`${match.matchedSkills.length} skills mentioned`} />
-              <Bar label="Seniority" value={match.levelScore} hint="Level vs. your experience" />
+              <Bar label="Experience" value={match.levelScore} hint="Years and level vs. yours" />
             </div>
+            {match.explanation && (
+              <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                {match.explanation.rejections.length > 0 && (
+                  <div className="sm:col-span-2">
+                    <p className="text-xs font-semibold tracking-wider text-warn uppercase">Why Friday won’t apply</p>
+                    <ul className="mt-2 space-y-1 text-sm">
+                      {match.explanation.rejections.map((r) => (
+                        <li key={r}>{r}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {match.explanation.reasons.length > 0 && (
+                  <div>
+                    <p className="text-xs font-semibold tracking-wider text-faint uppercase">Why it matches</p>
+                    <ul className="mt-2 space-y-1 text-sm">
+                      {match.explanation.reasons.map((r) => (
+                        <li key={r} className="flex gap-1.5">
+                          <Check size={14} className="mt-0.5 shrink-0 text-brand" /> {r}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {match.explanation.gaps.filter((g) => !match.explanation!.rejections.includes(g)).length > 0 && (
+                  <div>
+                    <p className="text-xs font-semibold tracking-wider text-faint uppercase">Gaps</p>
+                    <ul className="mt-2 space-y-1 text-sm text-muted">
+                      {match.explanation.gaps
+                        .filter((g) => !match.explanation!.rejections.includes(g))
+                        .map((g) => (
+                          <li key={g}>{g}</li>
+                        ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
             {match.matchedSkills.length > 0 && (
               <div className="mt-5">
                 <p className="text-xs font-semibold tracking-wider text-faint uppercase">Your skills in this posting</p>

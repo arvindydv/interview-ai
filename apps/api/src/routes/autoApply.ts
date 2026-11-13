@@ -13,6 +13,7 @@ import { sql } from '../lib/db.js';
 import { APPLIER_CLAIM_PREFIX } from './applier.js';
 import { applyReport, channelStats, event, markApplied } from '../lib/autoApplyReports.js';
 import { queueAutoApply } from '../lib/queues.js';
+import { audit } from '../lib/audit.js';
 import { ensureUser } from '../lib/users.js';
 
 // Friday Jobs Auto Apply (packages/shared/src/autoApply.ts). The worker prepares applications
@@ -434,13 +435,36 @@ export default async function autoApplyRoutes(app: FastifyInstance) {
     if (!z.uuid().safeParse(req.params.id).success) return reply.notFound('No such application.');
     const [row] = await sql<{ id: string }[]>`
       update public.auto_applications
-      set status = 'skipped', reason_code = 'removed_by_user', reason = 'You removed it.', updated_at = now()
+      set status = 'skipped', reason_code = 'removed_by_user', reason = 'You removed it.', cancelled_at = now(), updated_at = now()
       where id = ${req.params.id} and user_id = ${req.user.id}
         and (status in ('preparing', 'prepared', 'failed') or (status = 'pending' and reason_code <> 'submitting'))
       returning id`;
     if (!row) return reply.code(409).send({ error: 'conflict', message: 'This application can’t be removed now.' });
     await event(row.id, req.user.id, 'skipped', 'You removed it');
     return { status: 'skipped' };
+  });
+
+  // Cancel: never sent from now on. One being sent right now can't be pulled back: it is marked, and its
+  // outcome is still recorded truthfully (submitted if the job board took it, otherwise skipped).
+  app.post<{ Params: { id: string } }>('/v1/auto-apply/applications/:id/cancel', async (req, reply) => {
+    if (!z.uuid().safeParse(req.params.id).success) return reply.notFound('No such application.');
+    const userId = req.user.id;
+    const [row] = await sql<{ id: string; status: AutoApplyStatus; reason_code: string | null }[]>`
+      update public.auto_applications
+      set cancelled_at = coalesce(cancelled_at, now()),
+          status = case when status = 'pending' and reason_code = 'submitting' then status else 'skipped' end,
+          reason_code = case when status = 'pending' and reason_code = 'submitting' then reason_code else 'removed_by_user' end,
+          reason = case when status = 'pending' and reason_code = 'submitting' then 'Cancelling: it was already being sent' else 'You cancelled it.' end,
+          updated_at = now()
+      where id = ${req.params.id} and user_id = ${userId}
+        and status in ('preparing', 'prepared', 'pending', 'failed')
+        and not (status = 'pending' and reason_code = 'unverified')
+      returning id, status, reason_code`;
+    if (!row) return reply.code(409).send({ error: 'conflict', message: 'This application was already sent or closed.' });
+    const inFlight = row.reason_code === 'submitting';
+    await event(row.id, userId, inFlight ? 'cancel_requested' : 'skipped', inFlight ? 'You cancelled it while it was being sent' : 'You cancelled it');
+    await audit({ userId, actor: 'user', action: 'application.cancelled', targetType: 'auto_application', targetId: row.id, detail: { inFlight }, ip: req.ip });
+    return { status: inFlight ? 'cancelling' : 'skipped' };
   });
 
   // Try again: a failed or expired application is prepared again; one stopped at the job board (CAPTCHA,
@@ -466,7 +490,7 @@ export default async function autoApplyRoutes(app: FastifyInstance) {
       await sql`
         update public.auto_applications
         set status = 'preparing', reason_code = null, reason = null, retry_at = null, needs_browser = false, submit_clicked_at = null,
-            form = case when status = 'failed' then null else form end, updated_at = now()
+            cancelled_at = null, failure = null, form = case when status = 'failed' then null else form end, updated_at = now()
         where id = ${req.params.id}`;
       await event(req.params.id, userId, 'retry', 'Preparing again');
       await queueAutoApply('autoapply.prepare', { applicationId: req.params.id }, req.log);
@@ -485,7 +509,7 @@ export default async function autoApplyRoutes(app: FastifyInstance) {
           submitted_via = coalesce(submitted_via, 'user'),
           evidence = coalesce(evidence, '{}'::jsonb) || '{"confirmedByUser": true}'::jsonb, updated_at = now()
       where id = ${req.params.id} and user_id = ${req.user.id} and status = 'pending'
-        and reason_code in ('unverified', 'captcha', 'login_required')
+        and reason_code in ('unverified', 'captcha', 'login_required', 'assisted')
       returning id, listing_id`;
     if (!row) return reply.code(409).send({ error: 'conflict', message: 'This application isn’t waiting for confirmation.' });
     await event(row.id, req.user.id, 'submitted', 'You confirmed the job board received it');
@@ -727,6 +751,8 @@ export default async function autoApplyRoutes(app: FastifyInstance) {
       from (
         select id from public.auto_applications
         where user_id = ${userId} and status = 'prepared' and (retry_at is null or retry_at <= now())
+          -- The browser takes what is routed to a form; never 'api' (the worker sends those) or 'assisted'.
+          and coalesce(channel, 'extension') in ('cloud_form', 'extension') and cancelled_at is null
         order by score desc nulls last, created_at
         limit 1 for update skip locked
       ) next
