@@ -23,8 +23,10 @@ test('api is chosen only with an implemented connector AND a credential', () => 
   }
   // Built but no credential: never api.
   assert.equal(resolveChannel({ provider: 'greenhouse', hasApiCredential: false, cloudFormEnabled: false, extensionSupported: true }), 'extension');
-  // Workable's API connector isn't built: a credential alone doesn't make it api.
-  assert.notEqual(resolveChannel({ provider: 'workable', ...ALL }), 'api');
+  // Teamtailor's API connector isn't built: a credential alone doesn't make it api.
+  assert.notEqual(resolveChannel({ provider: 'teamtailor', ...ALL }), 'api');
+  // Workable's is: with the employer's credential, api.
+  assert.equal(resolveChannel({ provider: 'workable', ...ALL }), 'api');
 });
 
 test('cloud_form is never chosen when no provider is enabled; unknown providers are assisted', () => {

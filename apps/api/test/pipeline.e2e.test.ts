@@ -347,6 +347,18 @@ doc.save(sys.argv[1])`, pdf], { encoding: 'utf8' });
     assert.equal(posts.length, before);
   });
 
+  test('employer daily cap: once the agreed number went out today, the next waits for tomorrow, nothing is sent', async () => {
+    await sql`update public.ats_credentials set daily_cap = 1 where board = ${BOARD}`;
+    const next = await application(JOBS.lost);
+    const before = posts.length;
+    assert.deepEqual(await worker.sendApplication(next.id, { fetch: boardFetch }), { skipped: 'employer daily cap' });
+    assert.equal(posts.length, before);
+    const [row] = await sql<{ status: string; retry: boolean }[]>`select status, retry_at > now() as retry from public.auto_applications where id = ${next.id}`;
+    assert.deepEqual(row, { status: 'prepared', retry: true });
+    await sql`update public.ats_credentials set daily_cap = 10 where board = ${BOARD}`;
+    await sql`update public.auto_applications set retry_at = null where id = ${next.id}`;
+  });
+
   test('worker recovery: a send lost after the request went out is Unverified, never resent, never counted', async () => {
     const lost = await application(JOBS.lost);
     hangIds = new Set([JOBS.lost]);

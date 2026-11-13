@@ -1,16 +1,19 @@
 // Authorized ATS submission (src/submit, queues/submit.ts). Every HTTP call goes to a mock fetch:
 // nothing here ever reaches a real ATS. Connector tests are pure; the queue tests use the local
 // database (`pnpm infra:up`) for claims, leases, idempotency and the recorded outcomes.
-import { after, before, describe, test } from 'node:test';
+import { after, before, beforeEach, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { FormQuestion, PreparedAnswer } from '@parakeet/shared';
 
 process.env.ATS_CREDENTIALS_KEY = randomBytes(32).toString('base64');
 process.env.AUTO_APPLY_CLOUD_FORM_PROVIDERS = '';
+// Queues and the shared submission limiter on Redis database 15, which no dev worker reads.
+process.env.REDIS_URL = 'redis://127.0.0.1:6380/15';
 const { CONNECTORS_BY_PROVIDER } = await import('../src/submit/index.js');
 const { encryptSecret } = await import('../src/submit/credentials.js');
-const { sendApplication } = await import('../src/queues/submit.js');
+const { sendApplication, closeSubmitQueue } = await import('../src/queues/submit.js');
+const { Queue } = await import('bullmq');
 const { sweepLapsedClaims, closeAutoApplyQueue } = await import('../src/queues/autoApply.js');
 const { sql } = await import('../src/db.js');
 import type { AtsConnector, SubmissionTask, SubmitResult } from '../src/submit/types.js';
@@ -30,10 +33,10 @@ function mockFetch(reply: Reply | (() => Reply | Promise<Reply>), lookups: Recor
   const fn = (async (input: string | URL, init: RequestInit = {}) => {
     const url = String(input);
     const method = init.method ?? 'GET';
-    assert.match(url, /^https:\/\/(boards-api\.greenhouse\.io|api\.lever\.co|api\.eu\.lever\.co|api\.ashbyhq\.com|api\.smartrecruiters\.com)\//, url);
+    assert.match(url, /^https:\/\/(boards-api\.greenhouse\.io|api\.lever\.co|api\.eu\.lever\.co|api\.ashbyhq\.com|api\.smartrecruiters\.com|[a-z0-9-]+\.workable\.com)\//, url);
     calls.push({ url, method, body: init.body });
     const isLookup = method === 'GET' || url.endsWith('/jobPosting.info');
-    const r: Reply = isLookup ? { status: 200, body: lookups[url.includes('ashby') ? 'ashby' : url.includes('smartrecruiters') ? 'sr' : 'gh'] ?? {} } : await (typeof reply === 'function' ? reply() : reply);
+    const r: Reply = isLookup ? { status: 200, body: lookups[url.includes('ashby') ? 'ashby' : url.includes('smartrecruiters') ? 'sr' : url.includes('workable.com') ? 'wk' : 'gh'] ?? {} } : await (typeof reply === 'function' ? reply() : reply);
     if (r === 'refused') throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } });
     if (r === 'reset') throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNRESET' } });
     if (r === 'hang') {
@@ -72,6 +75,15 @@ const FORMS: Record<string, FormQuestion[]> = {
     { key: 'email', label: 'Email', type: 'text', required: true, options: [], kind: 'standard' },
     { key: 'resume', label: 'Resume', type: 'file', required: true, options: [], kind: 'resume' },
   ],
+  workable: [
+    { key: 'firstname', label: 'First name', type: 'text', required: true, options: [], kind: 'standard' },
+    { key: 'lastname', label: 'Last name', type: 'text', required: true, options: [], kind: 'standard' },
+    { key: 'email', label: 'Email', type: 'text', required: true, options: [], kind: 'standard' },
+    { key: 'resume', label: 'Resume', type: 'file', required: true, options: [], kind: 'resume' },
+    { key: 'QA_101', label: 'Willing to relocate?', type: 'select', required: true, options: ['Yes', 'No'], kind: 'custom' },
+    { key: 'QA_102', label: 'Notice period (days)', type: 'number', required: true, options: [], kind: 'custom' },
+    { key: 'QA_103', label: 'Preferred office', type: 'select', required: false, options: ['Bengaluru', 'Pune'], kind: 'custom' },
+  ],
 };
 const ANSWERS: Record<string, PreparedAnswer[]> = {
   greenhouse: [
@@ -92,19 +104,34 @@ const ANSWERS: Record<string, PreparedAnswer[]> = {
     { key: 'lastName', label: 'Last name', value: 'Rao', source: 'profile' },
     { key: 'email', label: 'Email', value: 'asha@example.com', source: 'profile' },
   ],
+  workable: [
+    { key: 'firstname', label: 'First name', value: 'Asha', source: 'profile' },
+    { key: 'lastname', label: 'Last name', value: 'Rao', source: 'profile' },
+    { key: 'email', label: 'Email', value: 'asha@example.com', source: 'profile' },
+    { key: 'QA_101', label: 'Willing to relocate?', value: 'Yes', source: 'profile' },
+    { key: 'QA_102', label: 'Notice period (days)', value: '30', source: 'profile' },
+    { key: 'QA_103', label: 'Preferred office', value: 'Pune', source: 'ai' },
+  ],
 };
 const LOOKUPS = {
   gh: { questions: [{ label: 'Willing to relocate?', required: true, fields: [{ name: 'question_222', type: 'multi_value_single_select', values: [{ label: 'Yes', value: 9001 }, { label: 'No', value: 9002 }] }] }] },
   ashby: { success: true, results: { applicationFormDefinition: { sections: [{ fields: [{ field: { path: 'q_relocate', type: 'ValueSelect', selectableValues: [{ label: 'Yes', value: 'yes_v' }, { label: 'No', value: 'no_v' }] } }] }] } } },
   sr: { questions: [] },
+  // Workable's own question ids; the public form's keys (QA_101…) match one by id and one by text.
+  wk: { questions: [
+    { id: 'QA_101', body: 'Willing to relocate?', type: 'boolean', required: true },
+    { id: 'spi_notice', body: 'Notice period (days)', type: 'numeric', required: true },
+    { id: 'QA_103', body: 'Preferred office', type: 'dropdown', required: false, choices: [{ id: 'c_blr', body: 'Bengaluru' }, { id: 'c_pune', body: 'Pune' }] },
+  ] },
 };
 const SUCCESS: Record<string, unknown> = {
   greenhouse: { id: 7001, success: 'Candidate saved successfully' },
   lever: { ok: true, applicationId: 'lev-app-1' },
   ashby: { success: true, results: { submittedFormInstance: { id: 'ash-form-1' } } },
   smartrecruiters: { id: 'cand-1', applicationId: 'sr-app-1', createdOn: '2026-11-13T00:00:00Z' },
+  workable: { status: 'created', candidate: { id: '3fc9a80f', stage: 'Applied' } },
 };
-const EXPECTED_ID: Record<string, string | null> = { greenhouse: '7001', lever: 'lev-app-1', ashby: 'ash-form-1', smartrecruiters: 'sr-app-1' };
+const EXPECTED_ID: Record<string, string | null> = { greenhouse: '7001', lever: 'lev-app-1', ashby: 'ash-form-1', smartrecruiters: 'sr-app-1', workable: '3fc9a80f' };
 
 const task = (provider: string): SubmissionTask => ({
   applicationId: randomUUID(), provider, board: 'acme', externalId: randomUUID(), title: 'Backend Engineer', company: 'Acme',
@@ -121,11 +148,11 @@ async function run(c: AtsConnector, reply: Reply, opts: { timeoutMs?: number; si
 
 // ---- connectors ----------------------------------------------------------------------------------
 
-for (const provider of ['greenhouse', 'lever', 'ashby', 'smartrecruiters']) {
+for (const provider of ['greenhouse', 'lever', 'ashby', 'smartrecruiters', 'workable']) {
   const c = CONNECTORS_BY_PROVIDER[provider];
   describe(`${provider} connector`, () => {
     test('success: submitted with the ATS id', async () => {
-      const { r, m } = await run(c, { status: provider === 'smartrecruiters' ? 201 : 200, body: SUCCESS[provider] });
+      const { r, m } = await run(c, { status: provider === 'smartrecruiters' || provider === 'workable' ? 201 : 200, body: SUCCESS[provider] });
       assert.equal(r.outcome, 'submitted', JSON.stringify(r));
       assert.equal((r as Extract<SubmitResult, { outcome: 'submitted' }>).externalId, EXPECTED_ID[provider]);
       assert.equal(m.posts().length, 1);
@@ -215,6 +242,75 @@ test('smartrecruiters: required screening questions → not sent through the API
   assert.equal(m.posts().length, 0);
 });
 
+test('workable: Bearer token, sourced=false, question keys and choice ids from the job, resume as base64', async () => {
+  const m = mockFetch({ status: 201, body: SUCCESS.workable }, LOOKUPS);
+  const t = task('workable');
+  const r = await CONNECTORS_BY_PROVIDER.workable.submit(t, FILES, 'wk-token', { idempotencyKey: 'x', fetch: m.fn });
+  assert.equal(r.outcome, 'submitted', JSON.stringify(r));
+  const lookup = m.calls.find((c) => c.method === 'GET')!;
+  assert.equal(lookup.url, `https://acme.workable.com/spi/v3/jobs/${t.externalId}/questions`);
+  const [post] = m.posts();
+  assert.equal(post.url, `https://acme.workable.com/spi/v3/jobs/${t.externalId}/candidates`);
+  const body = JSON.parse(String(post.body));
+  assert.equal(body.sourced, false, 'the candidate applied; not sourced');
+  assert.equal(body.candidate.firstname, 'Asha');
+  assert.equal(body.candidate.email, 'asha@example.com');
+  assert.deepEqual(body.candidate.resume, { name: 'Asha Rao Resume.pdf', data: Buffer.from('%PDF-1.4 resume').toString('base64') });
+  assert.deepEqual(body.candidate.answers, [
+    { question_key: 'QA_101', checked: true },
+    { question_key: 'spi_notice', value: 30 },
+    { question_key: 'QA_103', choices: ['c_pune'] },
+  ]);
+  assert.ok(!String(post.body).includes('wk-token'), 'the token is never in the body');
+});
+
+test('workable: Bearer header, and a credential naming another subdomain', async () => {
+  const seen: { url: string; auth: string | null }[] = [];
+  const f = (async (u: string | URL, init: RequestInit = {}) => {
+    seen.push({ url: String(u), auth: new Headers(init.headers).get('authorization') });
+    return new Response(JSON.stringify((init.method ?? 'GET') === 'GET' ? LOOKUPS.wk : SUCCESS.workable), { status: (init.method ?? 'GET') === 'GET' ? 200 : 201 });
+  }) as typeof fetch;
+  const r = await CONNECTORS_BY_PROVIDER.workable.submit(task('workable'), FILES, JSON.stringify({ apiKey: 'wk-token', subdomain: 'acme-careers' }), { idempotencyKey: 'x', fetch: f });
+  assert.equal(r.outcome, 'submitted');
+  assert.ok(seen.every((s) => s.url.startsWith('https://acme-careers.workable.com/spi/v3/') && s.auth === 'Bearer wk-token'));
+  await assert.rejects(
+    () => CONNECTORS_BY_PROVIDER.workable.submit(task('workable'), FILES, JSON.stringify({ apiKey: 'k', subdomain: 'evil.com/x' }), { idempotencyKey: 'x', fetch: f }),
+    /Invalid Workable subdomain/,
+  );
+});
+
+test('workable: 422 "candidate already exists" → duplicate; other 422 → validation naming the field', async () => {
+  const dup = { error: 'Validation failed: Email candidate already exists', validation_errors: { email: ['candidate already exists'] } };
+  assert.deepEqual(pick((await run(CONNECTORS_BY_PROVIDER.workable, { status: 422, body: dup })).r), ['failed', 'duplicate', false]);
+  const bad = { error: 'Validation failed', validation_errors: { 'Notice period (days)': ['must be a number'] } };
+  const { r } = await run(CONNECTORS_BY_PROVIDER.workable, { status: 422, body: bad });
+  assert.deepEqual(pick(r), ['failed', 'validation', false]);
+  assert.deepEqual((r as { fields?: string[] }).fields, ['QA_102']);
+});
+
+test('workable: 429 without Retry-After waits until X-Rate-Limit-Reset', async () => {
+  const reset = Math.floor(Date.now() / 1000) + 7;
+  const { r } = await run(CONNECTORS_BY_PROVIDER.workable, { status: 429, body: { error: 'Too many requests' }, headers: { 'x-rate-limit-reset': String(reset) } });
+  assert.deepEqual(pick(r), ['failed', 'rate_limited', true]);
+  const ms = (r as { retryAfterMs?: number }).retryAfterMs!;
+  assert.ok(ms > 4_000 && ms <= 8_000, String(ms));
+});
+
+test('workable: a required question the job does not list, or an unknown choice → not sent through the API', async () => {
+  const lookups = { ...LOOKUPS, wk: { questions: LOOKUPS.wk.questions.filter((q) => q.id !== 'spi_notice') } };
+  const m = mockFetch({ status: 201, body: SUCCESS.workable }, lookups);
+  const r = await CONNECTORS_BY_PROVIDER.workable.submit(task('workable'), FILES, 'k', { idempotencyKey: 'x', fetch: m.fn });
+  assert.deepEqual(pick(r), ['failed', 'unsupported_form', false]);
+  assert.equal(m.posts().length, 0);
+});
+
+test('workable: the questions lookup timing out is retryable (nothing was sent), never uncertain', async () => {
+  const f = (async (_u: string | URL, init: RequestInit = {}) =>
+    new Promise<Response>((_, reject) => init.signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'TimeoutError' }))))) as typeof fetch;
+  const r = await CONNECTORS_BY_PROVIDER.workable.submit(task('workable'), FILES, 'k', { idempotencyKey: 'x', fetch: f, timeoutMs: 50 });
+  assert.deepEqual(pick(r), ['failed', 'network', true]);
+});
+
 // ---- queue: claims, outcomes, idempotency (local database) ------------------------------------------
 
 describe('autosubmit queue', { concurrency: 1 }, () => {
@@ -267,6 +363,16 @@ describe('autosubmit queue', { concurrency: 1 }, () => {
       from public.auto_applications where id = ${id}`)[0];
   const events = async (id: string) => (await sql<{ kind: string }[]>`select kind from public.auto_apply_events where application_id = ${id} order by id`).map((e) => e.kind);
   const fast = (m: ReturnType<typeof mockFetch>) => ({ fetch: m.fn, timeoutMs: 100 });
+  // The shared limiter's keys (Redis db 15): each test starts with Lever free (no pacing, no cool-down).
+  const redisQueue = new Queue('submit-test', { connection: { url: process.env.REDIS_URL! } });
+  const redis = async () => (await redisQueue.getBackend().client) as unknown as { del(...k: string[]): Promise<number>; pttl(k: string): Promise<number> };
+  beforeEach(async () => {
+    await (await redis()).del('submit:pace:lever', 'submit:conc:lever', 'submit:cool:lever');
+  });
+  after(async () => {
+    await (await redis()).del('submit:pace:lever', 'submit:conc:lever', 'submit:cool:lever');
+    await redisQueue.close();
+  });
 
   test('success → submitted (verified by the ATS), applied, audited', async () => {
     const { appId, listingId } = await seed();
@@ -340,6 +446,9 @@ describe('autosubmit queue', { concurrency: 1 }, () => {
     assert.ok(wait > 100_000 && wait <= 121_000, String(wait));
     const ev = await events(appId);
     assert.ok(ev.includes('rate_limited') && !ev.includes('submit_failed'));
+    // Every worker backs off: Lever's shared cool-down follows Retry-After.
+    const cool = await (await redis()).pttl('submit:cool:lever');
+    assert.ok(cool > 100_000 && cool <= 120_000, String(cool));
   });
 
   test('403 → credential flagged, application falls back to another channel without resending', async () => {
@@ -449,5 +558,6 @@ describe('autosubmit queue', { concurrency: 1 }, () => {
 
 after(async () => {
   await closeAutoApplyQueue();
+  await closeSubmitQueue();
   await sql.end();
 });

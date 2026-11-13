@@ -140,5 +140,9 @@ export async function workerHealth(): Promise<WorkerHealth> {
 
 export default async function adminWorkerHealthRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAdmin);
+  app.addHook('onClose', async () => {
+    await Promise.all([...(queues?.values() ?? [])].map((q) => q.close()));
+    queues = null;
+  });
   app.get('/admin/worker-health', async (): Promise<WorkerHealth> => workerHealth());
 }

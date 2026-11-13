@@ -59,8 +59,8 @@ export const PROVIDER_SUBMISSION: Record<string, ProviderSubmissionCapability> =
     apiDocs: 'https://developers.smartrecruiters.com/docs/application-api',
   },
   workable: {
-    provider: 'workable', apiExists: true, publicForm: true, connectorImplemented: false,
-    apiRequires: 'The employer’s Workable API token with w_candidates scope.',
+    provider: 'workable', apiExists: true, publicForm: true, connectorImplemented: true,
+    apiRequires: 'The employer’s Workable API token (w_candidates, and r_jobs for job questions); 10 requests/10 s per account token.',
     apiDocs: 'https://workable.readme.io/reference/job-candidates-create',
   },
   teamtailor: {

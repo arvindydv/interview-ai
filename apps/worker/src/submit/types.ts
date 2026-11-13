@@ -74,8 +74,10 @@ export interface SubmitOptions {
 
 export interface AtsConnector {
   provider: string;
-  /** Minimum gap between two submissions to this provider from one worker process. */
+  /** Minimum gap between two submissions to this provider, across all worker processes. */
   minIntervalMs: number;
+  /** Submissions to this provider in flight at once, across all worker processes (default 2). */
+  maxConcurrent?: number;
   timeoutMs: number;
   submit(task: SubmissionTask, files: SubmissionFiles, secret: string, opts: SubmitOptions): Promise<SubmitResult>;
 }

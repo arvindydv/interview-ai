@@ -34,6 +34,8 @@ export interface AtsCredential {
   board: string;
   /** Decrypted; never logged. */
   secret: string;
+  /** Applications a day this employer agreed to receive through its API (India calendar day). */
+  dailyCap: number;
 }
 
 /** Whether an unrevoked credential exists (no decryption: for choosing a channel). */
@@ -48,12 +50,12 @@ export async function hasCredential(provider: string, board: string | null): Pro
 /** The usable credential for a board, decrypted; null when none, revoked, flagged or undecryptable. */
 export async function loadCredential(provider: string, board: string | null): Promise<AtsCredential | null> {
   if (!board || !credentialsConfigured()) return null;
-  const [row] = await sql<{ id: string; secret_enc: Buffer }[]>`
-    select id, secret_enc from public.ats_credentials
+  const [row] = await sql<{ id: string; secret_enc: Buffer; daily_cap: number }[]>`
+    select id, secret_enc, daily_cap from public.ats_credentials
     where provider = ${provider} and board = ${board} and revoked_at is null and last_error is null`;
   if (!row) return null;
   try {
-    return { id: row.id, provider, board, secret: decryptSecret(row.secret_enc) };
+    return { id: row.id, provider, board, secret: decryptSecret(row.secret_enc), dailyCap: row.daily_cap };
   } catch {
     await flagCredential(row.id, 'Could not decrypt (ATS_CREDENTIALS_KEY changed?)');
     return null;

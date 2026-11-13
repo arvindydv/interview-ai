@@ -18,8 +18,10 @@ test('capacity: API only with an employer credential, cloud only for enabled pro
   assert.deepEqual(capacitySplit(boards, new Set(['greenhouse:acme']), new Set(['lever'])), {
     apiAuthorized: 10, cloudForm: 5, extensionOnly: 10, assistedOnly: 6,
   });
-  // Workable has no API connector yet: a credential alone doesn't make it API.
-  assert.equal(capacitySplit(boards, new Set(['workable:gamma']), new Set()).apiAuthorized, 0);
+  // Workable's connector is built: with that employer's credential its jobs count as API.
+  assert.equal(capacitySplit(boards, new Set(['workable:gamma']), new Set()).apiAuthorized, 3);
+  // Keka has no submission API at all: a credential row for it changes nothing.
+  assert.equal(capacitySplit(boards, new Set(['keka:delta']), new Set()).apiAuthorized, 0);
 });
 
 test('applications: only evidence counts as submitted; unverified, submitting and failed never do', () => {

@@ -11,6 +11,7 @@ import { ASSISTED_REASON, channelFor } from '../submit/channel.js';
 import { decryptSecret, flagCredential, loadCredential } from '../submit/credentials.js';
 import { basicAuth, parseSecret } from '../submit/http.js';
 import { CONNECTORS_BY_PROVIDER, type AtsConnector, type SubmitResult } from '../submit/index.js';
+import { closeSubmitLimiter, submitLimiter, type SubmitLimiter } from '../submit/limiter.js';
 
 // Authorized ATS submission: prepared applications whose channel is 'api' (the employer granted us an
 // API credential for their board, see submit/channel.ts) are sent here, from the worker, with no browser
@@ -59,14 +60,11 @@ async function markApplied(userId: string, listingId: string | null) {
 
 // ---- per-provider pacing -------------------------------------------------------------------------
 
-const nextSlot = new Map<string, number>();
-/** Waits for this provider's next slot in this process (Lever: 2/s documented; others conservative). */
-async function pace(c: AtsConnector) {
-  const now = Date.now();
-  const at = Math.max(now, nextSlot.get(c.provider) ?? 0);
-  nextSlot.set(c.provider, at + c.minIntervalMs);
-  if (at > now) await new Promise((r) => setTimeout(r, at - now));
-}
+/** Longest an application waits for its provider's slot before going back to Prepared for later. */
+const MAX_SLOT_WAIT_MS = 2 * 60_000;
+
+/** Pacing and concurrency for a provider, shared by every worker process (submit/limiter.ts). */
+const limits = (c: AtsConnector) => ({ minIntervalMs: c.minIntervalMs, maxConcurrent: c.maxConcurrent ?? 2, leaseMs: c.timeoutMs + 60_000 });
 
 // ---- tick ----------------------------------------------------------------------------------------
 
@@ -112,6 +110,7 @@ export interface SendDeps {
   fetch?: typeof fetch;
   connectors?: Record<string, AtsConnector>;
   timeoutMs?: number;
+  limiter?: SubmitLimiter;
 }
 
 /**
@@ -181,6 +180,22 @@ export async function sendApplication(applicationId: string, deps: SendDeps = {}
   const credential = await loadCredential(app.provider, app.board);
   if (!credential) return fallBack('The employer credential is missing, revoked or flagged.');
 
+  // The volume this employer agreed to, per India calendar day. Counts sends in flight and unconfirmed
+  // ones (they may have arrived) besides confirmed ones, so concurrent workers can undershoot, never exceed.
+  const [{ sent }] = await sql<{ sent: number }[]>`
+    select count(*)::int as sent
+    from public.auto_applications x
+    join public.job_listings l on l.id = x.listing_id
+    join public.job_sources src on src.id = l.source_id
+    where x.id <> ${app.id} and x.channel = 'api' and src.provider = ${app.provider} and src.board = ${app.board}
+      and (x.reason_code = 'submitting'
+           or ((x.status = 'submitted' or x.reason_code = 'unverified')
+               and (coalesce(x.submitted_at, x.submit_clicked_at, x.updated_at) at time zone 'Asia/Kolkata')::date = (now() at time zone 'Asia/Kolkata')::date))`;
+  if (sent >= credential.dailyCap) {
+    await release(`${app.company} agreed to ${credential.dailyCap} a day through its API; it waits for tomorrow`, { retry_at: new Date(Date.now() + 3600_000) });
+    return { skipped: 'employer daily cap' };
+  }
+
   const [files] = await sql<{ file: Buffer | null; file_name: string | null; format: string | null; cover: Buffer | null }[]>`
     select file, file_name, content->>'format' as format, cover_letter_file as cover
     from public.tailored_resumes where id = ${app.tailored_resume_id} and status = 'ready'`;
@@ -192,43 +207,58 @@ export async function sendApplication(applicationId: string, deps: SendDeps = {}
   const [profileRow] = await sql<{ data: Partial<ApplicationProfile> }[]>`select data from public.application_profiles where user_id = ${userId}`;
   const p = { ...EMPTY_APPLICATION_PROFILE, ...profileRow?.data };
 
-  await pace(connector);
-  // Cancelled while it waited for a slot: not sent.
-  const [still] = await sql<{ cancelled: boolean }[]>`select cancelled_at is not null as cancelled from public.auto_applications where id = ${app.id}`;
-  if (still.cancelled) {
-    await set({ status: 'skipped', reason_code: 'removed_by_user', reason: 'You cancelled it.', submit_clicked_at: null });
-    await logEvent(app.id, userId, 'skipped', 'Cancelled before it was sent');
-    return { skipped: 'cancelled' };
+  // A slot for this provider, shared with every other worker: its documented rate is never exceeded, and
+  // after a 429 all workers wait out its cool-down.
+  const limiter = deps.limiter ?? submitLimiter();
+  const slot = await limiter.acquire(connector.provider, limits(connector), MAX_SLOT_WAIT_MS);
+  if (!slot) {
+    await release(`${app.provider} is busy (rate limit or cool-down); trying again shortly`, { retry_at: new Date(Date.now() + 60_000) });
+    return { retry: 'provider busy' };
   }
-
-  // From here the request may reach the ATS: recorded first, so a crash can never lead to a resend.
-  const [marked] = await sql<{ id: string }[]>`
-    update public.auto_applications set submit_clicked_at = now(), updated_at = now()
-    where id = ${app.id} and claimed_by = ${claim} returning id`;
-  if (!marked) return { skipped: 'claim lost' };
-  await logEvent(app.id, userId, 'submitting', `Sending to ${app.provider} through the employer’s API`);
-
   let result: SubmitResult;
   try {
-    result = await connector.submit(
-      {
-        applicationId: app.id, provider: app.provider, board: app.board, externalId: app.external_id, title: app.title, company: app.company,
-        form: app.form ?? [], answers: app.answers ?? [],
-        candidate: {
-          firstName: p.firstName, lastName: p.lastName, email: p.email, phone: p.phone, city: p.city, country: p.country,
-          linkedin: p.linkedin, github: p.github, portfolio: p.portfolio, website: p.website,
+    // Cancelled while it waited for a slot: not sent.
+    const [still] = await sql<{ cancelled: boolean }[]>`select cancelled_at is not null as cancelled from public.auto_applications where id = ${app.id}`;
+    if (still.cancelled) {
+      await set({ status: 'skipped', reason_code: 'removed_by_user', reason: 'You cancelled it.', submit_clicked_at: null });
+      await logEvent(app.id, userId, 'skipped', 'Cancelled before it was sent');
+      return { skipped: 'cancelled' };
+    }
+
+    // From here the request may reach the ATS: recorded first, so a crash can never lead to a resend.
+    const [marked] = await sql<{ id: string }[]>`
+      update public.auto_applications set submit_clicked_at = now(), updated_at = now()
+      where id = ${app.id} and claimed_by = ${claim} returning id`;
+    if (!marked) return { skipped: 'claim lost' };
+    await logEvent(app.id, userId, 'submitting', `Sending to ${app.provider} through the employer’s API`);
+
+    try {
+      result = await connector.submit(
+        {
+          applicationId: app.id, provider: app.provider, board: app.board, externalId: app.external_id, title: app.title, company: app.company,
+          form: app.form ?? [], answers: app.answers ?? [],
+          candidate: {
+            firstName: p.firstName, lastName: p.lastName, email: p.email, phone: p.phone, city: p.city, country: p.country,
+            linkedin: p.linkedin, github: p.github, portfolio: p.portfolio, website: p.website,
+          },
         },
-      },
-      {
-        resume: { name: resumeName, mime: files.format === 'docx' ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' : 'application/pdf', data: files.file },
-        coverLetter: files.cover ? { name: resumeName.replace(/Resume/, 'Cover Letter').replace(/\.docx$/i, '.pdf'), mime: 'application/pdf', data: files.cover } : null,
-      },
-      credential.secret,
-      { idempotencyKey: app.idempotency_key, fetch: deps.fetch, timeoutMs: deps.timeoutMs },
-    );
-  } catch (err) {
-    // A bug in the connector, after submit_clicked_at: we can't know, so the candidate confirms.
-    result = { outcome: 'uncertain', httpStatus: null, message: `Connector error: ${(err as Error).message.slice(0, 200)}` };
+        {
+          resume: { name: resumeName, mime: files.format === 'docx' ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' : 'application/pdf', data: files.file },
+          coverLetter: files.cover ? { name: resumeName.replace(/Resume/, 'Cover Letter').replace(/\.docx$/i, '.pdf'), mime: 'application/pdf', data: files.cover } : null,
+        },
+        credential.secret,
+        { idempotencyKey: app.idempotency_key, fetch: deps.fetch, timeoutMs: deps.timeoutMs },
+      );
+    } catch (err) {
+      // A bug in the connector, after submit_clicked_at: we can't know, so the candidate confirms.
+      result = { outcome: 'uncertain', httpStatus: null, message: `Connector error: ${(err as Error).message.slice(0, 200)}` };
+    }
+  } finally {
+    await slot.release();
+  }
+  // The ATS is rate-limiting: every worker leaves it alone until it says to come back.
+  if (result.outcome === 'failed' && result.code === 'rate_limited') {
+    await limiter.coolDown(connector.provider, result.retryAfterMs ?? 60_000);
   }
   return record(app, claim, result, credential.id, set, release, fallBack);
 }
@@ -356,10 +386,21 @@ export async function verifyCredential(credentialId: string, f: typeof fetch = f
     await flagCredential(c.id, 'Could not decrypt (ATS_CREDENTIALS_KEY changed?)');
     return { verified: false };
   }
-  const { apiKey } = parseSecret(secret);
+  const { apiKey, subdomain } = parseSecret(secret) as { apiKey: string; subdomain?: string };
   let ok: boolean | null = null;
   let message = '';
-  if (c.provider === 'ashby') {
+  if (c.provider === 'workable') {
+    // Read-only: one job from the account (r_jobs, which the connector needs anyway for questions).
+    const sub = (subdomain ?? c.board).toLowerCase();
+    if (!/^[a-z0-9][a-z0-9-]*$/.test(sub)) {
+      ok = false;
+      message = 'Invalid Workable subdomain in the credential';
+    } else {
+      const res = await f(`https://${sub}.workable.com/spi/v3/jobs?limit=1`, { headers: { authorization: `Bearer ${apiKey}`, accept: 'application/json' } });
+      ok = res.ok;
+      message = ok ? 'Workable accepted the token' : `Workable refused the token (HTTP ${res.status})`;
+    }
+  } else if (c.provider === 'ashby') {
     const res = await f('https://api.ashbyhq.com/apiKey.info', { method: 'POST', headers: { authorization: basicAuth(apiKey), 'content-type': 'application/json' }, body: '{}' });
     const body = (await res.json().catch(() => null)) as { success?: boolean } | null;
     ok = res.ok && body?.success === true;
@@ -388,7 +429,7 @@ export function startSubmitWorker() {
       if (job.name === 'autosubmit.verify') return verifyCredential(job.data.credentialId);
       throw new UnrecoverableError(`No processor for job "${job.name}"`);
     },
-    // Pacing per provider is in-process (pace()); a second worker process paces on its own.
+    // Pacing per provider is shared by every worker process through Redis (submit/limiter.ts).
     { connection, concurrency: 4 },
   );
   worker.on('completed', (job, result) => {
@@ -398,4 +439,4 @@ export function startSubmitWorker() {
   return worker;
 }
 
-export const closeSubmitQueue = () => queue?.close();
+export const closeSubmitQueue = () => Promise.all([queue?.close(), closeSubmitLimiter()]);

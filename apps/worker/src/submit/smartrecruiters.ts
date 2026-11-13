@@ -21,6 +21,8 @@ const MAX_FILE = 2 * 1024 * 1024;
 export const smartrecruiters: AtsConnector = {
   provider: 'smartrecruiters',
   minIntervalMs: 250,
+  // 8 concurrent documented; stay under it.
+  maxConcurrent: 4,
   timeoutMs: 130_000,
   submit: (task, files, secret, opts) =>
     guarded(async (): Promise<SubmitResult> => {

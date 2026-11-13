@@ -16,7 +16,7 @@ runs the real code with only the model and the job board's HTTP mocked.
 | Tailored resume per job, in the candidate's own file; lines naming a skill, employer, degree or certification not in the resume are dropped | `queues/tailor.ts` | Works |
 | Screening answers: profile → saved answers → resume → model only for judgment questions. CTC, notice, work authorization, relocation, years with a tool the resume doesn't name: never sent to the model; unknown ones pause as Needs your action, answered once, reused | `autoapply/answers.ts` | Works |
 | Channel per application, from what the provider authorizes (`resolveChannel`) | `packages/shared/src/applyPipeline.ts`, `submit/channel.ts` | Works, enforced at preparation and again at every claim |
-| Authorized API submission (Greenhouse, Lever, Ashby, SmartRecruiters) | `apps/worker/src/submit`, `queues/submit.ts` | Built and tested with mocks. **Inactive until an employer grants a key** |
+| Authorized API submission (Greenhouse, Lever, Ashby, SmartRecruiters, Workable) | `apps/worker/src/submit`, `queues/submit.ts` | Built and tested with mocks; per-employer daily cap; provider rate limits shared across workers through Redis. **Inactive until an employer grants a key** (Admin → Employer credentials) |
 | Server-side form filling (`cloud_form`) | `applier.ts`, `browserServer.ts` | Built and tested on stand-in boards. **Off**: needs `AUTO_APPLY_CLOUD_FORM_PROVIDERS` + t3.medium + your approval |
 | Extension (candidate's browser) | `apps/extension` | Works (e2e on stand-in boards) |
 | Assisted Apply (candidate submits, Friday prepares, candidate confirms) | `/bot` page, `/v1/job-bot/assisted`, `channel = assisted` | Works. Production path for LinkedIn, Indeed, Naukri and anything without an automatic route |
@@ -34,7 +34,7 @@ employer (or a partner agreement). None is held today.
 | Lever | Public postings API | Employer's Lever API key (`?key=`); no custom questions via API | Built, mocked tests | 0 | Yes | Extension / Assisted |
 | Ashby | Public job board API | Employer API key with `candidatesWrite` | Built, mocked tests | 0 | Yes | Extension / Assisted |
 | SmartRecruiters | Public postings API | `X-SmartToken` from employer or partner | Built, mocked tests (host/header unconfirmed in docs) | 0 | Yes | Extension / Assisted |
-| Workable | Public widget | Employer token, `w_candidates` | Not built | 0 | Yes | Extension / Assisted |
+| Workable | Public widget | Employer token, `r_jobs` + `w_candidates`; 10 requests / 10 s | Built, mocked tests | 0 | Yes | Extension / Assisted |
 | Teamtailor | RSS | Employer admin API key | Not built | 0 | No | Assisted |
 | Workday | Career-site JSON | No candidate API; per-employer sign-in; site terms bar robots | n/a | n/a | Sign-in | Blocked pending agreement |
 | LinkedIn | None permitted | No candidate-side API exists | n/a | n/a | n/a | Assisted only |
@@ -43,15 +43,15 @@ employer (or a partner agreement). None is held today.
 
 ## 3. Authorization audit: from inventory to applications
 
-Unique, open, India-eligible tech jobs (live counts, 2026-11-13):
+Unique, open, India-eligible tech jobs (live counts, 2026-11-13; eligibility = India, remote India or remote worldwide, as in the daily report):
 
 | | Jobs | Note |
 |---|---|---|
-| 1. Discoverable via public APIs | **5,293** | 3,380 Workday, 602 Greenhouse, 379 SmartRecruiters, 181 Ashby, 119 Workable, 112 Lever, 520 other |
+| 1. Discoverable via public APIs | **5,281** | 3,380 Workday, 1,387 on Greenhouse/SmartRecruiters/Ashby/Workable/Lever, 376 remote boards and aggregators (no submission route), 138 Keka/Zoho/Freshteam |
 | 2. Eligible for the local profile (Backend/Full Stack, Bengaluru) | **494** eligible matches, **94** strong (≥ 80) | Only 20 of the 94 are outside Workday |
-| 3. On providers with a submission API and a built connector | 1,274 | Greenhouse, Lever, Ashby, SmartRecruiters |
+| 3. On providers with a submission API and a built connector | 1,387 | 113 employer boards; top 10 employers hold 728, top 25 hold 999. Some forms carry questions an API can't (Lever custom questions, SmartRecruiters screening): those fall back to the extension |
 | 4. With the employer credential we need | **0** | No employer has granted a key |
-| 5. Requiring the candidate (extension or Assisted) | **5,293** | All of them, today |
+| 5. Requiring the candidate (extension or Assisted) | **5,281** | All of them, today |
 | 6. Confirmed submissions (all time, local) | **3 verified** + 9 the candidate recorded | 5 sent but unconfirmed, 16 waiting for answers, 3 failed; bot: 4 failed |
 
 ## 4. Volume: how close to 2,000 confirmed applications a month
@@ -69,7 +69,7 @@ Realistic estimates for one profile like the local one:
 |---|---|
 | Today: extension + Assisted, candidate present | 50–150, bounded by the candidate's time |
 | + server form filling on Greenhouse/Lever/Ashby/SmartRecruiters/Workable (approval, t3.medium) | +~100 unattended, minus forms with a CAPTCHA (rate unknown until measured from the server) |
-| + employer API credentials | Only for those employers' boards; each agreement adds that board's matching jobs |
+| + employer API credentials | Only for those employers' boards, up to the daily cap each agreed; see [FRIDAY_JOBS_ROLLOUT.md](FRIDAY_JOBS_ROLLOUT.md) |
 
 **2,000 confirmed a month for one profile is not reachable from this inventory.** The limit is
 eligible jobs, not throughput: ~155 new India tech postings a day is ~4,650 a month across *all* roles,
