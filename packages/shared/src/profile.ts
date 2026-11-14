@@ -12,7 +12,7 @@ export type RoundType =
   | 'system_design';
 
 export const ROUND_TYPES: { id: RoundType; label: string; hint: string; softwareOnly?: boolean }[] = [
-  { id: 'general', label: 'General / HR', hint: 'About you, motivation, strengths, salary' },
+  { id: 'general', label: 'General / HR', hint: 'About you, motivation, strengths, plus a few basics of your main skill' },
   { id: 'technical', label: 'Technical / field', hint: 'Questions on the skills, tools and subject knowledge in your resume' },
   { id: 'behavioral', label: 'Behavioral', hint: '"Tell me about a time…" questions' },
   { id: 'case_study', label: 'Case / scenario', hint: '"What would you do if…", case studies' },
@@ -236,4 +236,24 @@ export function renderResumeProfile(p: ResumeProfile) {
     }
   }
   return lines.join('\n');
+}
+
+/**
+ * The skills the interviewer tests in a technical round: the resume's skills list in its own order
+ * (candidates put their main skills first), then the tools named in projects and jobs, without repeats.
+ */
+export function resumeSkills(profile: ResumeProfile | null, max = 30): string[] {
+  if (!profile) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  const add = (name: string | undefined) => {
+    const n = name?.trim();
+    const key = n?.toLowerCase().replace(/[^a-z0-9+#]/g, '');
+    if (!n || !key || n.length > 40 || seen.has(key)) return;
+    seen.add(key);
+    out.push(n);
+  };
+  profile.skills.forEach((s) => add(s.name));
+  profile.projects.forEach((p) => p.tech.forEach(add));
+  return out.slice(0, max);
 }

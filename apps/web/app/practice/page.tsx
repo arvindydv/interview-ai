@@ -25,7 +25,8 @@ import { ScoreTrend } from '@/components/practice/charts';
 
 const errorText = (e: unknown) => (e instanceof ApiError ? e.message : 'Something went wrong. Try again.');
 
-const DEFAULT_SETUP = { interviewId: null, roundType: 'general', difficulty: 'standard', durationMinutes: 10 } as const satisfies PracticeSetup;
+// Technical by default: questions on the skills in the resume, which is what most candidates practise for.
+const DEFAULT_SETUP = { interviewId: null, roundType: 'technical', difficulty: 'standard', durationMinutes: 10 } as const satisfies PracticeSetup;
 
 export default function PracticePage() {
   const email = useRequireSession();
@@ -66,7 +67,7 @@ export default function PracticePage() {
       ({ interviews }) => {
         setInterviews(interviews);
         const active = interviews.find((i) => i.active);
-        setSetup({ ...DEFAULT_SETUP, interviewId: active?.id ?? null, roundType: active?.roundType ?? 'general' });
+        setSetup({ ...DEFAULT_SETUP, interviewId: active?.id ?? null, roundType: active?.roundType ?? DEFAULT_SETUP.roundType });
       },
       () => setSetup({ ...DEFAULT_SETUP }),
     );

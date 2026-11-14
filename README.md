@@ -121,9 +121,12 @@ Code signing (Apple notarisation, Windows certificate) still needs certificates.
 
 - Put a Claude API key in `apps/api/.env` as `ANTHROPIC_API_KEY` (https://console.anthropic.com → API keys) and
   restart `pnpm dev`. Without it, answers are a clearly labelled sample so the UI still works.
-- Models (per the spec, overridable with `LLM_FAST_MODEL` / `LLM_VISION_MODEL`): text questions → **Claude Haiku
-  5.5** (fast tier, low effort), questions with screenshots → **Claude Sonnet 5.5** (vision, adaptive thinking at
-  medium effort, server-side refusal fallback). See `apps/api/src/lib/llm.ts`.
+- Models (overridable with `LLM_FAST_MODEL` / `LLM_VISION_MODEL` or the admin console): text questions → **Claude
+  Haiku 5.5** (cheapest Claude; light adaptive thinking at low effort for accuracy), questions with screenshots → **Claude Sonnet 5.5** (adaptive
+  thinking at medium effort, server-side refusal fallback). A text answer that fails or doesn't start within 6 s
+  is retried once on `LLM_FALLBACK_MODEL` (default: gpt-oss-120b on OpenRouter). See `apps/api/src/lib/llm.ts`.
+- Live transcription uses Deepgram **flux-general-multi** with Hindi + English hints, so Hindi and Hinglish
+  questions are heard and answered in the same language mix.
 - **Screenshot** (button or `Ctrl/⌘ ⇧ ↵`) captures the screen the overlay is on, hiding the overlay for the
   shot, and adds a thumbnail to Chat. Repeat for multi-part problems (up to 6), add an optional note, press
   Enter. Images are downscaled to 1568 px and JPEG-encoded in Rust (`src-tauri/src/screenshot.rs`) and sent with

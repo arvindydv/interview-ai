@@ -166,6 +166,7 @@ async function answerTurn(
       history,
       signal,
       models: { fast: settings.fastModel, vision: settings.visionModel },
+      onFallback: (info) => log.warn({ turnId: msg.turnId, ...info }, 'answer model failed before answering; using the fallback'),
       onDelta: (delta, tier) => send({ type: 'token', turnId: msg.turnId, tier, delta }),
     });
     turn.model = usage.model;
@@ -283,6 +284,8 @@ export default async function liveRoutes(app: FastifyInstance) {
         const record = () =>
           finished
             .then(async (turn) => {
+              // Follow-ups ("why that approach?") are answered consistently with what was suggested.
+              if (turn.status === 'done' && !turn.imageCount) conversation.addAnswer(turn.question, turn.answer);
               turn.liveSessionId = await liveSessionId;
               await recordTurn(turn);
             })
