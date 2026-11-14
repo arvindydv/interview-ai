@@ -23,12 +23,22 @@ const schema = z.object({
   LLM_VISION_MODEL: z.string().optional(),
   /** The practice interviewer's turns. Default: the fastest available (lib/interviewer.ts). */
   LLM_INTERVIEWER_MODEL: z.string().optional(),
+  /**
+   * Live answers: retried once on this model when the main one fails or stalls before its first word.
+   * Default: the other provider's fast model, when its key is set (lib/llm.ts).
+   */
+  LLM_FALLBACK_MODEL: z.string().optional(),
 
   // Live transcription: Deepgram Flux (turn-based streaming STT). Without a key, only typed and
   // screenshot questions work.
   DEEPGRAM_API_KEY: z.string().optional(),
-  /** flux-general-en (English) or flux-general-multi (multilingual). */
-  DEEPGRAM_MODEL: z.string().default('flux-general-en'),
+  /**
+   * flux-general-multi (default: English, Hindi and mixed Hinglish in one stream) or flux-general-en
+   * (English only; Hindi or Hinglish questions come out garbled and go unanswered).
+   */
+  DEEPGRAM_MODEL: z.string().default('flux-general-multi'),
+  /** Languages to expect, comma-separated (flux-general-multi only). Hindi + English covers Hinglish. */
+  DEEPGRAM_LANGUAGE_HINTS: z.string().default('en,hi'),
   // Voice that reads practice questions aloud (Deepgram Aura text-to-speech).
   DEEPGRAM_TTS_MODEL: z.string().default('aura-2-thalia-en'),
   /** Confidence needed to end a turn (0.5–0.9). Higher waits longer before answering. */

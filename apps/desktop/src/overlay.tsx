@@ -1,8 +1,8 @@
-import { StrictMode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { StrictMode, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
+import { currentMonitor, getCurrentWindow, LogicalPosition, LogicalSize } from '@tauri-apps/api/window';
 import {
-  AudioLines, Blend, Camera, ChevronDown, ImagePlus, Loader2, ShieldAlert, ShieldCheck, ChevronLeft, ChevronRight, Copy, Check, EyeOff, Flag, LayoutDashboard, Maximize2,
+  AudioLines, Blend, CircleDot, Camera, ChevronDown, ImagePlus, Loader2, ShieldAlert, ShieldCheck, ChevronLeft, ChevronRight, Copy, Check, EyeOff, Flag, LayoutDashboard, Maximize2,
   MessageSquare, Mic, MicOff, Minimize2, Move, MoreVertical, PanelBottomOpen, Play, Power, SendHorizontal, Sparkles, Square, Volume2, VolumeX, X, Zap,
 } from 'lucide-react';
 import type { ListenState } from '@parakeet/shared';
@@ -21,6 +21,13 @@ import './overlay/overlay.css';
 const isMac = parakeet.platform === 'darwin';
 const MOD = isMac ? '⌘' : 'Ctrl';
 const COLLAPSED_HEIGHT = 64;
+/** The minimised overlay: a round Friday logo. The window is exactly the circle, so nothing around it. */
+const BUBBLE_SIZE = 56;
+/** The overlay's minimum size when it isn't a bubble (matches create_overlay in lib.rs). */
+const MIN_WIDTH = 520;
+const MIN_HEIGHT = 60;
+/** Pointer travel that turns a press on the bubble into a drag instead of a click. */
+const DRAG_THRESHOLD = 4;
 /** Background opacity of the overlay bars, as a user preference (text always stays solid). */
 const OPACITY_KEY = 'parakeet.overlay.opacity';
 const OPACITY_MIN = 0.2;
@@ -309,11 +316,106 @@ function AnswerBody({ answer }: { answer: OverlayAnswer }) {
   );
 }
 
+// ---- bubble (minimised overlay) ---------------------------------------------------------------------
+
+/**
+ * The overlay minimised to a round Friday logo that floats on top. Drag it anywhere; a click (a press
+ * without moving) opens the overlay again. A dot shows the interview is live, and a badge counts the
+ * answers that came in while it was minimised.
+ */
+/** The Friday app icon (the website's favicon): a gradient chat bubble with the F and a sparkle. */
+function FridayIcon({ size }: { size: number }) {
+  const id = useId();
+  return (
+    <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden shapeRendering="geometricPrecision">
+      <defs>
+        <linearGradient id={`${id}g`} x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="#34d399" />
+          <stop offset="0.55" stopColor="#22d3ee" />
+          <stop offset="1" stopColor="#a78bfa" />
+        </linearGradient>
+      </defs>
+      <path
+        d="M9 1.5h14A7.5 7.5 0 0 1 30.5 9v11A7.5 7.5 0 0 1 23 27.5H13.5L7 31.5v-4.6A7.5 7.5 0 0 1 1.5 20V9A7.5 7.5 0 0 1 9 1.5z"
+        fill={`url(#${id}g)`}
+      />
+      <g fill="#04120c">
+        <path d="M8 8.75A2.25 2.25 0 0 1 10.25 6.5h10a2.25 2.25 0 0 1 0 4.5H12.5v2.75H17a2.25 2.25 0 0 1 0 4.5h-4.5v2.5a2.25 2.25 0 0 1-4.5 0z" />
+        <path d="M23 12.6Q23 16 26.4 16Q23 16 23 19.4Q23 16 19.6 16Q23 16 23 12.6z" />
+      </g>
+    </svg>
+  );
+}
+
+function Bubble({ live, unread, onOpen }: { live: boolean; unread: number; onOpen: () => void }) {
+  const press = useRef<{ x: number; y: number; dragging: boolean } | null>(null);
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      const p = press.current;
+      if (!p || p.dragging) return;
+      if (Math.hypot(e.screenX - p.x, e.screenY - p.y) > DRAG_THRESHOLD) {
+        p.dragging = true;
+        // The OS takes over the move from here (and swallows the mouse-up).
+        void appWindow.startDragging();
+      }
+    };
+    const onUp = () => {
+      const p = press.current;
+      press.current = null;
+      if (p && !p.dragging) onOpen();
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, [onOpen]);
+
+  const title = `Friday AI${live ? ' · interview running' : ''}${unread ? ` · ${unread} new answer${unread > 1 ? 's' : ''}` : ''}. Click to open, drag to move.`;
+  // Flat and crisp, like a browser shortcut tile: a solid circle that is the whole window, no shadow,
+  // blur or scaling (in a small transparent window those get clipped at the edges and look smudged).
+  // Everything sits inside the circle, since anything outside the window would be cut off.
+  return (
+    <button
+      onMouseDown={(e) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        press.current = { x: e.screenX, y: e.screenY, dragging: false };
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onOpen();
+        }
+      }}
+      title={title}
+      aria-label={title}
+      className={`relative grid h-screen w-screen cursor-grab place-items-center rounded-full border bg-[#f1f3f4] outline-none select-none hover:bg-[#e8eaed] active:cursor-grabbing ${
+        unread ? 'border-2 border-[#22d3ee]' : 'border-black/[0.06]'
+      }`}
+    >
+      <FridayIcon size={30} />
+      {live && <span className="absolute top-[7px] right-[7px] size-2.5 rounded-full border-2 border-[#f1f3f4] bg-[#ef4444]" aria-hidden />}
+      {unread > 0 && (
+        <span className="absolute right-[3px] bottom-[3px] grid h-4 min-w-4 place-items-center rounded-full bg-[#0e7490] px-1 text-[10px] leading-none font-bold text-white">
+          {unread > 9 ? '9+' : unread}
+        </span>
+      )}
+    </button>
+  );
+}
+
 // ---- overlay -------------------------------------------------------------------------------------------
 
 function Overlay() {
   const { auth, status, audio, listening, answers, index, current, transcript, go, clearAnswers, clearTranscript } = useOverlayState();
   const [collapsed, setCollapsed] = useState(false);
+  /** Minimised to the round logo. */
+  const [bubble, setBubble] = useState(false);
+  /** Where the overlay was before it became a bubble (logical px), to open it there again. */
+  const restore = useRef<{ width: number; height: number; x: number; y: number } | null>(null);
   // The answer block can be closed; the window then shrinks to the bars above it.
   const [panelVisible, setPanelVisible] = useState(true);
   const [chatOpen, setChatOpen] = useState(false);
@@ -430,14 +532,51 @@ function Overlay() {
   // Window height follows what's shown: full (user-resizable), compact (bars only, fitted to content)
   // or collapsed (toolbar only). The overlay is transparent, so leftover empty space would still block
   // clicks to the app underneath; shrinking the window avoids that.
-  const mode = collapsed ? 'collapsed' : panelVisible ? 'full' : 'compact';
+  const mode = bubble ? 'bubble' : collapsed ? 'collapsed' : panelVisible ? 'full' : 'compact';
   const lastMode = useRef(mode);
   useEffect(() => {
     let cancelled = false;
     (async () => {
       const scale = await appWindow.scaleFactor();
-      const size = (await appWindow.innerSize()).toLogical(scale);
+      let size = (await appWindow.innerSize()).toLogical(scale);
       if (lastMode.current === 'full' && mode !== 'full') expandedHeight.current = size.height;
+
+      if (mode === 'bubble') {
+        if (lastMode.current === 'bubble') return;
+        lastMode.current = mode;
+        // Shrink to the logo where the toolbar's right end was, so it stays near the controls used.
+        const pos = (await appWindow.outerPosition()).toLogical(scale);
+        restore.current = { width: size.width, height: size.height, x: pos.x, y: pos.y };
+        await appWindow.setMinSize(new LogicalSize(BUBBLE_SIZE, BUBBLE_SIZE));
+        await appWindow.setSize(new LogicalSize(BUBBLE_SIZE, BUBBLE_SIZE));
+        await appWindow.setPosition(new LogicalPosition(pos.x + size.width - BUBBLE_SIZE, pos.y));
+        return;
+      }
+
+      // Also when the window is still bubble-sized without being a bubble (e.g. the page reloaded).
+      if (lastMode.current === 'bubble' || size.width < MIN_WIDTH) {
+        // Open the overlay again from wherever the bubble was dragged: its right edge lines up with the
+        // bubble's, kept fully on the bubble's screen.
+        lastMode.current = mode;
+        const r = restore.current ?? { width: 960, height: 640, x: 0, y: 0 };
+        const pos = (await appWindow.outerPosition()).toLogical(scale);
+        let x = pos.x + BUBBLE_SIZE - r.width;
+        let y = pos.y;
+        const monitor = await currentMonitor().catch(() => null);
+        if (monitor) {
+          const mPos = monitor.position.toLogical(monitor.scaleFactor);
+          const mSize = monitor.size.toLogical(monitor.scaleFactor);
+          x = Math.min(Math.max(x, mPos.x), mPos.x + mSize.width - r.width);
+          y = Math.min(Math.max(y, mPos.y), mPos.y + mSize.height - Math.min(r.height, mSize.height));
+        }
+        await appWindow.setMinSize(new LogicalSize(MIN_WIDTH, MIN_HEIGHT));
+        await appWindow.setSize(new LogicalSize(r.width, r.height));
+        await appWindow.setPosition(new LogicalPosition(x, y));
+        // Let the bars lay out at the restored width before measuring them below.
+        await new Promise((resolve) => setTimeout(resolve, 60));
+        if (cancelled) return;
+        size = (await appWindow.innerSize()).toLogical(scale);
+      }
       lastMode.current = mode;
       if (cancelled) return;
       // Content is measured in CSS px, the window in logical px. They differ under fractional scaling
@@ -457,9 +596,23 @@ function Overlay() {
     };
   }, [mode, chatOpen, notice, menuOpen, confirmEnd, shots.length > 0]);
 
+  const minimize = useCallback(() => {
+    setMenuOpen(false);
+    setConfirmEnd(false);
+    setBubble(true);
+  }, []);
+  const openFromBubble = useCallback(() => setBubble(false), []);
+
+  // Answers that arrived while minimised, counted on the bubble.
+  const [unread, setUnread] = useState(0);
+  useEffect(() => {
+    if (!bubble) setUnread(0);
+  }, [bubble]);
+
   const toggleCollapsed = useCallback(() => setCollapsed((c) => !c), []);
 
   const openChat = useCallback(() => {
+    setBubble(false);
     setCollapsed(false);
     setChatOpen(true);
     setTimeout(() => chatRef.current?.focus(), 30);
@@ -472,9 +625,11 @@ function Overlay() {
     if (answerCount > seenAnswers.current) {
       setPanelVisible(true);
       setCollapsed(false);
+      // Minimised on purpose: stay a bubble, but show that an answer is waiting.
+      if (bubble) setUnread((n) => n + (answerCount - seenAnswers.current));
     }
     seenAnswers.current = answerCount;
-  }, [answerCount]);
+  }, [answerCount]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // "Answer" answers what the interviewer just said (even mid-sentence). With nothing heard, it
   // falls back to typing the question.
@@ -610,6 +765,8 @@ function Overlay() {
     });
   };
 
+  if (bubble) return <Bubble live={connected} unread={unread} onOpen={openFromBubble} />;
+
   return (
     <div className="flex h-screen flex-col gap-2 p-1.5 text-fg select-none">
       <div ref={stackRef} className="flex shrink-0 flex-col gap-2">
@@ -680,6 +837,9 @@ function Overlay() {
               <PanelBottomOpen size={16} />
             </IconButton>
           )}
+          <IconButton title="Minimise to the Friday logo (drag it anywhere, click to open)" onClick={minimize}>
+            <CircleDot size={16} />
+          </IconButton>
           <IconButton title={collapsed ? 'Expand' : 'Collapse'} onClick={toggleCollapsed}>
             {collapsed ? <Maximize2 size={16} /> : <Minimize2 size={16} />}
           </IconButton>
@@ -733,6 +893,7 @@ function Overlay() {
                 </button>
                 {[
                   { icon: LayoutDashboard, label: 'Open Friday AI', run: () => parakeet.app.showMain() },
+                  { icon: CircleDot, label: 'Minimise to logo', run: minimize },
                   { icon: EyeOff, label: 'Hide overlay', keys: [MOD, '\\'], run: () => parakeet.overlay.toggle() },
                   { icon: X, label: 'End interview', run: () => setConfirmEnd(true) },
                 { icon: Power, label: 'Quit Friday AI', run: () => parakeet.app.quit() },

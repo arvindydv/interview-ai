@@ -21,6 +21,9 @@ use crate::{
     config,
 };
 
+
+/// No message from the server for this long (it pongs every 5 s heartbeat) means the link is dead.
+const DEAD_AFTER: Duration = Duration::from_secs(20);
 #[derive(Clone, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct LiveStatus {
@@ -387,13 +390,20 @@ impl Live {
 
         let started = Instant::now();
         let mut heartbeat = tokio::time::interval(Duration::from_secs(5));
+        // The server answers every ping. Silence for this long means the connection is dead even if
+        // the socket still looks open (Wi-Fi switch, laptop sleep, a proxy dropping it): reconnect
+        // instead of sitting "connected" while no question gets answered.
+        let mut last_heard = Instant::now();
         loop {
             tokio::select! {
                 incoming = read.next() => match incoming {
-                    Some(Ok(Message::Text(text))) => self.on_message(app, text.as_str(), started),
+                    Some(Ok(Message::Text(text))) => {
+                        last_heard = Instant::now();
+                        self.on_message(app, text.as_str(), started)
+                    }
                     Some(Ok(Message::Close(_))) | None => return Err("Connection closed".into()),
                     Some(Err(e)) => return Err(e.to_string()),
-                    Some(Ok(_)) => {}
+                    Some(Ok(_)) => last_heard = Instant::now(),
                 },
                 Some(out) = rx.recv() => {
                     let msg = match out {
@@ -403,6 +413,9 @@ impl Live {
                     write.send(msg).await.map_err(|e| e.to_string())?;
                 }
                 _ = heartbeat.tick() => {
+                    if last_heard.elapsed() > DEAD_AFTER {
+                        return Err("No reply from the server; reconnecting".into());
+                    }
                     let t = started.elapsed().as_millis() as u64;
                     let ping = json!({ "type": "ping", "t": t }).to_string();
                     write.send(Message::text(ping)).await.map_err(|e| e.to_string())?;

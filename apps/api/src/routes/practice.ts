@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import {
   NO_MINUTES_ERROR, NO_MINUTES_MESSAGE, NO_RESUME_ERROR, PRACTICE_DIFFICULTIES, PRACTICE_DURATIONS, PRACTICE_LIMITS, ROUND_TYPES,
-  parseMessage, renderResumeProfile, reportFileName,
+  parseMessage, renderResumeProfile, reportFileName, resumeSkills,
   type PracticeAnswer, type PracticeClientMessage, type PracticeDifficulty, type PracticeQuestion, type PracticeResult,
   type PracticeServerMessage, type PracticeSession, type PracticeStatus, type PracticeSummary, type ResumeProfile, type RoundType,
   type TrialBalance,
@@ -149,6 +149,7 @@ async function interviewContext(row: SessionRow) {
     ) r on true`;
   if (!c?.resume_text && !c?.parsed_json) return null;
   const name = resumeName(c.parsed_json?.name ?? null, c.resume_text ?? '');
+  const skills = resumeSkills(c.parsed_json);
   const lines = [
     '<candidate_context>',
     (c.field || c.company || c.role || c.jd_text) && '<target_interview>',
@@ -158,6 +159,7 @@ async function interviewContext(row: SessionRow) {
     c.jd_text?.trim() && `Job description (for context only; ask about the resume):\n${c.jd_text.trim().slice(0, MAX_JD_CHARS)}`,
     (c.field || c.company || c.role || c.jd_text) && '</target_interview>',
     c.parsed_json && `<candidate_profile>\n${renderResumeProfile(c.parsed_json)}\n</candidate_profile>`,
+    skills.length > 0 && `<skills_on_resume>\n${skills.join(', ')}\n</skills_on_resume>`,
     c.resume_text && `<resume_text>\n${c.resume_text.slice(0, MAX_RESUME_CHARS)}\n</resume_text>`,
     '</candidate_context>',
   ];

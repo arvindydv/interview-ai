@@ -14,6 +14,8 @@ const normalize = (text: string) => text.toLowerCase().replace(/[^\p{L}\p{N}]+/g
 /** Recent finished turns, passed with each question so follow-ups ("why?", "go deeper") make sense. */
 export class Conversation {
   private lines: { source: AudioSource; text: string }[] = [];
+  /** The last answers suggested to the candidate, so a follow-up stays consistent with them. */
+  private answers: { question: string; answer: string }[] = [];
 
   /** `onLine`: every finished line, for the session's saved transcript (this keeps only the recent ones). */
   constructor(private readonly onLine?: (source: AudioSource, text: string) => void) {}
@@ -22,14 +24,33 @@ export class Conversation {
     this.onLine?.(source, text);
     this.lines.push({ source, text });
     // Keep the last few minutes: enough for follow-ups, small enough not to slow the answer down.
-    while (this.lines.length > 16 || this.lines.reduce((n, l) => n + l.text.length, 0) > 6000) this.lines.shift();
+    while (this.lines.length > 24 || this.lines.reduce((n, l) => n + l.text.length, 0) > 8000) this.lines.shift();
   }
 
-  /** The transcript, minus a trailing line that is the question being asked (it's sent on its own). */
+  /** Records a finished answer (trimmed: the gist is enough to keep follow-ups consistent). */
+  addAnswer(question: string, answer: string) {
+    const a = answer.trim();
+    if (!a) return;
+    this.answers.push({ question: question.slice(0, 400), answer: a.length > 900 ? `${a.slice(0, 900)}…` : a });
+    if (this.answers.length > 2) this.answers.shift();
+  }
+
+  /**
+   * The transcript, minus the trailing interviewer lines that make up the question being asked (it's
+   * sent on its own), followed by the answers suggested most recently.
+   */
   render(question?: string) {
     const lines = [...this.lines];
-    if (question && lines.length && normalize(lines[lines.length - 1].text) === normalize(question)) lines.pop();
-    return lines.map((l) => `${l.source === 'interviewer' ? 'Interviewer' : 'Candidate'}: ${l.text}`).join('\n');
+    const q = question ? normalize(question) : '';
+    while (q && lines.length && lines[lines.length - 1].source === 'interviewer' && q.includes(normalize(lines[lines.length - 1].text))) {
+      lines.pop();
+    }
+    const transcript = lines.map((l) => `${l.source === 'interviewer' ? 'Interviewer' : 'Candidate'}: ${l.text}`).join('\n');
+    const answers = this.answers
+      .filter((a) => normalize(a.question) !== q)
+      .map((a) => `Question: ${a.question}\nSuggested answer: ${a.answer}`)
+      .join('\n\n');
+    return [transcript, answers && `<answers_suggested_earlier>\n${answers}\n</answers_suggested_earlier>`].filter(Boolean).join('\n\n');
   }
 }
 
@@ -52,6 +73,12 @@ const LEAD_INS = new Set(
 const REQUEST_PHRASES =
   /\b(?:i'?d|i would)\s+(?:like|love)\b|\bi (?:want|wanted) to (?:know|hear|understand|see|learn)\b|\b(?:i'm|i am) (?:curious|interested)\b|\bin your (?:opinion|view|experience)\b|\b(?:next|first|last|final|another|my) question\b/;
 
+// Hinglish / Hindi questions, in Roman script ("event loop kya hai", "ye kaise kaam karta hai",
+// "apne project ke baare mein batao") and in Devanagari (what speech-to-text writes for Hindi words).
+// Hindi puts the question word anywhere in the sentence, so these are matched anywhere.
+const HINDI_QUESTION =
+  /\b(?:kya|kyaa|kyu|kyun|kyon|kyoon|kaise|kaisa|kaisi|kaun|kaunsa|kaunsi|kab|kahan|kahaan|kitna|kitne|kitni|kidhar|batao|bataiye|bataye|batayein|bataoge|bataenge|samjhao|samjhaiye|samjhaye|samjha|explain\s+karo|explain\s+kariye|explain\s+kijiye|bolo|boliye|suniye\s+ki)\b|\b(?:kar|ho|de|bata|samjha|dikha)\s+(?:sakte|sakti|sakoge|paoge|payenge)\b|क्या|क्यों|क्यूं|कैसे|कैसा|कौन|कब|कहाँ|कहां|कितना|कितने|बताओ|बताइए|बताइये|बताएं|बताएँ|समझाओ|समझाइए|सकते|सकती/i;
+
 /**
  * Whether an interviewer turn is worth answering: a question or a request, not "thanks, that's great".
  * Missed ones are one key press away (Answer), so this errs towards fewer, better triggers.
@@ -59,7 +86,8 @@ const REQUEST_PHRASES =
 export function isQuestion(text: string) {
   const words = text.trim().split(/\s+/).filter(Boolean);
   if (words.length < 3) return false;
-  if (text.includes('?')) return true;
+  if (/[?？]/.test(text)) return true;
+  if (HINDI_QUESTION.test(text)) return true;
   if (REQUEST_PHRASES.test(text.toLowerCase().replace(/[’‘]/g, "'"))) return true;
   return text.split(/[.!;:,]+/).some((clause) => {
     const w = clause.toLowerCase().replace(/[^a-z' ]/g, ' ').split(/\s+/).filter(Boolean);
@@ -67,6 +95,44 @@ export function isQuestion(text: string) {
     while (i < w.length - 1 && LEAD_INS.has(w[i])) i++;
     return i < w.length && CUES.has(w[i]);
   });
+}
+
+/**
+ * Interviewer lines heard since the candidate last spoke, so a question asked in parts ("So you have
+ * an e-commerce app with a million users." … "Now the payment service goes down." … "What would you
+ * do?") is answered as one scenario, and a follow-up added straight after a question ("…and how
+ * would you test it?") is answered together with it.
+ */
+export class QuestionBuffer {
+  private lines: { text: string; at: number }[] = [];
+
+  /** A pause longer than this between interviewer lines starts a new question. */
+  static readonly GAP_MS = 20_000;
+  static readonly MAX_LINES = 5;
+  static readonly MAX_CHARS = 2000;
+
+  /** The question to answer: the recent setup lines plus this one (without recording it). */
+  compose(text: string, now = Date.now()) {
+    const recent = this.recent(now);
+    let parts = [...recent.map((l) => l.text), text];
+    while (parts.length > 1 && parts.join(' ').length > QuestionBuffer.MAX_CHARS) parts = parts.slice(1);
+    return parts.join(' ');
+  }
+
+  /** Records a finished interviewer line. */
+  push(text: string, now = Date.now()) {
+    this.lines = [...this.recent(now), { text, at: now }].slice(-QuestionBuffer.MAX_LINES);
+  }
+
+  /** The candidate spoke: whatever the interviewer says next is a new question. */
+  reset() {
+    this.lines = [];
+  }
+
+  private recent(now: number) {
+    const last = this.lines[this.lines.length - 1];
+    return last && now - last.at <= QuestionBuffer.GAP_MS ? this.lines : [];
+  }
 }
 
 export interface AnswerHandle {
@@ -91,6 +157,7 @@ export class Listener {
   private error: string | undefined;
   private autoAnswer = true;
   private speculative: { id: string; text: string; handle: AnswerHandle } | null = null;
+  private question = new QuestionBuffer();
   private queue = Promise.resolve();
   private closed = false;
 
@@ -153,7 +220,13 @@ export class Listener {
     switch (turn.event) {
       case 'EndOfTurn':
         if (text) this.deps.send({ type: 'transcript', id, source, text, final: true });
-        if (interviewer) this.endOfQuestion(id, text);
+        if (interviewer) {
+          this.endOfQuestion(id, text);
+          if (text) this.question.push(text);
+        } else if (text.split(/\s+/).length >= 4) {
+          // The candidate answered: the interviewer's next words start a new question.
+          this.question.reset();
+        }
         if (text) this.deps.conversation.add(source, text);
         return;
       case 'EagerEndOfTurn':
@@ -161,7 +234,8 @@ export class Listener {
         if (interviewer && this.autoAnswer && isQuestion(text)) {
           this.deps.log.debug({ id }, 'eager end of question: answering speculatively');
           this.dropSpeculative();
-          this.speculative = { id, text, handle: this.deps.answer(text, true) };
+          const question = this.question.compose(text);
+          this.speculative = { id, text: question, handle: this.deps.answer(question, true) };
         }
         return;
       case 'TurnResumed':
@@ -175,13 +249,16 @@ export class Listener {
   private endOfQuestion(id: string, text: string) {
     const spec = this.speculative;
     this.speculative = null;
-    if (spec && spec.id === id && normalize(spec.text) === normalize(text)) {
+    const asked = text && isQuestion(text);
+    // The question with the setup the interviewer gave just before it (scenario questions).
+    const question = text ? this.question.compose(text) : '';
+    if (spec && spec.id === id && normalize(spec.text) === normalize(question)) {
       this.deps.log.debug({ id }, 'question confirmed: showing the speculative answer');
       return spec.handle.release();
     }
-    if (spec) this.deps.log.debug({ id, eager: spec.text, final: text }, 'question changed: restarting the answer');
+    if (spec) this.deps.log.debug({ id, eager: spec.text, final: question }, 'question changed: restarting the answer');
     spec?.handle.cancel();
-    if (this.autoAnswer && text && isQuestion(text)) this.deps.answer(text, false);
+    if (this.autoAnswer && asked) this.deps.answer(question, false);
   }
 
   private dropSpeculative() {

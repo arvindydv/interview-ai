@@ -30,6 +30,12 @@ interface FluxOptions {
   log: { info: (o: object, m: string) => void; warn: (o: object, m: string) => void };
 }
 
+/**
+ * Flux sends a turn update about every 240 ms, even in silence; this long with nothing back, while audio is flowing,
+ * means the stream is stuck rather than the room being quiet.
+ */
+const STALL_MS = 15_000;
+
 /** One Flux stream (one audio source). Reconnects with backoff until closed. */
 export class FluxStream {
   private ws: WebSocket | null = null;
@@ -37,11 +43,30 @@ export class FluxStream {
   private attempts = 0;
   private epoch = 0;
   private retry: NodeJS.Timeout | null = null;
+  private watchdog: NodeJS.Timeout | null = null;
+  /** When Deepgram last sent anything, and when we last sent it audio. */
+  private lastHeard = 0;
+  private lastSent = 0;
 
   constructor(private readonly opts: FluxOptions) {}
 
   start() {
     this.connect();
+    // A stream can go quiet without closing (a half-open connection after a network blip). Audio
+    // keeps flowing in but no turns come back, so questions stop being heard: in a long interview
+    // this looks like the app hanging. If Deepgram has said nothing for a while although audio is
+    // being sent, drop the socket; the close handler reconnects at once.
+    this.watchdog = setInterval(() => {
+      const ws = this.ws;
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      const now = Date.now();
+      if (now - this.lastSent < 5_000 && now - this.lastHeard > STALL_MS) {
+        this.opts.log.warn({ silentMs: now - this.lastHeard }, 'Deepgram stream stalled; reconnecting');
+        this.attempts = 0;
+        ws.terminate();
+      }
+    }, 5_000);
+    this.watchdog.unref();
     return this;
   }
 
@@ -55,6 +80,13 @@ export class FluxStream {
       eot_timeout_ms: String(this.opts.eotTimeoutMs ?? env.DEEPGRAM_EOT_TIMEOUT_MS),
     });
     for (const term of this.opts.keyterms ?? []) params.append('keyterm', term);
+    // Hindi + English hints let one stream follow Hinglish, switching language mid-sentence.
+    // Only the multilingual model accepts them (others answer 400).
+    if (env.DEEPGRAM_MODEL.includes('multi')) {
+      for (const lang of env.DEEPGRAM_LANGUAGE_HINTS.split(',').map((l) => l.trim()).filter(Boolean)) {
+        params.append('language_hint', lang);
+      }
+    }
     return `wss://api.deepgram.com/v2/listen?${params}`;
   }
 
@@ -67,9 +99,11 @@ export class FluxStream {
     ws.on('open', () => {
       this.attempts = 0;
       this.epoch += 1;
+      this.lastHeard = Date.now();
       this.opts.onState('up');
     });
     ws.on('message', (data, isBinary) => {
+      this.lastHeard = Date.now();
       if (isBinary) return;
       let msg: { type?: string; code?: string; description?: string } & Partial<TurnInfo>;
       try {
@@ -112,12 +146,16 @@ export class FluxStream {
 
   /** Raw PCM in AUDIO_FORMAT. Dropped while (re)connecting: late audio is useless for live answers. */
   send(pcm: Buffer) {
-    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(pcm);
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(pcm);
+      this.lastSent = Date.now();
+    }
   }
 
   close() {
     this.closed = true;
     if (this.retry) clearTimeout(this.retry);
+    if (this.watchdog) clearInterval(this.watchdog);
     const ws = this.ws;
     this.ws = null;
     if (!ws) return;

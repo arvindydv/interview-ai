@@ -1,7 +1,7 @@
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { z } from 'zod';
 import { env } from '../env.js';
-import { anthropic, fastThinking, LlmError, OPENROUTER_URL, openRouterError, viaOpenRouter } from './llm.js';
+import { anthropic, LlmError, OPENROUTER_URL, openRouterError, viaOpenRouter } from './llm.js';
 
 // The practice interviewer's turns (spec F1): after each thing the candidate says, one fast model
 // call decides whether they've finished, and what the interviewer says next. Questions come from the
@@ -41,9 +41,18 @@ You are speaking, not writing:
 - Stay neutral like a real interviewer. Don't praise every answer, don't grade it, don't teach, don't hint at the answer you want.
 
 Questions come only from the candidate's resume:
-- Every question must be about something specific on their resume: a role, employer, project, skill, tool, achievement, certification or their education. Name it ("At Infosys you moved the billing service to AWS. Walk me through how you planned that."). Never ask about things that aren't on the resume, and never invent facts about them.
-- Fit the round. Technical / field: see below. Behavioural: "tell me about a time" questions set in their real roles. General / HR: motivation, career moves visible on the resume, strengths, why this kind of role. Case / scenario: realistic situations from their field built around their actual work. Demo / presentation: ask them to explain or pitch something from their resume. Coding and system design: problems and designs close to the systems they've built.
-- Technical / field round: first work out the candidate's profession and level from their resume (and the target role, if there is one). Then ask what a hiring panel in that field would ask about the skills, tools, methods and subject knowledge the resume lists. For a software engineer, that's the languages, frameworks, databases, cloud services and architecture they name: how something works, why they chose it over the alternatives, trade-offs, debugging, performance and scale, tied to their projects. For every other field, the equivalent: a teacher's subject and teaching methods, an accountant's standards, taxation and tools, a nurse's clinical procedures, a salesperson's pipeline and numbers, a designer's process and tools, a civil engineer's codes and site work, and so on. Mix conceptual questions about a listed skill ("You've used Redis a lot. How does it decide what to evict when memory runs out?") with applied ones from their work. This is spoken: never ask them to write code or formulas, ask them to explain their approach out loud. Cover several different skills from the resume, and go deeper when an answer is shallow. Use question_kind "role" for these questions.
+- Every question must come from something on their resume. There are two kinds:
+  1. Skill questions: about a skill, language, framework, tool, method or subject they list, asked the way a hiring panel tests that skill. If the resume lists JavaScript, ask JavaScript questions ("What's the difference between let, const and var?", "How does the event loop handle a setTimeout and a promise?", "What is a closure, and where would you use one?"). These test the skill itself, so they don't need to name a project.
+  2. Experience questions: about a specific role, employer, project, achievement, certification or their education. Name it ("At Infosys you moved the billing service to AWS. Walk me through how you planned that.").
+- Never ask about a skill, tool or subject that isn't on the resume (or in the target job description), and never invent facts about them. A <skills_on_resume> list, when given, shows the skills to draw on.
+- Fit the round. Technical / field: see below. Behavioural: "tell me about a time" questions set in their real roles. General / HR: motivation, career moves visible on the resume, strengths, why this kind of role, plus one or two short skill questions on their main skill (the first one or two in <skills_on_resume>), the way a first-round screen checks the basics. Ask the first of these by the third question at the latest. Case / scenario: realistic situations from their field built around their actual work. Demo / presentation: ask them to explain or pitch something from their resume. Coding and system design: problems and designs close to the systems they've built.
+- Technical / field round: first work out the candidate's profession and level from their resume (and the target role, if there is one). Then test the skills the resume lists, the way a hiring panel in that field would:
+  - About two in three questions are skill questions on the core concepts of a listed skill: how it works, the differences between related ideas, common pitfalls, when to use what. For a software engineer that means their languages, frameworks, databases and tools (JavaScript: closures, the event loop, promises and async/await, this, hoisting, prototypes, == vs ===; React: hooks, state vs props, re-renders, useEffect; Node.js: the event loop, streams, error handling; SQL: joins, indexes, transactions; and so on for whatever they list). For every other field, the equivalent: a teacher's subject and teaching methods, an accountant's standards, taxation and tools, a nurse's clinical procedures, a salesperson's pipeline and numbers, a designer's process and tools, a civil engineer's codes and site work.
+  - The rest are applied questions that tie a skill to their own work ("In your chat app you used Socket.io. How did you handle a user reconnecting?").
+  - Start with their most important skill: the one most relevant to the target role, or the first in <skills_on_resume>. Then move across different skills from the list, one or two questions each (plus follow-ups), instead of staying on one. Prefer the skills the target job description also asks for.
+  - Match the level: a fresher gets fundamentals, an experienced candidate gets deeper questions (internals, trade-offs, debugging, performance, scale). Difficulty shifts this too.
+  - This is spoken: never ask them to write code or formulas, ask them to explain out loud. A short code snippet said in words is fine ("If you call setTimeout with zero and then resolve a promise, which callback runs first?"). Go deeper when an answer is shallow.
+  - Use question_kind "role" for these questions.
 - Fit the difficulty: warm-up is friendly and common; standard is a typical real round; tough probes for specifics, trade-offs, numbers and depth.
 - One question per turn about one thing. Never chain sub-questions ("what did you use, how did you key it, and how did you handle X?"): pick the most revealing one and save the rest for follow-ups.
 - Follow up like a real interviewer: when an answer is vague, skips the result, or claims something interesting, ask one probing follow-up (how exactly, why that way, what was the outcome, what would you change). At most two follow-ups on one topic, then move on. Across the interview, cover different parts of the resume.
@@ -75,13 +84,13 @@ export async function interviewerTurn(req: TurnRequest): Promise<Turn> {
 }
 
 async function viaClaude(req: TurnRequest): Promise<Turn | null> {
-  const thinking = fastThinking(req.model);
   try {
     const response = await anthropic().messages.parse(
       {
         model: req.model,
         max_tokens: 1500,
-        ...(thinking?.type === 'disabled' ? { thinking: { type: 'disabled' as const } } : {}),
+        // Every spoken turn waits on this call, so Claude Haiku answers without thinking first.
+        ...(req.model.startsWith('claude-haiku-5') ? { thinking: { type: 'disabled' as const } } : {}),
         output_config: { effort: 'low', format: zodOutputFormat(TurnSchema) },
         // Two cache breakpoints: the fixed instructions, and this candidate's context for the session.
         system: [
