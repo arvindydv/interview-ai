@@ -1,6 +1,6 @@
 [package]
 name = "friday"
-version = "0.1.6"
+version = "0.1.7"
 description = "Friday AI: Real-Time AI Interview Assistant"
 authors = ["Friday AI"]
 license = ""
