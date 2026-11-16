@@ -1,11 +1,11 @@
 import { env } from '../env.js';
 
-// Opens (or keeps open) the connections the practice interviewer needs, so a turn after a long answer
-// doesn't start with a TLS handshake. Small authenticated requests; failures don't matter.
+// Opens (or keeps open) the connections the practice interviewer and live answers need, so a turn
+// after a long pause doesn't start with a TLS handshake. Small authenticated requests; failures don't matter.
 
-export function warmConnections() {
+export function warmConnections({ deepgram = true }: { deepgram?: boolean } = {}) {
   const quiet = { signal: AbortSignal.timeout(10_000) };
-  if (env.DEEPGRAM_API_KEY) {
+  if (deepgram && env.DEEPGRAM_API_KEY) {
     void fetch('https://api.deepgram.com/v1/projects', { ...quiet, headers: { authorization: `Token ${env.DEEPGRAM_API_KEY}` } })
       .then((r) => r.arrayBuffer())
       .catch(() => {});
