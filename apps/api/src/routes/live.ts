@@ -12,6 +12,7 @@ import { publishLive } from '../lib/liveEvents.js';
 import { trackConnection } from '../lib/liveRegistry.js';
 import { LlmError, llmConfigured, streamAnswer, warmAnswerCache } from '../lib/llm.js';
 import { getSettings } from '../lib/settings.js';
+import { warmConnections } from '../lib/warm.js';
 import { sttConfigured } from '../lib/stt.js';
 import { SessionMeter, TRIAL_ENDED_MESSAGE } from '../lib/trial.js';
 
@@ -255,6 +256,7 @@ export default async function liveRoutes(app: FastifyInstance) {
       // Pre-warm the fast tier's prompt cache with this user's context, so the first question of
       // the interview starts from a cache hit and an open connection.
       let lastAnswerAt = 0;
+      let lastConnectionWarm = 0;
       const warm = () => {
         lastAnswerAt = Date.now();
         void Promise.all([loadInterviewContext(req.user.id), getSettings()])
@@ -316,6 +318,14 @@ export default async function liveRoutes(app: FastifyInstance) {
         conversation,
         log: req.log,
         answer: (text, hold) => startAnswer({ type: 'ask', turnId: randomUUID(), text }, { announce: true, hold }),
+        // Questions often come minutes apart, long after idle HTTPS connections close. Reopening the
+        // connection to the AI provider while the interviewer is still talking saves the handshake
+        // (~0.7 s) on the answer.
+        onInterviewerSpeech: () => {
+          if (Date.now() - lastConnectionWarm < 15_000) return;
+          lastConnectionWarm = Date.now();
+          warmConnections({ deepgram: false });
+        },
         keyterms: async () => {
           const ctx = await loadInterviewContext(req.user.id);
           return [ctx?.company, ctx?.role].filter((t): t is string => Boolean(t && t.length <= 60));

@@ -148,6 +148,8 @@ interface ListenerDeps {
   answer: (text: string, hold: boolean) => AnswerHandle;
   /** Terms to boost in recognition (company, role). */
   keyterms: () => Promise<string[]>;
+  /** The interviewer started speaking: a question may be coming, so get the answer path ready. */
+  onInterviewerSpeech?: () => void;
   log: { debug: (o: object, m: string) => void; info: (o: object, m: string) => void; warn: (o: object, m: string) => void };
 }
 
@@ -218,6 +220,9 @@ export class Listener {
     const text = turn.transcript.trim();
     const interviewer = source === 'interviewer';
     switch (turn.event) {
+      case 'StartOfTurn':
+        if (interviewer) this.deps.onInterviewerSpeech?.();
+        break;
       case 'EndOfTurn':
         if (text) this.deps.send({ type: 'transcript', id, source, text, final: true });
         if (interviewer) {

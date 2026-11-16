@@ -157,11 +157,12 @@ export function llmConfigured() {
 
 // Defaults when neither LLM_FAST_MODEL/LLM_VISION_MODEL nor the admin console picks a model.
 // Text questions: Claude Haiku 5.5 with a little thinking (effort low). It is the cheapest Claude
-// ($0.10 / $0.50 per million tokens, about 20x cheaper than Sonnet) and, measured on live interview
-// questions, starts streaming in about 2–3 s, gets code-order and technical details right, follows the
-// answer formats, handles scenario and follow-up questions and answers Hinglish in Hinglish. With
-// thinking fully off it got code-order questions wrong, so it keeps a little. Claude Sonnet 5.5 is a
-// step up in depth for about 20x the price (set it in the admin console). Screenshots go to Sonnet.
+// ($0.10 / $0.50 per million tokens, about 20x cheaper than Sonnet), follows the answer formats,
+// handles scenario and follow-up questions, answers Hinglish in Hinglish and doesn't invent
+// experience. Faster models measured (Gemini 3.5 Flash Lite, Qwen 3.7 Flash, gpt-oss-120b) start at
+// best ~0.3 s sooner but answered Hinglish in English or made up incidents. Haiku thinks only for
+// code-tracing questions (see needsThinking), otherwise it starts in about 1.1–1.5 s. Claude Sonnet
+// 5.5 is a step up in depth for about 20x the price (set it in the admin console). Screenshots go to Sonnet.
 const DEFAULT_MODELS = {
   anthropic: { fast: 'claude-haiku-5-5', vision: 'claude-sonnet-5-5' },
   openrouter: { fast: 'anthropic/claude-haiku-5.5', vision: 'anthropic/claude-sonnet-5.5' },
@@ -182,6 +183,36 @@ export function resolveModels(overrides?: { fast?: string; vision?: string }) {
 export const viaOpenRouter = (model: string) => model.includes('/');
 
 /**
+ * OpenRouter serves Claude from several providers. Anthropic's own is pinned first so the prompt
+ * cache (instructions + resume, ~6k tokens) is hit on every question instead of being split across
+ * providers; Claude on AWS is the backup. A "@provider" suffix on a model id pins that provider
+ * instead, e.g. "anthropic/claude-haiku-5.5@claude-on-aws" (used for the hedged second request).
+ */
+const CLAUDE_PROVIDERS = ['anthropic', 'claude-on-aws'];
+function openRouterRoute(model: string) {
+  const [id, pinned] = model.split('@');
+  const provider = pinned
+    ? { order: [pinned], allow_fallbacks: true }
+    : id.startsWith('anthropic/')
+      ? { order: CLAUDE_PROVIDERS, allow_fallbacks: true }
+      : id.includes(':')
+        ? undefined // ":nitro"/":floor" already picks the provider
+        : { sort: 'latency' };
+  return { id, ...(provider ? { provider } : {}) };
+}
+
+/**
+ * Whether a question is worth a moment of thinking before the first word. Thinking adds about
+ * 0.5 s (and the occasional multi-second spike) to every answer, but without it Claude Haiku got
+ * "what does this code print / in what order does it run" questions wrong. So only questions that
+ * trace code or work something out get it; everything else starts answering straight away.
+ */
+export function needsThinking(question: string) {
+  return /\b(print(s|ed)?|output(s)?|logs?|logged|console\.log|in (what|which) order|order of execution|runs? first|executes? first|what (will|would|does) (this|the|it) (code|function|query|snippet)|returns?\b.*\?|dry run|trace|evaluate|calculate|compute|how many|time complexity|space complexity|big ?o)\b|```|=>|\w\([^)]*\)\s*[;{.]/i.test(
+    question,
+  );
+}
+/**
  * The model a live text answer is retried on when the main one fails or stalls before its first
  * word: LLM_FALLBACK_MODEL, else a model from the other provider (or OpenRouter's other fast model),
  * as long as its key is set. Null when there is nothing different to try.
@@ -190,20 +221,29 @@ export function fallbackModel(primary: string): string | null {
   const pick = (m: string | null) => (m && m !== primary ? m : null);
   if (env.LLM_FALLBACK_MODEL) return pick(env.LLM_FALLBACK_MODEL);
   if (!viaOpenRouter(primary)) {
-    if (env.OPENROUTER_API_KEY) return OPENROUTER_SPEED_MODEL;
+    // The same model through OpenRouter: other servers, same answers.
+    if (env.OPENROUTER_API_KEY) {
+      if (primary.startsWith('claude-haiku')) return DEFAULT_MODELS.openrouter.fast;
+      if (primary.startsWith('claude-sonnet')) return DEFAULT_MODELS.openrouter.vision;
+      return OPENROUTER_SPEED_MODEL;
+    }
     return pick(primary.startsWith('claude-haiku') ? 'claude-sonnet-5-5' : 'claude-haiku-5-5');
   }
+  // Claude through OpenRouter: the same model on another provider, so a slow or failing provider
+  // doesn't mean a weaker answer.
+  if (primary.startsWith('anthropic/') && !primary.includes('@')) return `${primary}@${CLAUDE_PROVIDERS[1]}`;
   if (anthropicConfigured()) return pick(DEFAULT_MODELS.anthropic.fast);
   return pick(primary.startsWith('openai/gpt-oss') ? DEFAULT_MODELS.openrouter.fast : OPENROUTER_SPEED_MODEL);
 }
 
 /**
- * A text answer whose first word hasn't arrived by then (usually 1.5–4.5 s, longer when the model
- * thinks a little more, e.g. for Hinglish) is probably stuck in a provider queue: the fallback starts alongside it and whichever starts answering first is shown.
+ * A text answer whose first word hasn't arrived by then (usually 1.1–1.5 s; providers spike to
+ * 3–5 s now and then) is probably stuck in that provider's queue: the fallback starts alongside it
+ * and whichever starts answering first is shown. Questions that think first get longer.
  */
-const HEDGE_AFTER_MS = 5_500;
+const HEDGE_AFTER_MS = { quick: 2_200, thinking: 4_500 };
 /** No first word by then: give up on that request. Screenshots think first, so they get much longer. */
-const FIRST_TOKEN_TIMEOUT_MS = { fast: 10_000, deep: 45_000 };
+const FIRST_TOKEN_TIMEOUT_MS = { fast: 8_000, deep: 45_000 };
 /** A stream that stops mid-answer for this long is treated as dropped. */
 const STALL_TIMEOUT_MS = 20_000;
 
@@ -244,9 +284,10 @@ export async function streamAnswer(req: AnswerRequest): Promise<Usage & { model:
     ? `<recent_conversation>\n${req.history}\n</recent_conversation>\n\nThe question to answer now:\n${question}`
     : question;
   const tier = vision ? ('deep' as const) : ('fast' as const);
+  const think = vision || needsThinking(question);
   // The fallback models can't read screenshots, so those get one attempt.
   const fallback = vision ? null : fallbackModel(model);
-  if (!fallback) return streamWithTimeouts({ ...req, text, model, tier });
+  if (!fallback) return streamWithTimeouts({ ...req, text, model, tier, think });
 
   // Hedged request: the main model runs alone, unless it fails before its first word (then the
   // fallback takes over) or is still silent after HEDGE_AFTER_MS (then the fallback starts too).
@@ -257,7 +298,7 @@ export async function streamAnswer(req: AnswerRequest): Promise<Usage & { model:
     const ctrl = new AbortController();
     ctrls.set(m, ctrl);
     return streamWithTimeouts({
-      ...req, text, model: m, tier,
+      ...req, text, model: m, tier, think,
       signal: AbortSignal.any([req.signal, ctrl.signal]),
       onDelta: (delta, t) => {
         if (!winner) {
@@ -275,7 +316,8 @@ export async function streamAnswer(req: AnswerRequest): Promise<Usage & { model:
 
   const main = settle(start(model), model);
   let hedge: NodeJS.Timeout | undefined;
-  const slow = new Promise<'slow'>((resolve) => (hedge = setTimeout(() => resolve('slow'), HEDGE_AFTER_MS)));
+  const hedgeAfter = think ? HEDGE_AFTER_MS.thinking : HEDGE_AFTER_MS.quick;
+  const slow = new Promise<'slow'>((resolve) => (hedge = setTimeout(() => resolve('slow'), hedgeAfter)));
   try {
     const first = await Promise.race([main, slow]);
     if (first !== 'slow') {
@@ -349,24 +391,28 @@ async function streamWithTimeouts(req: ProviderRequest): Promise<Usage & { model
   }
 }
 
-type ProviderRequest = AnswerRequest & { model: string; tier: 'fast' | 'deep' };
+/** `think`: let the model reason briefly before answering (screenshots and code-tracing questions). */
+type ProviderRequest = AnswerRequest & { model: string; tier: 'fast' | 'deep'; think: boolean };
 
 /**
- * Thinking for the fast tier. Any thinking happens before the first visible word, so it adds to
- * the wait, but with none at all Claude Haiku got "in what order does this code run" questions wrong.
- * So the fast tier thinks a little: adaptive thinking at effort `low` (set in claudeParams), which
- * measured about 1.5–3 s to the first word.
+ * Thinking for a fast-tier answer. With `think` (see needsThinking): adaptive thinking at effort
+ * `low`. Otherwise off, so the first word comes straight away: Claude Haiku 5.5 takes `disabled`
+ * (at effort `high` or below), Claude Sonnet 5.5 takes `between_tools`, and other models (e.g. an Opus
+ * picked in the admin console) can't turn it off and run at effort `low`.
  */
-export function fastThinking(_model: string): BetaMessageStreamParams['thinking'] {
-  return { type: 'adaptive' };
+export function fastThinking(model: string, think: boolean): BetaMessageStreamParams['thinking'] {
+  if (think) return { type: 'adaptive' };
+  if (model.startsWith('claude-haiku-5')) return { type: 'disabled' };
+  if (model.startsWith('claude-sonnet-5-5')) return { type: 'between_tools' };
+  return undefined;
 }
 
 /**
  * Everything in a request except the messages. Shared by real answers and the cache pre-warm,
  * which must match byte for byte (thinking and effort are part of the cached prefix).
  */
-function claudeParams(model: string, vision: boolean, context: string | undefined) {
-  const thinking = vision ? { type: 'adaptive' as const } : fastThinking(model);
+function claudeParams(model: string, vision: boolean, context: string | undefined, think: boolean) {
+  const thinking = vision ? { type: 'adaptive' as const } : fastThinking(model, think);
   const params: Omit<BetaMessageStreamParams, 'messages' | 'max_tokens'> = {
     model,
     // Two cache breakpoints: the shared prompt (reused across all users) and the user's context
@@ -395,15 +441,28 @@ function claudeParams(model: string, vision: boolean, context: string | undefine
  */
 export async function warmAnswerCache(context: string | undefined, overrides?: { fast?: string; vision?: string }) {
   const model = resolveModels(overrides).fast;
-  if (viaOpenRouter(model) || !anthropicConfigured()) return;
+  if (viaOpenRouter(model)) {
+    // OpenRouter caches Claude only at explicit breakpoints; other models cache on their own.
+    if (!model.startsWith('anthropic/') || !env.OPENROUTER_API_KEY) return;
+    const res = await fetch(OPENROUTER_URL, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${env.OPENROUTER_API_KEY}`, 'Content-Type': 'application/json' },
+      // One output token: the prefill (and so the cache write) is what this is for.
+      body: JSON.stringify({ ...openRouterBody(model, 'fast', false, context, [], 'warmup'), stream: false, max_tokens: 1 }),
+      signal: AbortSignal.timeout(20_000),
+    });
+    await res.arrayBuffer();
+    return;
+  }
+  if (!anthropicConfigured()) return;
   await anthropic().beta.messages.create({
-    ...claudeParams(model, false, context),
+    ...claudeParams(model, false, context, false),
     max_tokens: 0,
     messages: [{ role: 'user', content: 'warmup' }],
   });
 }
 
-async function streamClaude({ text, images = [], context, signal, onDelta, model, tier }: ProviderRequest): Promise<Usage & { model: string }> {
+async function streamClaude({ text, images = [], context, signal, onDelta, model, tier, think }: ProviderRequest): Promise<Usage & { model: string }> {
   const vision = tier === 'deep';
   const content: Anthropic.Beta.BetaContentBlockParam[] = [
     ...images.map(
@@ -416,7 +475,7 @@ async function streamClaude({ text, images = [], context, signal, onDelta, model
   ];
 
   const params: BetaMessageStreamParams = {
-    ...claudeParams(model, vision, context),
+    ...claudeParams(model, vision, context, think),
     max_tokens: vision ? 16000 : 4000,
     messages: [{ role: 'user', content }],
   };
@@ -478,11 +537,19 @@ export function openRouterError(status: number, detail: string): LlmError {
   }
 }
 
-async function streamOpenRouter({ text, images = [], context, signal, onDelta, model, tier }: ProviderRequest): Promise<Usage & { model: string }> {
+/**
+ * The chat-completions body for an answer (also used, with "warmup" as the question, to pre-write
+ * the prompt cache: the system blocks, reasoning setting and provider must match the real request).
+ */
+function openRouterBody(model: string, tier: 'fast' | 'deep', think: boolean, context: string | undefined, images: ImageAttachment[], text: string) {
+  const { id, provider } = openRouterRoute(model) as { id: string; provider?: object };
   // Claude models on OpenRouter cache only at explicit breakpoints; other providers cache automatically.
-  const cache = model.startsWith('anthropic/') ? { cache_control: { type: 'ephemeral' } } : {};
-  const body = {
-    model,
+  const cache = id.startsWith('anthropic/') ? { cache_control: { type: 'ephemeral' } } : {};
+  // Thinking happens before the first visible word (see needsThinking). It's never shown. Claude
+  // Haiku can switch it off; other models keep it short.
+  const reasoning = !think && id.startsWith('anthropic/claude-haiku') ? { enabled: false } : { effort: 'low', exclude: true };
+  return {
+    model: id,
     stream: true,
     max_tokens: tier === 'deep' ? 16000 : 4000,
     messages: [
@@ -501,12 +568,14 @@ async function streamOpenRouter({ text, images = [], context, signal, onDelta, m
         ],
       },
     ],
-    // Thinking happens before the first visible word, so keep it short (see fastThinking). It's never shown.
-    reasoning: { effort: 'low', exclude: true },
+    reasoning,
     usage: { include: true },
-    // A ":nitro"/":floor" suffix already picks the provider; otherwise prefer the lowest latency.
-    ...(model.includes(':') ? {} : { provider: { sort: 'latency' } }),
+    ...(provider ? { provider } : {}),
   };
+}
+
+async function streamOpenRouter({ text, images = [], context, signal, onDelta, model, tier, think }: ProviderRequest): Promise<Usage & { model: string }> {
+  const body = openRouterBody(model, tier, think, context, images, text);
 
   let res: Response;
   try {
