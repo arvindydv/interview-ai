@@ -4,10 +4,10 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import {
   CreditCard, Download, FileText, GraduationCap, Handshake, History, Home, LayoutDashboard, LifeBuoy, LogOut, Menu,
-  Mic, Settings, Tag, X, type LucideIcon,
+  MessageSquareHeart, Mic, Settings, Tag, X, type LucideIcon,
 } from 'lucide-react';
 import { claimPendingReferral, isPartner } from '@/lib/referral';
-import { supabase } from '@/lib/supabase';
+import { signOut as signOutUser } from '@/lib/authSession';
 import { Logo } from '@/components/Logo';
 import { ThemePicker } from '@/components/ThemeToggle';
 
@@ -29,6 +29,7 @@ const explore: NavItem[] = [
   { icon: Home, label: 'Website', href: '/' },
   { icon: Tag, label: 'Pricing', href: '/pricing' },
   { icon: Download, label: 'Download app', href: '/#download' },
+  { icon: MessageSquareHeart, label: 'Feedback & review', href: '/feedback' },
   { icon: LifeBuoy, label: 'Help & contact', href: '/contact' },
 ];
 
@@ -68,7 +69,7 @@ function SidebarContent({ email, partner, onNavigate }: { email: string; partner
   const pathname = usePathname();
   const router = useRouter();
   const name = email.split('@')[0];
-  const signOut = () => supabase().auth.signOut().then(() => router.replace('/'));
+  const signOut = () => signOutUser().then(() => router.replace('/'));
   return (
     <>
       <nav className="mt-8 flex-1 space-y-7 overflow-y-auto" aria-label="Main">
@@ -84,7 +85,7 @@ function SidebarContent({ email, partner, onNavigate }: { email: string; partner
         </NavGroup>
         <NavGroup title="Explore">
           {explore.map((item) => (
-            <NavLink key={item.href} item={item} active={false} onNavigate={onNavigate} />
+            <NavLink key={item.href} item={item} active={pathname === item.href} onNavigate={onNavigate} />
           ))}
         </NavGroup>
       </nav>

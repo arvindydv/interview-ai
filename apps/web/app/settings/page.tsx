@@ -9,7 +9,7 @@ import {
 import { HISTORY_RETENTIONS, planLabel, type AccountSettings, type HistoryRetention, type Me } from '@parakeet/shared';
 import { ApiError, api } from '@/lib/api';
 import { company } from '@/lib/company';
-import { supabase } from '@/lib/supabase';
+import { signOut } from '@/lib/authSession';
 import { useRequireSession } from '@/lib/useSession';
 import { relative } from '@/lib/interviews';
 import { AppShell } from '@/components/AppShell';
@@ -189,7 +189,7 @@ export default function SettingsPage() {
                   <Row label="Member since">{new Date(me.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}</Row>
                 </dl>
                 <button
-                  onClick={() => supabase().auth.signOut().then(() => router.replace('/'))}
+                  onClick={() => signOut().then(() => router.replace('/'))}
                   className="btn btn-secondary mt-5 !py-2 text-sm"
                 >
                   <LogOut size={15} /> Sign out

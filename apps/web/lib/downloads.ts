@@ -9,8 +9,7 @@ export const WINDOWS_STORE_URL =
 
 export const DOWNLOADS_URL = (process.env.NEXT_PUBLIC_DOWNLOADS_URL ?? '').replace(/\/$/, '');
 
-// The website offers Windows and macOS only (the desktop workflow still builds Linux packages).
-export type Platform = 'windows' | 'macos';
+export type Platform = 'windows' | 'macos' | 'linux';
 
 export interface Installer {
   id: string;
@@ -30,7 +29,13 @@ const name = 'Friday.AI';
 export const installers: Installer[] = [
   { id: 'windows', platform: 'windows', label: 'Windows', detail: 'Windows 10 & 11 · 64-bit', file: `${name}_${v}_x64-setup.exe` },
   { id: 'macos', platform: 'macos', label: 'macOS', detail: 'Apple Silicon & Intel · macOS 11+', file: `${name}_${v}_universal.dmg` },
+  // Linux packages are x86_64 only (built on ubuntu-22.04 in desktop.yml).
+  { id: 'linux-deb', platform: 'linux', label: '.deb', detail: 'Ubuntu, Debian, Linux Mint, Pop!_OS', file: `${name}_${v}_amd64.deb` },
+  { id: 'linux-rpm', platform: 'linux', label: '.rpm', detail: 'Fedora, RHEL, openSUSE', file: `${name}-${v}-1.x86_64.rpm` },
+  { id: 'linux-appimage', platform: 'linux', label: 'AppImage', detail: 'Any distro, incl. Arch & Manjaro', file: `${name}_${v}_amd64.AppImage` },
 ];
+
+export const linuxInstallers = installers.filter((i) => i.platform === 'linux');
 
 export function downloadUrl(i: Installer): string | null {
   if (i.platform === 'windows') {
@@ -47,5 +52,6 @@ export function detectPlatform(): Platform | null {
   const ua = navigator.userAgent;
   if (/Windows/i.test(ua)) return 'windows';
   if (/Mac OS X|Macintosh/i.test(ua) && !/iPhone|iPad/i.test(ua)) return 'macos';
+  if (/Linux|X11|CrOS/i.test(ua) && !/Android/i.test(ua)) return 'linux';
   return null;
 }

@@ -8,6 +8,10 @@ import { FREE_MINUTES, PLANS, PRICE_PER_HOUR, formatInr } from '@parakeet/shared
 import { HeroDemo } from '@/components/HeroDemo';
 import { DownloadButtons } from '@/components/DownloadButtons';
 import { MacInstallGuide } from '@/components/MacInstallGuide';
+import { LinuxInstallGuide } from '@/components/desktop/InstallGuides';
+import { WhyDesktop } from '@/components/desktop/WhyDesktop';
+import { Platforms } from '@/components/landing/Platforms';
+import { Reviews } from '@/components/landing/Reviews';
 import {
   CountUp, Faq, Magnetic, NavBar, Reveal, SpotlightGroup, TiltStage, WordRotator,
 } from '@/components/landing/motion';
@@ -86,7 +90,11 @@ const audiences = [
 const faqs = [
   {
     q: 'What is Friday AI?',
-    a: 'Friday AI is a real-time AI interview assistant, also called an interview copilot, for Windows and macOS. During a live video interview it listens to the interviewer, detects each question and shows a short, personalised answer on a private overlay. It also solves coding problems from a screenshot and runs AI mock interviews so you can practise beforehand.',
+    a: 'Friday AI is a real-time AI interview assistant, also called an interview copilot, for Windows, macOS and Linux. During a live video interview it listens to the interviewer, detects each question and shows a short, personalised answer on a private overlay. It also solves coding problems from a screenshot and runs AI mock interviews so you can practise beforehand.',
+  },
+  {
+    q: 'Why do I need the desktop app? Can’t I use the website?',
+    a: 'The website is where you prepare: your resume, interviews, mock practice and billing. Live help during an interview needs the desktop app, because only an app on your computer can hear the call in Zoom, Meet or Teams, float its answers over the meeting window and stay hidden when you share your screen. Install it, sign in with the same account and press Start session before your call.',
   },
   {
     q: 'Is Friday AI free?',
@@ -114,7 +122,7 @@ const faqs = [
   },
   {
     q: 'Which platforms and meeting apps are supported?',
-    a: 'The desktop app runs on Windows 10 and 11 and on macOS 11 or later, and works with Zoom, Google Meet, Microsoft Teams and Webex.',
+    a: 'The desktop app runs on Windows 10 and 11, macOS 11 or later and 64-bit Linux (.deb, .rpm or AppImage), and works with Zoom, Google Meet, Microsoft Teams and Webex. On Linux the overlay can’t be hidden from screen sharing, so share a single window instead of your whole screen.',
   },
   {
     q: 'How fast do answers appear?',
@@ -253,6 +261,12 @@ export default function Home() {
             </div>
           </Reveal>
         </section>
+
+        {/* ───────────── why the desktop app (self-playing film) ───────────── */}
+        <WhyDesktop />
+
+        {/* ───────────── supported meeting & coding platforms ───────────── */}
+        <Platforms />
 
         {/* ───────────── features (bento) ───────────── */}
         <section id="features" className="mx-auto max-w-6xl scroll-mt-24 px-4 py-32 sm:px-6">
@@ -408,6 +422,9 @@ export default function Home() {
           </Reveal>
         </section>
 
+        {/* ───────────── reviews (real, approved) ───────────── */}
+        <Reviews />
+
         {/* ───────────── CTA ───────────── */}
         <section id="download" className="mx-auto max-w-6xl scroll-mt-24 px-4 pb-24 sm:px-6">
           <Reveal>
@@ -422,7 +439,7 @@ export default function Home() {
                 Walk into your next interview <span className="text-gradient">prepared</span>
               </h2>
               <p className="mx-auto mt-5 max-w-xl text-muted">
-                Download the AI interview assistant for Windows and macOS. Set up
+                Download the AI interview assistant for Windows, macOS and Linux. Set up
                 in minutes, with your first {FREE_MINUTES} minutes free.
               </p>
               <div className="mt-10 flex justify-center">
@@ -431,7 +448,10 @@ export default function Home() {
               <Link href="/signup" className="btn btn-ghost mt-5">
                 or create a free account first <ArrowRight size={15} />
               </Link>
-              <MacInstallGuide />
+              <div className="mx-auto mt-12 grid max-w-5xl gap-6 text-left lg:grid-cols-2">
+                <MacInstallGuide embedded />
+                <LinuxInstallGuide />
+              </div>
             </div>
           </Reveal>
         </section>

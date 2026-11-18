@@ -7,3 +7,4 @@ export * from './reports.js';
 export * from './practice.js';
 export * from './history.js';
 export * from './partners.js';
+export * from './feedback.js';

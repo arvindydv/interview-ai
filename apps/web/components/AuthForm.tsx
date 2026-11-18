@@ -175,7 +175,10 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  // Signed-in pages send an expired or revoked session here with ?expired=1 (see lib/authSession).
+  const [notice, setNotice] = useState<string | null>(
+    params.get('expired') && !signup ? 'Your session expired, so you were signed out. Sign in again to continue.' : null,
+  );
   // Remounts the code boxes (clearing them and focusing the first) after a failed attempt.
   const [attempt, setAttempt] = useState(0);
   // Each new code invalidates the previous one, so resending is rate-limited to avoid replacing a

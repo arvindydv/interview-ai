@@ -1,6 +1,6 @@
 'use client';
 import Link from 'next/link';
-import { supabase } from '@/lib/supabase';
+import { signOut } from '@/lib/authSession';
 import { useSessionUser } from '@/lib/useSession';
 
 /** The footer's Account column: sign-in links for visitors, account links once signed in. */
@@ -13,7 +13,7 @@ export function FooterAccountLinks() {
       <li><Link href="/dashboard" className={link}>Dashboard</Link></li>
       <li><Link href="/billing" className={link}>Plans &amp; billing</Link></li>
       <li>
-        <button type="button" onClick={() => supabase().auth.signOut()} className={link}>
+        <button type="button" onClick={() => signOut()} className={link}>
           Sign out
         </button>
       </li>

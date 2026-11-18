@@ -20,6 +20,11 @@ const STEPS: React.ReactNode[] = [
   <>Confirm with your Mac password or Touch ID if prompted.</>,
 ];
 
+/** The numbered steps alone, for embedding (e.g. the download dialog). */
+export function MacInstallSteps() {
+  return <Steps />;
+}
+
 function Steps() {
   return (
     <ol className="space-y-2.5">
@@ -38,7 +43,7 @@ function Steps() {
 const footnote = 'You only need to do this once. After that, Friday AI opens normally.';
 
 /** Step-by-step help for Gatekeeper's first-launch block. `compact` folds it behind a summary. */
-export function MacInstallGuide({ compact = false }: { compact?: boolean }) {
+export function MacInstallGuide({ compact = false, embedded = false }: { compact?: boolean; embedded?: boolean }) {
   if (compact) {
     return (
       <details id="install-macos" className="group max-w-md rounded-xl border border-line bg-white/[0.02] p-4 text-left">
@@ -53,7 +58,10 @@ export function MacInstallGuide({ compact = false }: { compact?: boolean }) {
     );
   }
   return (
-    <div id="install-macos" className="mx-auto mt-12 max-w-xl scroll-mt-24 rounded-2xl border border-line bg-bg/40 p-6 text-left sm:p-8">
+    <div
+      id="install-macos"
+      className={`scroll-mt-24 rounded-2xl border border-line bg-bg/40 p-6 text-left ${embedded ? '' : 'mx-auto mt-12 max-w-xl sm:p-8'}`}
+    >
       <h3 className="flex items-center gap-2 text-lg font-semibold tracking-tight">
         <ShieldCheck size={18} className="text-brand" /> How to install Friday AI on macOS
       </h3>
