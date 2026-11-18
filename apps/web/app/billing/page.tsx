@@ -12,6 +12,7 @@ import {
   type PaymentStatus, type Product, type ProductId, type VerifyPaymentInput,
 } from '@parakeet/shared';
 import { ApiError, api } from '@/lib/api';
+import { afterSignOutPath } from '@/lib/authSession';
 import { checkoutTracking, trackInitiateCheckout, trackPurchase } from '@/lib/meta';
 import { openCheckout } from '@/lib/razorpay';
 import { supabase } from '@/lib/supabase';
@@ -370,6 +371,10 @@ function Billing() {
         setEmail(data.session.user.email ?? '');
         load();
       });
+    const { data } = supabase().auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_OUT') router.replace(afterSignOutPath());
+    });
+    return () => data.subscription.unsubscribe();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

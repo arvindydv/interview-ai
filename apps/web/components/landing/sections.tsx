@@ -12,6 +12,9 @@ export function Eyebrow({ children }: { children: React.ReactNode }) {
 }
 
 const productLinks = [
+  ['Why the desktop app', '/#why-desktop'],
+  ['Supported apps', '/#platforms'],
+  ['Reviews', '/#reviews'],
   ['Features', '/#features'],
   ['Who it’s for', '/#who'],
   ['How it works', '/#how'],

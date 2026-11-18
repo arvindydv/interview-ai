@@ -229,10 +229,10 @@ export function CountUp({
 }
 
 const navLinks = [
+  ['Why desktop', '/#why-desktop'],
   ['Features', '/#features'],
   ['How it works', '/#how'],
   ['Pricing', '/pricing'],
-  ['Privacy', '/#privacy'],
   ['FAQ', '/#faq'],
 ];
 
@@ -302,7 +302,7 @@ export function NavBar() {
                 key={href}
                 href={href}
                 aria-current={current(href)}
-                className="rounded-lg px-3 py-1.5 transition hover:bg-white/5 hover:text-fg aria-[current=page]:bg-white/[0.06] aria-[current=page]:text-fg"
+                className="rounded-lg px-3 py-1.5 whitespace-nowrap transition hover:bg-white/5 hover:text-fg aria-[current=page]:bg-white/[0.06] aria-[current=page]:text-fg"
               >
                 {label}
               </Link>

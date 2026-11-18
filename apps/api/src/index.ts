@@ -19,11 +19,13 @@ import historyRoutes from './routes/history.js';
 import settingsRoutes from './routes/settings.js';
 import billingRoutes, { billingWebhookRoutes } from './routes/billing.js';
 import reportRoutes from './routes/reports.js';
+import feedbackRoutes, { publicReviewRoutes } from './routes/feedback.js';
 import referralRoutes, { referralClickRoutes } from './routes/referrals.js';
 import adminAuthRoutes from './routes/admin/auth.js';
 import adminOverviewRoutes from './routes/admin/overview.js';
 import adminUserRoutes from './routes/admin/users.js';
 import adminReportRoutes from './routes/admin/reports.js';
+import adminFeedbackRoutes from './routes/admin/feedback.js';
 import adminPartnerRoutes from './routes/admin/partners.js';
 
 // Keep HTTPS connections (Deepgram, OpenRouter, Claude) open between requests. With the default 4 s,
@@ -59,12 +61,15 @@ await app.register(settingsRoutes);
 await app.register(billingRoutes);
 await app.register(billingWebhookRoutes);
 await app.register(reportRoutes);
+await app.register(feedbackRoutes);
+await app.register(publicReviewRoutes);
 await app.register(referralRoutes);
 await app.register(referralClickRoutes);
 await app.register(adminAuthRoutes);
 await app.register(adminOverviewRoutes);
 await app.register(adminUserRoutes);
 await app.register(adminReportRoutes);
+await app.register(adminFeedbackRoutes);
 await app.register(adminPartnerRoutes);
 
 const shutdown = async () => {

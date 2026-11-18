@@ -18,6 +18,8 @@ import { LogoMark } from '@/components/Logo';
 import { Card, Pill } from '@/components/ui';
 import { DownloadButtons } from '@/components/DownloadButtons';
 import { MacInstallGuide } from '@/components/MacInstallGuide';
+import { DesktopFilm } from '@/components/desktop/DesktopFilm';
+import { LinuxInstallGuide } from '@/components/desktop/InstallGuides';
 import { ActiveBadge, Monogram, ReadinessBar } from '@/components/interviews/parts';
 
 interface Overview {
@@ -103,6 +105,7 @@ export default function Dashboard() {
         ) : (
           <>
             <Setup data={data} />
+            {!hasDesktop(data) && <DesktopIntro />}
             <Stats data={data} now={now} />
             <div className="grid gap-6 lg:grid-cols-[1.6fr_1fr]">
               <UpNext interviews={data.interviews} resume={data.resume} now={now} />
@@ -129,8 +132,29 @@ function nextInterview(list: InterviewSummary[], now: number) {
 
 // ---- setup ---------------------------------------------------------------------------------------
 
+/** Signed in to the desktop app on some device, or has run a live session. */
+const hasDesktop = (data: Overview) => Boolean(data.settings?.devices.length) || Boolean(data.history?.sessions.length);
+
+/** Until the desktop app is set up: what it does in an interview and why it's needed, as a short film. */
+function DesktopIntro() {
+  return (
+    <section className="grid items-center gap-6 rounded-[var(--radius-card)] border border-line bg-surface p-5 animate-fade-up sm:p-7 lg:grid-cols-[1fr_1.5fr]">
+      <div>
+        <p className="text-[11px] font-semibold tracking-[0.14em] text-brand uppercase">Why the desktop app</p>
+        <h2 className="mt-2 text-xl font-semibold tracking-tight">Friday helps you live from the desktop app</h2>
+        <p className="mt-2 text-sm text-muted">
+          This website is where you prepare. In the interview, the desktop app hears each question from your Zoom, Meet or Teams call and
+          shows the answer on a private overlay, in under a second. A browser tab can’t hear other apps or stay off your screen share.
+        </p>
+        <p className="mt-3 text-sm text-muted">Download it from the setup card above, sign in with this account and you’re ready.</p>
+      </div>
+      <DesktopFilm />
+    </section>
+  );
+}
+
 function Setup({ data }: { data: Overview }) {
-  const desktop = Boolean(data.settings?.devices.length) || Boolean(data.history?.sessions.length);
+  const desktop = hasDesktop(data);
   const steps = [
     { key: 'account', label: 'Create your account', hint: 'You’re signed in', done: true },
     { key: 'desktop', label: 'Install the desktop app', hint: 'Private overlay for live answers', done: desktop },
@@ -188,12 +212,17 @@ function Setup({ data }: { data: Overview }) {
         <div className="mt-5 flex flex-col gap-4 border-t border-line pt-5 sm:flex-row sm:items-center sm:justify-between">
           {current.key === 'desktop' && (
             <>
-              <p className="max-w-md text-sm text-muted">
-                The desktop app listens to your call and shows answers on an overlay only you can see. Sign in once with this account.
-              </p>
+              <div className="max-w-md text-sm text-muted">
+                <p>
+                  <b className="font-medium text-fg">Live help runs in the desktop app.</b> Only an app on your computer can hear your Zoom,
+                  Meet or Teams call, show answers on top of it and stay hidden when you share your screen.
+                </p>
+                <p className="mt-2">Install it, sign in once with this account, then press Start session before your call.</p>
+              </div>
               <div className="flex flex-col gap-3">
-                <DownloadButtons />
+                <DownloadButtons align="start" />
                 <MacInstallGuide compact />
+                <LinuxInstallGuide compact />
               </div>
             </>
           )}
